@@ -16,7 +16,7 @@ import argparse
 
 from scanner.universe  import build_universe
 from scanner.ranking   import rank_universe
-from telegram.sender   import send_telegram
+from notifier.sender   import send_telegram
 from utils.config      import SCAN_INTERVAL_SECONDS
 from utils.logger      import get_logger
 
