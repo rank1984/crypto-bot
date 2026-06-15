@@ -1,0 +1,43 @@
+name: CRYPTO-BOT Elite Scan
+
+on:
+  schedule:
+    # כל 5 דקות — GitHub Actions מינימום הוא 5 דקות
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    # אפשר להפעיל ידנית מה-Actions tab
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4   # חייב לסיים לפני הריצה הבאה
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scanner
+        env:
+          # ── Secrets (מוגדרים ב-Settings → Secrets) ──────────────────────
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BINANCE_API_KEY:  ${{ secrets.BINANCE_API_KEY }}
+          BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+
+          # ── Variables (מוגדרים ב-Settings → Variables) ───────────────────
+          SCAN_INTERVAL_SECONDS: ${{ vars.SCAN_INTERVAL_SECONDS }}
+          MIN_DAILY_VOLUME:      ${{ vars.MIN_DAILY_VOLUME }}
+          TOP_N:                 ${{ vars.TOP_N }}
+          MAX_SYMBOLS:           ${{ vars.MAX_SYMBOLS }}
+          MIN_PRICE:             ${{ vars.MIN_PRICE }}
+
+        run: python main.py --once   # ← ריצה חד-פעמית, לא לולאה אינסופית
