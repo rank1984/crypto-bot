@@ -112,7 +112,8 @@ def calc_indicators(df_5m: pd.DataFrame,
 
     result["ema20"]  = round(calc_ema(df_5m, 20),  8)
     result["ema50"]  = round(calc_ema(df_5m, 50),  8)
-    result["ema200"] = round(calc_ema(df_1h or df_5m, 200), 8)
+    df_for_ema200 = df_1h if (df_1h is not None and not df_1h.empty) else df_5m
+    result["ema200"] = round(calc_ema(df_for_ema200, 200), 8)
 
     result["rsi_14"] = calc_rsi(df_5m)
     result["atr_14"] = calc_atr(df_5m)
