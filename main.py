@@ -12,6 +12,7 @@ Environment variables required:
 import time
 import signal
 import sys
+import argparse
 
 from scanner.universe  import build_universe
 from scanner.ranking   import rank_universe
@@ -66,9 +67,22 @@ def run_scan() -> None:
 # ─── Main loop ────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    log.info("CRYPTO-BOT Elite starting...")
-    log.info(f"Scan interval: {SCAN_INTERVAL_SECONDS}s ({SCAN_INTERVAL_SECONDS//60}m)")
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single scan and exit (used by GitHub Actions)",
+    )
+    args = parser.parse_args()
 
+    log.info("CRYPTO-BOT Elite starting...")
+
+    if args.once:
+        log.info("Mode: single scan (--once)")
+        run_scan()
+        sys.exit(0)
+
+    log.info(f"Mode: loop every {SCAN_INTERVAL_SECONDS}s ({SCAN_INTERVAL_SECONDS//60}m)")
     while _running:
         try:
             run_scan()
@@ -79,7 +93,6 @@ def main() -> None:
             break
 
         log.info(f"Sleeping {SCAN_INTERVAL_SECONDS}s until next scan...")
-        # Sleep in short chunks so Ctrl-C is responsive
         for _ in range(SCAN_INTERVAL_SECONDS):
             if not _running:
                 break
