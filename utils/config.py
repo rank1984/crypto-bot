@@ -4,7 +4,9 @@ CRYPTO-BOT Elite — Configuration
 """
 
 # ─── Binance ───────────────────────────────────────────────────────────────────
-BINANCE_BASE_URL = "https://api.binance.com"
+# api.binance.com חסום ב-GitHub Actions (451)
+# api1–api4 הם mirror endpoints רשמיים של Binance
+BINANCE_BASE_URL = "https://api4.binance.com"
 
 # Universe filters
 QUOTE_ASSET       = "USDT"
