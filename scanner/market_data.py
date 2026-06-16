@@ -1,89 +1,84 @@
 """
 CRYPTO-BOT Elite — Market Data
-מוריד נרות מ-Binance עם caching לפי timeframe.
+מקור: KuCoin (חינמי, ללא הרשמה, עובד מ-GitHub Actions).
 
-מחזיר DataFrame עם עמודות:
-    open_time, open, high, low, close, volume,
-    close_time, quote_volume, trades
+KuCoin intervals: 1min, 5min, 15min, 1hour
 """
 import time
-from typing import Optional
-
 import pandas as pd
 import requests
 
-from utils.cache import load as cache_load, save as cache_save
-from utils.config import BINANCE_BASE_URL, CANDLES_PER_TF, TIMEFRAMES
+from utils.cache  import load as cache_load, save as cache_save
+from utils.config import KUCOIN_BASE, CANDLES_PER_TF, TIMEFRAMES
 from utils.logger import get_logger
 
 log = get_logger(__name__)
 
-# Binance klines column names
-_COLS = [
-    "open_time", "open", "high", "low", "close", "volume",
-    "close_time", "quote_volume", "trades",
-    "taker_buy_base", "taker_buy_quote", "_ignore",
-]
+_HEADERS = {"User-Agent": "crypto-bot/1.0"}
+_DELAY   = 0.12   # 120ms בין קריאות → ~8 req/s
 
-# Rate-limit: short sleep between requests when cache misses pile up
-_REQUEST_DELAY = 0.05   # 50 ms → ≈ 20 req/s, well within Binance 1200 req/min
+# KuCoin מחזיר נרות בסדר הפוך (חדש ראשון) — נהפוך
+# עמודות KuCoin: [time, open, close, high, low, volume, turnover]
 
 
-def _fetch_klines(symbol: str, interval: str, limit: int) -> Optional[list]:
-    """Raw Binance klines request. Returns list of rows or None on error."""
+def _fetch_kucoin(symbol: str, interval: str, limit: int):
+    """
+    symbol: "BTCUSDT" → KuCoin רוצה "BTC-USDT"
+    interval: "5min" (כמו שמוגדר ב-config)
+    """
+    kucoin_sym = symbol.replace("USDT", "-USDT")
     try:
         resp = requests.get(
-            f"{BINANCE_BASE_URL}/api/v3/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit},
-            timeout=10,
+            f"{KUCOIN_BASE}/api/v1/market/candles",
+            headers=_HEADERS,
+            params={"symbol": kucoin_sym, "type": interval},
+            timeout=12,
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        if data.get("code") != "200000":
+            log.debug(f"KuCoin error {symbol}/{interval}: {data.get('msg')}")
+            return None
+        return data.get("data", [])
     except Exception as e:
-        log.warning(f"klines error {symbol}/{interval}: {e}")
+        log.debug(f"KuCoin fetch failed {symbol}/{interval}: {e}")
         return None
 
 
 def _to_df(raw: list) -> pd.DataFrame:
-    df = pd.DataFrame(raw, columns=_COLS)
-    df = df[["open_time", "open", "high", "low", "close", "volume",
-             "close_time", "quote_volume", "trades"]]
-    for col in ["open", "high", "low", "close", "volume", "quote_volume"]:
+    # KuCoin: [timestamp, open, close, high, low, volume, turnover]
+    # סדר הפוך — הישן ראשון אחרי reverse
+    rows = list(reversed(raw))
+    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume", "turnover"])
+    for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
-    df["trades"] = df["trades"].astype(int)
-    df["open_time"]  = pd.to_datetime(df["open_time"],  unit="ms", utc=True)
-    df["close_time"] = pd.to_datetime(df["close_time"], unit="ms", utc=True)
-    return df.reset_index(drop=True)
+    df["open_time"]  = pd.to_datetime(df["ts"].astype(int), unit="s", utc=True)
+    df["close_time"] = df["open_time"]
+    df["quote_volume"] = df["turnover"].astype(float)
+    df["trades"] = 0
+    return df[["open_time","open","high","low","close","volume","close_time","quote_volume","trades"]].reset_index(drop=True)
 
 
 def get_candles(symbol: str, interval: str,
-                limit: int = CANDLES_PER_TF) -> Optional[pd.DataFrame]:
-    """
-    Returns a DataFrame of the last `limit` candles for symbol/interval.
-    Uses file cache; fetches from Binance only when cache is stale.
-    """
+                limit: int = CANDLES_PER_TF):
     cached = cache_load(symbol, interval)
     if cached is not None:
         return _to_df(cached)
 
-    raw = _fetch_klines(symbol, interval, limit)
-    if raw is None:
+    raw = _fetch_kucoin(symbol, interval, limit)
+    if not raw:
         return None
 
     cache_save(symbol, interval, raw)
-    time.sleep(_REQUEST_DELAY)   # be polite to Binance
+    time.sleep(_DELAY)
     return _to_df(raw)
 
 
-def get_all_timeframes(symbol: str) -> dict[str, pd.DataFrame]:
-    """
-    Convenience: returns {tf: DataFrame} for all configured timeframes.
-    Missing timeframes are omitted from the dict.
-    """
+def get_all_timeframes(symbol: str) -> dict:
     result = {}
     for tf in TIMEFRAMES:
         df = get_candles(symbol, tf)
-        if df is not None:
+        if df is not None and not df.empty:
             result[tf] = df
     return result
 
@@ -92,4 +87,3 @@ if __name__ == "__main__":
     dfs = get_all_timeframes("BTCUSDT")
     for tf, df in dfs.items():
         print(f"\n{tf}: {len(df)} candles, last close = {df['close'].iloc[-1]:.4f}")
-        print(df.tail(3)[["open_time", "open", "high", "low", "close", "volume"]])
