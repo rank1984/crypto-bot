@@ -1,28 +1,27 @@
 """
 CRYPTO-BOT Elite — Configuration
-כל ההגדרות במקום אחד.
 """
+import os
 
-# ─── Binance ───────────────────────────────────────────────────────────────────
-# api.binance.com חסום ב-GitHub Actions (451)
-# api1–api4 הם mirror endpoints רשמיים של Binance
-BINANCE_BASE_URL = "https://api4.binance.com"
+# ─── APIs (הכל חינמי, לא דורש הרשמה) ────────────────────────────────────────
+COINGECKO_BASE  = "https://api.coingecko.com/api/v3"
+KUCOIN_BASE     = "https://api.kucoin.com"
 
 # Universe filters
-QUOTE_ASSET       = "USDT"
-MIN_DAILY_VOLUME  = 5_000_000   # $5M
-MIN_PRICE         = 0.0001
-MAX_SYMBOLS       = 1000        # upper cap on universe size
+QUOTE_ASSET      = "USDT"
+MIN_DAILY_VOLUME = float(os.getenv("MIN_DAILY_VOLUME", "5000000"))
+MIN_PRICE        = float(os.getenv("MIN_PRICE", "0.0001"))
+MAX_SYMBOLS      = int(os.getenv("MAX_SYMBOLS", "200"))
 
-# Candle timeframes to download
-TIMEFRAMES = ["1m", "5m", "15m", "1h"]
-CANDLES_PER_TF = 100            # last N candles per timeframe
+# Candle timeframes
+TIMEFRAMES      = ["1min", "5min", "15min", "1hour"]
+CANDLES_PER_TF  = 100
 
-# ─── Caching ───────────────────────────────────────────────────────────────────
+# Cache
 CACHE_DIR         = "data"
-CACHE_TTL_SECONDS = 60          # re-use cached candles if fresher than this
+CACHE_TTL_SECONDS = 60
 
-# ─── Scoring weights ───────────────────────────────────────────────────────────
+# Scoring weights
 SCORE_WEIGHTS = {
     "freshness": 0.30,
     "momentum":  0.25,
@@ -30,23 +29,20 @@ SCORE_WEIGHTS = {
     "pattern":   0.20,
 }
 
-# Freshness sub-weights
 FRESHNESS_WEIGHTS = {
-    "high_age":    0.25,
-    "pullback":    0.20,
-    "momentum":    0.20,
-    "vwap":        0.15,
-    "vol_accel":   0.20,
+    "high_age":  0.25,
+    "pullback":  0.20,
+    "momentum":  0.20,
+    "vwap":      0.15,
+    "vol_accel": 0.20,
 }
 
-# ─── Ranking ───────────────────────────────────────────────────────────────────
-TOP_N = 5                       # coins to send to Telegram
+# Ranking
+TOP_N = int(os.getenv("TOP_N", "5"))
 
-# ─── Telegram ──────────────────────────────────────────────────────────────────
-# Set these via environment variables — never hardcode tokens.
-import os
+# Telegram
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# ─── Scanner loop ──────────────────────────────────────────────────────────────
-SCAN_INTERVAL_SECONDS = 300     # 5 minutes
+# Scanner loop
+SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", "300"))
