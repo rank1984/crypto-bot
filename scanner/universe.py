@@ -4,6 +4,14 @@ CRYPTO-BOT Elite — Universe Builder
 """
 import requests
 
+BINANCE_MIRRORS = [
+    "https://api.binance.com",
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+    "https://api4.binance.com",
+]
+
 from utils.config import (
     BINANCE_BASE_URL,
     MAX_SYMBOLS,
@@ -29,21 +37,33 @@ def build_universe() -> list[str]:
     """
     log.info("Building universe from Binance 24h ticker...")
 
-    try:
-        resp = requests.get(
-            f"{BINANCE_BASE_URL}/api/v3/ticker/24hr",
-            timeout=15,
-        )
-        resp.raise_for_status()
-        tickers = resp.json()
-    except Exception as e:
-        log.error(f"Failed to fetch 24h ticker: {e}")
-        return []
+    # נסה כל mirror עד שאחד עובד
+    tickers = None
+    working_base = None
+    for mirror in BINANCE_MIRRORS:
+        try:
+            resp = requests.get(
+                f"{mirror}/api/v3/ticker/24hr",
+                timeout=15,
+            )
+            resp.raise_for_status()
+            tickers = resp.json()
+            working_base = mirror
+            log.info(f"Connected via {mirror}")
+            break
+        except Exception as e:
+            log.warning(f"{mirror} failed: {e}")
+            continue
+
+    if tickers is None:
+        log.error("All Binance mirrors failed — falling back to CoinGecko")
+        return _universe_from_coingecko()
 
     # ─── Exchange info for status filter ──────────────────────────────────────
+    trading_symbols = None
     try:
         info_resp = requests.get(
-            f"{BINANCE_BASE_URL}/api/v3/exchangeInfo",
+            f"{working_base}/api/v3/exchangeInfo",
             timeout=15,
         )
         info_resp.raise_for_status()
@@ -54,7 +74,6 @@ def build_universe() -> list[str]:
         }
     except Exception as e:
         log.warning(f"Could not fetch exchangeInfo, skipping status filter: {e}")
-        trading_symbols = None
 
     # ─── Apply filters ────────────────────────────────────────────────────────
     universe: list[tuple[float, str]] = []   # (volume, symbol) for sorting
@@ -89,6 +108,49 @@ def build_universe() -> list[str]:
 
     log.info(f"Universe built: {len(result)} symbols (filtered from {len(tickers)})")
     return result
+
+
+def _universe_from_coingecko() -> list[str]:
+    """
+    Fallback: שולף top 250 מטבעות מ-CoinGecko ומחזיר אותם כ-USDT pairs.
+    CoinGecko חינמי ולא חסום ב-GitHub Actions.
+    """
+    log.info("Building universe from CoinGecko (fallback)...")
+    try:
+        resp = requests.get(
+            "https://api.coingecko.com/api/v3/coins/markets",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; crypto-bot/1.0)"},
+            params={
+                "vs_currency":  "usd",
+                "order":        "volume_desc",
+                "per_page":     250,
+                "page":         1,
+                "sparkline":    "false",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        coins = resp.json()
+    except Exception as e:
+        log.error(f"CoinGecko fallback also failed: {e}")
+        return []
+
+    # פילטר לפי volume
+    result = []
+    for c in coins:
+        vol = c.get("total_volume", 0) or 0
+        price = c.get("current_price", 0) or 0
+        symbol = (c.get("symbol", "") or "").upper()
+        if vol < MIN_DAILY_VOLUME:
+            continue
+        if price < MIN_PRICE:
+            continue
+        if not symbol:
+            continue
+        result.append(f"{symbol}USDT")
+
+    log.info(f"CoinGecko universe: {len(result)} symbols")
+    return result[:MAX_SYMBOLS]
 
 
 if __name__ == "__main__":
