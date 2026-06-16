@@ -45,11 +45,11 @@ def scan_coin(symbol: str) -> Optional[dict]:
     Returns a result dict or None if data is unavailable.
     """
     dfs = get_all_timeframes(symbol)
-    if not all(tf in dfs for tf in ["1m", "5m", "15m", "1h"]):
+    if not all(tf in dfs for tf in ["1min", "5min", "15min", "1hour"]):
         log.debug(f"{symbol}: missing timeframes, skipping")
         return None
 
-    df_1m, df_5m, df_15m, df_1h = dfs["1m"], dfs["5m"], dfs["15m"], dfs["1h"]
+    df_1m, df_5m, df_15m, df_1h = dfs["1min"], dfs["5min"], dfs["15min"], dfs["1hour"]
 
     # ── Basic data ────────────────────────────────────────────────────────────
     last_price = float(df_5m["close"].iloc[-1])
