@@ -17,6 +17,7 @@ from scanner.relative_strength import calc_relative_strength, set_btc_reference
 from scanner.sympathy          import find_leaders, find_sympathy_plays, sympathy_bonus
 from scanner.open_interest     import get_oi_and_funding
 from scanner.regime            import detect_regime, get_regime_weights, get_min_threshold
+from scanner.entry_engine      import evaluate_entry, EntrySignal
 from storage.sqlite_db         import init_db, save_signal
 from utils.config import TOP_N
 from utils.logger import get_logger
@@ -132,6 +133,18 @@ def scan_coin(symbol: str) -> Optional[dict]:
     if rs["rs_4h"] > 2.0: rs_bonus += 4
     score = round(min(score + rs_bonus, 100.0), 1)
 
+    # ── Entry Engine ──────────────────────────────────────────────────────────
+    entry_signal = evaluate_entry(
+        coin={
+            **mom, **vol, **ind,
+            "rs_1h": rs["rs_1h"], "rs_4h": rs["rs_4h"],
+            "vwap": ind["vwap"], "ema20": ind["ema20"],
+            "rsi_14": ind["rsi_14"], "rvol": vol["rvol"],
+        },
+        df_5m=df_5m,
+        btc_mom_5m=0.0,   # מתעדכן ב-rank_universe
+    )
+
     return {
         "symbol":       symbol,
         "price":        last_price,
@@ -160,6 +173,15 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "momentum_score":  ms,
         "breakout_score":  bs,
         "final_score":     score,
+        # entry engine
+        "entry_decision":  entry_signal.decision,
+        "entry_setup":     entry_signal.setup_type,
+        "entry_price":     entry_signal.entry,
+        "entry_sl":        entry_signal.sl,
+        "entry_tp1":       entry_signal.tp1,
+        "entry_tp2":       entry_signal.tp2,
+        "entry_rr":        entry_signal.rr,
+        "entry_reason":    entry_signal.reason,
     }
 
 
