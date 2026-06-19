@@ -33,14 +33,14 @@ def _fmt_price(p: float) -> str:
 
 
 def format_message(top_coins: list[dict]) -> str:
-    lines = ["🔥 *CRYPTO-BOT Elite*\n"]
+    lines = ["🔥 *CRYPTO\\-BOT Elite*\n"]
 
     for i, c in enumerate(top_coins, 1):
         grade = _grade(c["final_score"])
-        sym   = c["symbol"]  # אין צורך בריפוד תווים מיוחדים במצב Markdown רגיל
+        sym   = c["symbol"].replace("-", "\\-").replace(".", "\\.")
 
         block = [
-            f"*{i}. {sym}* [{grade}]",
+            f"*{i}\\. {sym}* \\[{grade}\\]",
             f"💰 Price: `{_fmt_price(c['price'])}`",
             "",
             f"📈 *Momentum*",
@@ -52,9 +52,10 @@ def format_message(top_coins: list[dict]) -> str:
             f"🚀 Vol Accel: `{c['vol_accel']:.1f}x`",
             f"📊 RVOL: `{c['rvol']:.1f}x`",
             f"🟢 VWAP dist: `{_fmt_pct(c['vwap_dist'])}`",
-            f"📐 RSI-14: `{c['rsi_14']:.0f}`",
+            f"📐 RSI\\-14: `{c['rsi_14']:.0f}`",
             "",
             f"🎯 Breakout Score: `{c['breakout_score']:.0f}`",
+            f"💪 RS vs BTC: `{_fmt_pct(c.get('rs_1h', 0))}` 1h / `{_fmt_pct(c.get('rs_4h', 0))}` 4h",
             f"⭐ *Final Score: {c['final_score']:.0f}*",
         ]
         lines.append("\n".join(block))
@@ -66,7 +67,7 @@ def format_message(top_coins: list[dict]) -> str:
 def send_telegram(top_coins: list[dict]) -> bool:
     """
     Returns True on success.
-    Uses legacy Markdown parse mode to avoid escaping strictness.
+    Uses MarkdownV2 parse mode.
     """
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         log.warning("TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set — printing to stdout")
@@ -80,7 +81,7 @@ def send_telegram(top_coins: list[dict]) -> bool:
         resp = requests.post(url, json={
             "chat_id":    TELEGRAM_CHAT_ID,
             "text":       text,
-            "parse_mode": "Markdown",  # שונה מ-MarkdownV2 ל-Markdown
+            "parse_mode": "MarkdownV2",
         }, timeout=10)
         resp.raise_for_status()
         log.info("Telegram message sent ✓")
