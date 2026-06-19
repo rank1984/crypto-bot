@@ -1,6 +1,6 @@
 """
 CRYPTO-BOT Elite — Telegram Sender
-מעצב ושולח את ה-top picks לטלגרם בעברית ובמבנה קומפקטי לפעולה מהירה.
+מעצב ושולח את ה-top picks לטלגרם.
 """
 import requests
 from utils.config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
@@ -33,72 +33,71 @@ def _fmt_price(p: float) -> str:
 
 
 def format_message(top_coins: list[dict]) -> str:
-    lines = ["🔥 <b>CRYPTO-BOT Elite</b>\n"]
+    lines = [f"🔥 *CRYPTO\\-BOT Elite*\n"]
 
-    # Regime header בתרגום לעברית
+    # Regime header
     if top_coins:
         regime = top_coins[0].get("regime", "")
-        regime_translations = {
-            "TRENDING_BULL": "🟢 מגמה שורית (Bull)",
-            "ALTSEASON": "🚀 עונת אלטים (Altseason)",
-            "RANGE": "🟡 דשדוש (Range)",
-            "RISK_OFF": "🔴 סיכון כבוי (Risk-Off)",
-            "TRENDING_BEAR": "⛔ מגמה דובית (Bear)"
-        }
-        regime_text = regime_translations.get(regime, f"⚪ {regime}")
-        if regime:
-            lines.append(f"<b>מצב שוק:</b> <code>{regime_text}</code>\n")
+        regime_emoji = {"TRENDING_BULL":"🟢","ALTSEASON":"🚀","RANGE":"🟡","RISK_OFF":"🔴","TRENDING_BEAR":"⛔"}.get(regime, "⚪")
+        lines.append(f"{regime_emoji} Regime: `{regime}`\n")
 
     for i, c in enumerate(top_coins, 1):
         grade = _grade(c["final_score"])
-        sym = c["symbol"].replace("USDT", "") 
+        sym   = c["symbol"].replace("-", "\\-").replace(".", "\\.")
 
         sympathy_line = ""
         if c.get("is_sympathy") and c.get("leader"):
-            leader = c["leader"].replace("USDT", "")
-            sympathy_line = f"🔗 <b>אפקט סימפתיה אחרי:</b> <code>{leader}</code>"
+            leader = c["leader"].replace("USDT","").replace("-","\\-")
+            sympathy_line = f"🔗 Sympathy play after `{leader}`\n"
 
-        # בניית בלוק נתונים קומפקטי ורוחבי בעברית
         block = [
-            f"<b>{i}. {sym}</b> [{grade}]",
-            f"👑 <b>ציון סופי:</b> <code>{c['final_score']:.0f}</code> | 🎯 <b>פריצה:</b> <code>{c.get('breakout_score', 0):.0f}</code>",
-            f"💰 <b>מחיר:</b> <code>{_fmt_price(c['price'])}</code>",
-            sympathy_line if sympathy_line else None,
+            f"*{i}\\. {sym}* \\[{grade}\\]",
+            sympathy_line,
+            f"💰 Price: `{_fmt_price(c['price'])}`",
             "",
-            f"📊 <b>ווליום:</b> האצה <code>{c.get('vol_accel', 0):.1f}x</code> | יחסי (RVOL) <code>{c.get('rvol', 0):.1f}x</code>",
-            f"🟢 <b>מרחק VWAP:</b> <code>{_fmt_pct(c.get('vwap_dist', 0))}</code> | 📐 <b>RSI-14:</b> <code>{c.get('rsi_14', 0):.0f}</code>",
+            f"📈 *Momentum*",
+            f"  3m  {_fmt_pct(c['momentum_3m'])}",
+            f"  5m  {_fmt_pct(c['momentum_5m'])}",
+            f"  15m {_fmt_pct(c['momentum_15m'])}",
+            f"  1h  {_fmt_pct(c['momentum_1h'])}",
             "",
-            f"⏱️ <b>מומנטום:</b> 3ד': <code>{_fmt_pct(c.get('momentum_3m', 0))}</code> | 5ד': <code>{_fmt_pct(c.get('momentum_5m', 0))}</code> | 15ד': <code>{_fmt_pct(c.get('momentum_15m', 0))}</code> | 1ש': <code>{_fmt_pct(c.get('momentum_1h', 0))}</code>",
-            f"💪 <b>חוזק מול BTC:</b> שעה: <code>{_fmt_pct(c.get('rs_1h', 0))}</code> | 4 שעות: <code>{_fmt_pct(c.get('rs_4h', 0))}</code>",
+            f"🚀 Vol Accel: `{c['vol_accel']:.1f}x`",
+            f"📊 RVOL: `{c['rvol']:.1f}x`",
+            f"🟢 VWAP dist: `{_fmt_pct(c['vwap_dist'])}`",
+            f"📐 RSI\\-14: `{c['rsi_14']:.0f}`",
+            "",
+            f"🎯 Breakout Score: `{c['breakout_score']:.0f}`",
+            f"💪 RS vs BTC: `{_fmt_pct(c.get('rs_1h', 0))}` 1h / `{_fmt_pct(c.get('rs_4h', 0))}` 4h",
+            f"⭐ *Final Score: {c['final_score']:.0f}*",
         ]
-        
-        # סינון שורות ריקות (כמו שורת סימפתיה כשאינה רלוונטית)
-        lines.append("\n".join(filter(None, block)))
+        lines.append("\n".join(block))
         lines.append("━━━━━━━━━━━━")
 
     return "\n".join(lines)
 
 
 def send_telegram(top_coins: list[dict]) -> bool:
+    """
+    Returns True on success.
+    Uses MarkdownV2 parse mode.
+    """
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         log.warning("TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set — printing to stdout")
         print(format_message(top_coins))
         return False
 
     text = format_message(top_coins)
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
     try:
         resp = requests.post(url, json={
             "chat_id":    TELEGRAM_CHAT_ID,
             "text":       text,
-            "parse_mode": "HTML",
+            "parse_mode": "MarkdownV2",
         }, timeout=10)
         resp.raise_for_status()
         log.info("Telegram message sent ✓")
         return True
     except Exception as e:
         log.error(f"Telegram send failed: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            log.error(f"Telegram API Response: {e.response.text}")
         return False
