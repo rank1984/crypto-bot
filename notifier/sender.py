@@ -1,6 +1,5 @@
 """
-CRYPTO-BOT Elite — Telegram Sender
-מעצב ושולח את ה-top picks לטלגרם.
+CRYPTO-BOT Elite — Telegram Sender (Optimized for Speed)
 """
 import requests
 from utils.config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
@@ -8,95 +7,56 @@ from utils.logger import get_logger
 
 log = get_logger(__name__)
 
-_GRADES = [
-    (90, "A+"), (80, "A"), (70, "A-"),
-    (60, "B+"), (50, "B"), (0,  "B-"),
-]
-
-
-def _grade(score: float) -> str:
-    for threshold, letter in _GRADES:
-        if score >= threshold:
-            return letter
-    return "C"
-
-
 def _fmt_pct(v: float) -> str:
     return f"+{v:.1f}%" if v >= 0 else f"{v:.1f}%"
-
 
 def _fmt_price(p: float) -> str:
     if p >= 1:      return f"{p:.4f}"
     if p >= 0.01:   return f"{p:.5f}"
-    if p >= 0.0001: return f"{p:.6f}"
     return f"{p:.8f}"
 
-
 def format_message(top_coins: list[dict]) -> str:
-    lines = [f"🔥 *CRYPTO\\-BOT Elite*\n"]
-
-    # Regime header
+    lines = ["🔥 <b>CRYPTO-BOT Elite</b>"]
+    
     if top_coins:
-        regime = top_coins[0].get("regime", "")
-        regime_emoji = {"TRENDING_BULL":"🟢","ALTSEASON":"🚀","RANGE":"🟡","RISK_OFF":"🔴","TRENDING_BEAR":"⛔"}.get(regime, "⚪")
-        lines.append(f"{regime_emoji} Regime: `{regime}`\n")
+        regime = top_coins[0].get("regime", "UNKNOWN")
+        lines.append(f"<b>מצב שוק:</b> <code>{regime}</code>\n")
 
     for i, c in enumerate(top_coins, 1):
-        grade = _grade(c["final_score"])
-        sym   = c["symbol"].replace("-", "\\-").replace(".", "\\.")
-
-        sympathy_line = ""
-        if c.get("is_sympathy") and c.get("leader"):
-            leader = c["leader"].replace("USDT","").replace("-","\\-")
-            sympathy_line = f"🔗 Sympathy play after `{leader}`\n"
-
+        # סיגנל כניסה (BUY / WAIT)
+        decision = c.get("entry_decision", "WAIT")
+        emoji = "🟢" if decision == "BUY" else "🟡"
+        
+        # בניית הבלוק הקומפקטי
         block = [
-            f"*{i}\\. {sym}* \\[{grade}\\]",
-            sympathy_line,
-            f"💰 Price: `{_fmt_price(c['price'])}`",
-            "",
-            f"📈 *Momentum*",
-            f"  3m  {_fmt_pct(c['momentum_3m'])}",
-            f"  5m  {_fmt_pct(c['momentum_5m'])}",
-            f"  15m {_fmt_pct(c['momentum_15m'])}",
-            f"  1h  {_fmt_pct(c['momentum_1h'])}",
-            "",
-            f"🚀 Vol Accel: `{c['vol_accel']:.1f}x`",
-            f"📊 RVOL: `{c['rvol']:.1f}x`",
-            f"🟢 VWAP dist: `{_fmt_pct(c['vwap_dist'])}`",
-            f"📐 RSI\\-14: `{c['rsi_14']:.0f}`",
-            "",
-            f"🎯 Breakout Score: `{c['breakout_score']:.0f}`",
-            f"💪 RS vs BTC: `{_fmt_pct(c.get('rs_1h', 0))}` 1h / `{_fmt_pct(c.get('rs_4h', 0))}` 4h",
-            f"⭐ *Final Score: {c['final_score']:.0f}*",
+            f"<b>{i}. {c['symbol'].replace('USDT', '')}</b> | [ציון: {c['final_score']:.0f}]",
+            f"{emoji} <b>{decision}</b> 🎯 פריצה: <code>{c.get('breakout_score', 0):.0f}</code>",
+            f"💰 מחיר: <code>{_fmt_price(c['price'])}</code> | RVOL: <code>{c.get('rvol', 0):.1f}x</code>",
+            f"⏱ מומנטום: 15ד' <code>{_fmt_pct(c.get('momentum_15m', 0))}</code> | 1ש' <code>{_fmt_pct(c.get('momentum_1h', 0))}</code>",
+            f"💪 חוזק מול BTC: 1ש' <code>{_fmt_pct(c.get('rs_1h', 0))}</code> | 4ש' <code>{_fmt_pct(c.get('rs_4h', 0))}</code>"
         ]
+        
         lines.append("\n".join(block))
         lines.append("━━━━━━━━━━━━")
 
     return "\n".join(lines)
 
-
 def send_telegram(top_coins: list[dict]) -> bool:
-    """
-    Returns True on success.
-    Uses MarkdownV2 parse mode.
-    """
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        log.warning("TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set — printing to stdout")
         print(format_message(top_coins))
         return False
 
     text = format_message(top_coins)
-    url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
     try:
+        # שימוש ב-HTML מאפשר הודעות נקיות בלי Escape מסובך
         resp = requests.post(url, json={
-            "chat_id":    TELEGRAM_CHAT_ID,
-            "text":       text,
-            "parse_mode": "HTML",
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text,
+            "parse_mode": "HTML", 
         }, timeout=10)
         resp.raise_for_status()
-        log.info("Telegram message sent ✓")
         return True
     except Exception as e:
         log.error(f"Telegram send failed: {e}")
