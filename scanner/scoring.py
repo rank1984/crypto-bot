@@ -167,13 +167,23 @@ def final_score(
     freshness: float,
     momentum: float,
     breakout: float,
-    pattern: float = 50.0,   # default neutral until V7
+    pattern: float = 50.0,
+    rvol: float = 1.0,
+    vol_accel: float = 1.0,
+    vwap_dist: float = 0.0,
 ) -> float:
+    # משקלים מעודכנים — momentum קיבל יותר משקל
     w = SCORE_WEIGHTS
     score = (
-        freshness * w["freshness"]
-        + momentum * w["momentum"]
-        + breakout * w["breakout"]
-        + pattern  * w["pattern"]
+        freshness * 0.25
+        + momentum * 0.30
+        + breakout * 0.25
+        + pattern  * 0.20
     )
+
+    # בונוסים שמרחיבים את הסקאלה
+    if rvol      > 3.0: score += 5
+    if vol_accel > 5.0: score += 5
+    if vwap_dist > 1.0: score += 3
+
     return round(_clamp(score), 1)
