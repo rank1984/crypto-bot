@@ -93,7 +93,7 @@ def send_telegram(top_coins: list[dict]) -> bool:
         resp = requests.post(url, json={
             "chat_id":    TELEGRAM_CHAT_ID,
             "text":       text,
-            "parse_mode": "MarkdownV2",
+            "parse_mode": "HTML",
         }, timeout=10)
         resp.raise_for_status()
         log.info("Telegram message sent ✓")
