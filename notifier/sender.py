@@ -33,14 +33,26 @@ def _fmt_price(p: float) -> str:
 
 
 def format_message(top_coins: list[dict]) -> str:
-    lines = ["🔥 *CRYPTO\\-BOT Elite*\n"]
+    lines = [f"🔥 *CRYPTO\\-BOT Elite*\n"]
+
+    # Regime header
+    if top_coins:
+        regime = top_coins[0].get("regime", "")
+        regime_emoji = {"TRENDING_BULL":"🟢","ALTSEASON":"🚀","RANGE":"🟡","RISK_OFF":"🔴","TRENDING_BEAR":"⛔"}.get(regime, "⚪")
+        lines.append(f"{regime_emoji} Regime: `{regime}`\n")
 
     for i, c in enumerate(top_coins, 1):
         grade = _grade(c["final_score"])
         sym   = c["symbol"].replace("-", "\\-").replace(".", "\\.")
 
+        sympathy_line = ""
+        if c.get("is_sympathy") and c.get("leader"):
+            leader = c["leader"].replace("USDT","").replace("-","\\-")
+            sympathy_line = f"🔗 Sympathy play after `{leader}`\n"
+
         block = [
             f"*{i}\\. {sym}* \\[{grade}\\]",
+            sympathy_line,
             f"💰 Price: `{_fmt_price(c['price'])}`",
             "",
             f"📈 *Momentum*",
