@@ -77,6 +77,9 @@ def scan_coin(symbol: str) -> Optional[dict]:
         vwap_dist=ind["vwap_dist"],
         momentum_5m=mom["momentum_5m"],
         momentum_15m=mom["momentum_15m"],
+        rvol=vol["rvol"],
+        rs_1h=rs["rs_1h"],
+        momentum_1h=mom["momentum_1h"],
     )
     if not passed:
         log.debug(f"{symbol}: filtered out — {reason}")
