@@ -130,6 +130,11 @@ def breakout_score(
     # Proximity to high: 0% away → 100pts, 5% → ~50pts, 10%+ → ~5pts
     prox_score = _clamp(100 * math.exp(-0.25 * max(proximity_to_high_pct, 0)))
 
+    # Gate: אם אין מומנטום חיובי — Breakout Score מוגבל ל-40
+    avg_mom = (momentum_5m + momentum_15m) / 2
+    if avg_mom <= 0:
+        return round(_clamp(prox_score * 0.4), 1)
+
     # VWAP Reclaim: above VWAP strongly preferred
     vwap_reclaim = _sigmoid(vwap_dist, center=0.3, steepness=1.0)
 
