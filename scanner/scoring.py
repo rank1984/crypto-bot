@@ -191,24 +191,43 @@ def final_score(
 # ─── Hard Filters ─────────────────────────────────────────────────────────────
 
 def passes_hard_filters(
-    rsi_14: float,
-    vwap_dist: float,
-    momentum_5m: float,
+    rsi_14:      float,
+    vwap_dist:   float,
+    momentum_5m:  float,
     momentum_15m: float,
+    rvol:        float,
+    rs_1h:       float,
+    momentum_1h: float,
 ) -> tuple[bool, str]:
     """
-    True = עובר. False = בחוץ — תמיד, ללא קשר לציון.
+    מסננים קשיחים — אם נכשל אחד, הוא בחוץ. תמיד נכון.
 
-    RSI > 80        → קניית יתר קיצונית
-    VWAP dist > 8%  → מחיר מופקע
-    mom שלילי כפול  → מומנטום הפוך
+    מבוסס על ניתוח סוחר:
+    ─────────────────────────────────────────────────────
+    1. RSI > 80              → קניית יתר קיצונית
+    2. VWAP dist > 8%        → מחיר מופקע לחלוטין
+    3. RVOL > 15 + mom15 < 1 → נפח ספייק בלי מומנטום (AGT pattern)
+    4. 1H שלילי + RS שלילי   → כיוון הפוך מהשוק (PLUME pattern)
+    5. mom שלילי כפול        → מומנטום הפוך ברור
     """
     if rsi_14 > 80:
         return False, f"RSI {rsi_14:.0f} > 80"
+
     if abs(vwap_dist) > 8.0:
         return False, f"VWAP dist {vwap_dist:.1f}% > 8%"
+
+    # AGT pattern: RVOL ענק בלי follow-through
+    if rvol > 15.0 and momentum_15m < 1.0:
+        return False, f"RVOL spike {rvol:.1f}x without momentum ({momentum_15m:.1f}%)"
+
+    # PLUME pattern: חלש מול BTC + 1H שלילי
+    if momentum_1h < -0.5 and rs_1h < 0:
+        return False, f"Weak vs BTC + negative 1h ({momentum_1h:.1f}%)"
+
+    # מומנטום שלילי חזק בשני טווחים
     if momentum_5m < -2.0 and momentum_15m < -1.0:
         return False, f"Negative momentum {momentum_5m:.1f}%/{momentum_15m:.1f}%"
+
     return True, ""
 
 
@@ -216,11 +235,20 @@ def passes_hard_filters(
 
 def apply_trader_overrides(base_score: float, c: dict) -> float:
     """
-    קנסות ובונוסים שמשקפים שיקול דעת של סוחר מומנטום.
-    לא פוסלים מטבע — משנים את מיקומו בדירוג.
+    קנסות ובונוסים — מבוסס על ניתוח סוחר אינטרדיי.
 
-    קנסות:   RSI 75-80 (-15) | VWAP > 5% (-10)
-    בונוסים: RS חיובי (+8) | סטאפ הזהב (+15) | האצה (+5) | RSI אידאלי (+5)
+    קנסות:
+        RSI 75–80 (-15)          → מתוח, לא כניסה טובה
+        VWAP dist > 5% (-10)     → קנייה מופקעת
+        1H שלילי (-8)            → טרנד הפוך לטווח קצר
+
+    בונוסים:
+        QUALITY TREND (+12)      → ZEREBRO pattern: 1H חזק + RS חזק
+        BREAKOUT PRE-SETUP (+10) → PARTI pattern: VWAP צמוד + RVOL גבוה
+        RS חיובי דו-כיווני (+8)  → מוביל את השוק
+        סטאפ הזהב (+15)          → RVOL > 5 + VWAP ≤ 2%
+        האצת מומנטום (+5)        → 5m > 15m > 1h
+        RSI אידאלי (+5)          → 50–65, לא מתוח
     """
     score     = base_score
     rsi       = c.get("rsi_14",      50.0)
@@ -232,21 +260,43 @@ def apply_trader_overrides(base_score: float, c: dict) -> float:
     mom_15m   = c.get("momentum_15m", 0.0)
     mom_1h    = c.get("momentum_1h",  0.0)
 
-    # קנסות
-    if rsi > 75:               score -= 15
-    if abs(vwap_dist) > 5.0:   score -= 10
+    # ── קנסות ─────────────────────────────────────────────────────────────────
+    if rsi > 75:
+        score -= 15
+    if abs(vwap_dist) > 5.0:
+        score -= 10
+    if mom_1h < -0.5:
+        score -= 8    # טרנד 1H הפוך
 
-    # בונוס: חוזק יחסי מול BTC בשני טווחים
+    # ── QUALITY TREND — ZEREBRO pattern ──────────────────────────────────────
+    # 1H חזק + RS חיובי + RSI לא קיצוני = טרנד אמיתי שלא נגמר
+    if mom_1h > 3.0 and rs_1h > 2.0 and rsi < 75:
+        score += 12
+
+    # ── BREAKOUT PRE-SETUP — PARTI pattern ───────────────────────────────────
+    # VWAP צמוד + RVOL גבוה + RSI תקין = squeeze לפני מהלך
+    vwap_tight = abs(vwap_dist) <= 1.0
+    if rvol > 10.0 and vwap_tight and 55 <= rsi <= 70:
+        score += 10
+
+    # ── חוזק יחסי מול BTC בשני טווחים ───────────────────────────────────────
     if rs_1h > 0 and rs_4h > 0:
         score += 8
 
-    # בונוס: סטאפ הזהב — נפח חריג + מחיר עדיין ליד VWAP
+    # ── סטאפ הזהב — נפח חריג + ממש ליד VWAP ─────────────────────────────────
     if rvol > 5.0 and abs(vwap_dist) <= 2.0:
         score += 15
 
-    # בונוס: האצת מומנטום (5m > 15m > 1h)
+    # ── האצת מומנטום — 5m > 15m > 1h (מתחיל לזוז) ───────────────────────────
     if 0 < mom_1h < mom_15m < mom_5m:
         score += 5
+
+    # ── RSI אזור כניסה אידאלי ────────────────────────────────────────────────
+    if 50 <= rsi <= 65:
+        score += 5
+
+    return round(_clamp(score), 1)
+
 
     # בונוס: RSI באזור הכניסה האידאלי
     if 50 <= rsi <= 65:
