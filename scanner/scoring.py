@@ -187,3 +187,69 @@ def final_score(
     if vwap_dist > 1.0: score += 3
 
     return round(_clamp(score), 1)
+
+# ─── Hard Filters ─────────────────────────────────────────────────────────────
+
+def passes_hard_filters(
+    rsi_14: float,
+    vwap_dist: float,
+    momentum_5m: float,
+    momentum_15m: float,
+) -> tuple[bool, str]:
+    """
+    True = עובר. False = בחוץ — תמיד, ללא קשר לציון.
+
+    RSI > 80        → קניית יתר קיצונית
+    VWAP dist > 8%  → מחיר מופקע
+    mom שלילי כפול  → מומנטום הפוך
+    """
+    if rsi_14 > 80:
+        return False, f"RSI {rsi_14:.0f} > 80"
+    if abs(vwap_dist) > 8.0:
+        return False, f"VWAP dist {vwap_dist:.1f}% > 8%"
+    if momentum_5m < -2.0 and momentum_15m < -1.0:
+        return False, f"Negative momentum {momentum_5m:.1f}%/{momentum_15m:.1f}%"
+    return True, ""
+
+
+# ─── Trader Overrides ─────────────────────────────────────────────────────────
+
+def apply_trader_overrides(base_score: float, c: dict) -> float:
+    """
+    קנסות ובונוסים שמשקפים שיקול דעת של סוחר מומנטום.
+    לא פוסלים מטבע — משנים את מיקומו בדירוג.
+
+    קנסות:   RSI 75-80 (-15) | VWAP > 5% (-10)
+    בונוסים: RS חיובי (+8) | סטאפ הזהב (+15) | האצה (+5) | RSI אידאלי (+5)
+    """
+    score     = base_score
+    rsi       = c.get("rsi_14",      50.0)
+    vwap_dist = c.get("vwap_dist",    0.0)
+    rvol      = c.get("rvol",         1.0)
+    rs_1h     = c.get("rs_1h",        0.0)
+    rs_4h     = c.get("rs_4h",        0.0)
+    mom_5m    = c.get("momentum_5m",  0.0)
+    mom_15m   = c.get("momentum_15m", 0.0)
+    mom_1h    = c.get("momentum_1h",  0.0)
+
+    # קנסות
+    if rsi > 75:               score -= 15
+    if abs(vwap_dist) > 5.0:   score -= 10
+
+    # בונוס: חוזק יחסי מול BTC בשני טווחים
+    if rs_1h > 0 and rs_4h > 0:
+        score += 8
+
+    # בונוס: סטאפ הזהב — נפח חריג + מחיר עדיין ליד VWAP
+    if rvol > 5.0 and abs(vwap_dist) <= 2.0:
+        score += 15
+
+    # בונוס: האצת מומנטום (5m > 15m > 1h)
+    if 0 < mom_1h < mom_15m < mom_5m:
+        score += 5
+
+    # בונוס: RSI באזור הכניסה האידאלי
+    if 50 <= rsi <= 65:
+        score += 5
+
+    return round(_clamp(score), 1)
