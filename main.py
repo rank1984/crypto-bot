@@ -1,6 +1,6 @@
 """
 CRYPTO-BOT Elite — Main Loop
-רץ כל 5 דקות, סורק את ה-universe, ושולח לטלגרם.
+רץ כל 5 דקות (או ריצה בודדת), סורק את ה-universe, שומר ל-DB ושולח לטלגרם.
 
 Usage:
     python main.py
@@ -17,6 +17,7 @@ import argparse
 from scanner.universe  import build_universe
 from scanner.ranking   import rank_universe
 from notifier.sender   import send_telegram
+from storage.database  import init_db, save_scan_batch  # <--- ה-Database החדש שלך
 from utils.config      import SCAN_INTERVAL_SECONDS
 from utils.logger      import get_logger
 
@@ -51,6 +52,12 @@ def run_scan() -> None:
         log.warning("No coins passed scoring — nothing to send")
         return
 
+    # 2.5 Save to Database (שמירה אוטומטית של הנתונים לפני השליחה)
+    try:
+        save_scan_batch(top)
+    except Exception as db_err:
+        log.error(f"Failed to save scans to database: {db_err}")
+
     # 3. Send
     send_telegram(top)
 
@@ -76,6 +83,9 @@ def main() -> None:
     args = parser.parse_args()
 
     log.info("CRYPTO-BOT Elite starting...")
+
+    # אתחול ה-Database (יוצר את הקובץ והטבלאות במידה ואינם קיימים בריצה הראשונה)
+    init_db()
 
     if args.once:
         log.info("Mode: single scan (--once)")
