@@ -11,6 +11,13 @@ log = get_logger(__name__)
 _HEADERS = {"User-Agent": "crypto-bot/1.0"}
 
 
+_BLACKLIST = {
+    "USDCUSDT", "USDTUSDT", "BUSDUSDT", "TUSDUSDT",
+    "DAIUSDT",  "FRAXUSDT", "PYUSDUSDT", "USDDUSDT",
+    "FDUSDUSDT", "EURUSDT", "GBPUSDT",
+}
+
+
 def build_universe() -> list[str]:
     """
     מחזיר רשימת USDT pairs לפי volume.
@@ -49,6 +56,7 @@ def build_universe() -> list[str]:
             if not symbol:               continue
 
             sym_usdt = f"{symbol}USDT"
+            if sym_usdt in _BLACKLIST:      continue
             if sym_usdt not in symbols:
                 symbols.append(sym_usdt)
 
