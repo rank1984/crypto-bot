@@ -50,7 +50,7 @@ def calc_volume(df_5m: pd.DataFrame) -> dict[str, float]:
     # Volume Acceleration — last vs prev 5m candle
     prev_vol = float(vol.iloc[-2])
     if prev_vol > 0:
-        result["vol_accel"] = round(last_vol / prev_vol, 3)
+        result["vol_accel"] = round(min(last_vol / prev_vol, 20.0), 3)  # cap at 20x
 
     # RVOL — last candle vs rolling mean of prior 20 candles
     # (exclude the last candle itself from the baseline)
