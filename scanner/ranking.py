@@ -15,7 +15,7 @@ from scanner.scoring    import (
 )
 from scanner.relative_strength import calc_relative_strength, set_btc_reference
 from scanner.sympathy          import find_leaders, find_sympathy_plays, sympathy_bonus
-from scanner.open_interest     import get_oi_and_funding
+from scanner.flow_engine       import calc_flow_score
 from scanner.regime            import detect_regime, get_regime_weights, get_min_threshold
 from scanner.flow_engine          import calc_flow_score
 from scanner.pre_explosion_engine import calc_pre_explosion
@@ -77,6 +77,14 @@ def scan_coin(symbol: str) -> Optional[dict]:
         return None
 
     rs    = calc_relative_strength(df_1h)
+
+    # ── Flow Score ────────────────────────────────────────────────────────────
+    flow  = calc_flow_score(
+        symbol=symbol,
+        df_5m=df_5m,
+        rs_btc_1h=rs["rs_1h"],
+        rs_eth_1h=0.0,   # ETH RS נוסיף בהמשך
+    )
 
     # ── Flow Engine ───────────────────────────────────────────────────────────
     flow = calc_flow_score(
@@ -258,6 +266,13 @@ def scan_coin(symbol: str) -> Optional[dict]:
         # liquidity
         "liquidity_score":   liquidity["liquidity_score"],
         "bid_ask_ratio":     liquidity["bid_ask_ratio"],
+        # flow engine
+        "flow_score":       flow["flow_score"],
+        "flow_components":  flow["components"],
+        "is_compressed":    flow["is_compressed"],
+        "whale_detected":   flow["whale_detected"],
+        "cvd_trend":        flow["cvd_trend"],
+        "funding_rate":     flow["funding_rate"],
         # entry engine
         "entry_decision":  entry_signal.decision,
         "entry_setup":     entry_signal.setup_type,
