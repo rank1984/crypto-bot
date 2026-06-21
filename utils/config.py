@@ -40,9 +40,10 @@ FRESHNESS_WEIGHTS = {
 # Universe
 USE_DYNAMIC_UNIVERSE  = os.getenv("USE_DYNAMIC_UNIVERSE", "true").lower() == "true"
 
-# Telegram
+# Telegram & Display
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TOP_N            = int(os.getenv("TOP_N", "5")) # <--- השורה שהייתה חסרה התווספה לכאן
 
 # Scanner loop
 SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", "300"))
