@@ -17,8 +17,11 @@ from scanner.relative_strength import calc_relative_strength, set_btc_reference
 from scanner.sympathy          import find_leaders, find_sympathy_plays, sympathy_bonus
 from scanner.open_interest     import get_oi_and_funding
 from scanner.regime            import detect_regime, get_regime_weights, get_min_threshold
-from scanner.entry_engine      import evaluate_entry, EntrySignal
-from storage.sqlite_db         import init_db, save_signal
+from scanner.flow_engine          import calc_flow_score
+from scanner.pre_explosion_engine import calc_pre_explosion
+from scanner.fakeout_engine       import detect_fakeout
+from scanner.entry_engine         import evaluate_entry, EntrySignal
+from storage.sqlite_db            import init_db, save_signal
 from utils.config import TOP_N
 from utils.logger import get_logger
 
@@ -71,6 +74,26 @@ def scan_coin(symbol: str) -> Optional[dict]:
         return None
 
     rs    = calc_relative_strength(df_1h)
+
+    # ── Flow Engine ───────────────────────────────────────────────────────────
+    flow = calc_flow_score(
+        symbol=symbol, df_5m=df_5m,
+        rs_btc_1h=rs["rs_1h"], rs_eth_1h=0.0,
+    )
+
+    # ── Fakeout Detector — פסילה מוחלטת ──────────────────────────────────────
+    fakeout = detect_fakeout(
+        df_5m=df_5m,
+        rvol=vol["rvol"],
+        momentum_15m=mom["momentum_15m"],
+        momentum_5m=mom["momentum_5m"],
+        rs_btc_1h=rs["rs_1h"],
+        vwap_dist=ind["vwap_dist"],
+        rsi_14=ind["rsi_14"],
+    )
+    if fakeout["is_fakeout"]:
+        log.debug(f"{symbol}: fakeout {fakeout['fakeout_score']:.0f} — {fakeout['penalties'][:1]}")
+        return None
 
     # ── Hard Filters — פסילה מוחלטת ──────────────────────────────────────────
     passed, reason = passes_hard_filters(
@@ -133,6 +156,24 @@ def scan_coin(symbol: str) -> Optional[dict]:
     if rs["rs_4h"] > 2.0: rs_bonus += 4
     score = round(min(score + rs_bonus, 100.0), 1)
 
+    # ── Pre-Explosion Engine ──────────────────────────────────────────────────
+    pre_exp = calc_pre_explosion(
+        flow_score=flow["flow_score"],
+        final_score=score,
+        breakout_score=bs,
+        is_compressed=flow["is_compressed"],
+        whale_detected=flow["whale_detected"],
+        cvd_trend=flow["cvd_trend"],
+        oi_change=flow["oi_change"],
+        rs_btc_1h=rs["rs_1h"],
+        momentum_15m=mom["momentum_15m"],
+        vol_accel=flow["vol_accel"],
+    )
+
+    # Flow bonus: flow_score גבוה מוסיף עד +8 לציון הסופי
+    flow_bonus = min(8.0, flow["flow_score"] / 100 * 8)
+    score = round(min(score + flow_bonus, 100.0), 1)
+
     # ── Entry Engine ──────────────────────────────────────────────────────────
     entry_signal = evaluate_entry(
         coin={
@@ -173,6 +214,19 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "momentum_score":  ms,
         "breakout_score":  bs,
         "final_score":     score,
+        # flow engine
+        "flow_score":      flow["flow_score"],
+        "flow_components": flow["components"],
+        "is_compressed":   flow["is_compressed"],
+        "whale_detected":  flow["whale_detected"],
+        "cvd_trend":       flow["cvd_trend"],
+        "oi_change":       flow["oi_change"],
+        "funding_rate":    flow["funding_rate"],
+        # pre-explosion
+        "pre_exp_score":   pre_exp["score"],
+        "pre_exp_phase":   pre_exp["phase"],
+        "pre_exp_emoji":   pre_exp["emoji"],
+        "pre_exp_dir":     pre_exp["direction"],
         # entry engine
         "entry_decision":  entry_signal.decision,
         "entry_setup":     entry_signal.setup_type,
