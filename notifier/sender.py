@@ -27,6 +27,49 @@ def _fmt_price(p: float) -> str:
 def _fmt_pct(v: float) -> str:
     return f"+{v:.1f}%" if v >= 0 else f"{v:.1f}%"
 
+def _rare_setup(pre: float, flow: float, score: float, fakeout: str, event_score: float) -> str:
+    """מחזיר תגית נדירות."""
+    if pre >= 85 and flow >= 80 and score >= 88 and fakeout == "נמוך":
+        return "💎 TOP 1% SETUP"
+    if pre >= 75 and flow >= 65 and score >= 82 and event_score >= 30:
+        return "⭐ Rare Setup"
+    if pre >= 65 and flow >= 55:
+        return "🔥 High Potential"
+    return ""
+
+def _big_move_score(pre: float, flow: float, event: float) -> float:
+    """BIG MOVE SCORE = ממוצע משוקלל של pre + flow + event."""
+    return round(pre * 0.50 + flow * 0.35 + event * 0.15, 1)
+
+def _runner_exits(entry: float, sl: float, pre: float) -> dict:
+    """Runner 60% philosophy."""
+    if entry <= 0 or sl >= entry:
+        return {}
+    risk = (entry - sl) / entry
+    tp1  = round(entry * (1 + risk * 1.5), 8)   # 20% — להחזיר סיכון
+    if pre >= 80:
+        tp2 = round(entry * (1 + risk * 6), 8)   # 20% — +15% בממוצע
+        tp3 = round(entry * 1.50, 8)              # 60% runner target
+        trail = round(risk * 5 * 100, 1)
+    elif pre >= 60:
+        tp2 = round(entry * (1 + risk * 4), 8)
+        tp3 = round(entry * 1.30, 8)
+        trail = round(risk * 4 * 100, 1)
+    else:
+        tp2 = round(entry * (1 + risk * 3), 8)
+        tp3 = round(entry * 1.20, 8)
+        trail = round(risk * 3 * 100, 1)
+
+    return {
+        "tp1": tp1, "tp2": tp2, "tp3": tp3,
+        "tp1_pct": round((tp1-entry)/entry*100,1),
+        "tp2_pct": round((tp2-entry)/entry*100,1),
+        "tp3_pct": round((tp3-entry)/entry*100,1),
+        "trail":   trail,
+        "risk_pct": round(risk*100,2),
+        "rr": round((tp1-entry)/(entry-sl),2) if entry>sl else 0,
+    }
+
 def _grade(s: float) -> str:
     for t, l in [(90,"A+"),(80,"A"),(70,"A-"),(60,"B+"),(50,"B"),(0,"B-")]:
         if s >= t: return l
@@ -103,18 +146,25 @@ def format_message(top_coins: list[dict], portfolio_usd: float = 1000.0) -> str:
         whale      = c.get("whale_detected", False)
         pos_r, neg_r = _pos_neg(c)
 
+        event_score = c.get("event_score", 0)
+        catalysts   = c.get("catalysts", [])
+        big_move    = _big_move_score(pre, flow, event_score)
+
+        # תוקן: חישוב סיכון הפייקאאוט הועבר לכאן כדי למנוע שגיאת NameError בשורה הבאה
         fakeout_risk, fakeout_emoji = assess_fakeout_risk(
             c.get("rvol",1), c.get("vwap_dist",0),
             c.get("rsi_14",50), flow, is_comp,
         )
+        
+        rare        = _rare_setup(pre, flow, score, fakeout_risk, event_score)
 
-        # ── כותרת ────────────────────────────────────────────────────────────
-        lines.append(f"{_medal(i)} *{_e(sym)}* \\[{_grade(score)}\\]")
-        lines.append(f"💣 פוטנציאל למהלך גדול: `{pre:.0f}/100`")
-        lines.append(f"🌊 זרימת כסף \\(Flow\\): `{flow:.0f}/100` {_e(_flow_emoji(flow))}")
-
-        if phase_lbl:
-            lines.append(f"⚡ מצב: {_e(phase_lbl)}")
+        # ── כותרת (תוקן: הגנה על פלט הציון דרך הפונקציה _e) ────────────────────
+        lines.append(f"{_medal(i)} *{_e(sym)}* \\[{_e(_grade(score))}\\]")
+        if rare:
+            lines.append(f"{_e(rare)}")
+        lines.append(f"💣 *BIG MOVE SCORE: `{big_move:.0f}/100`*")
+        lines.append(f"🌊 Flow: `{flow:.0f}/100` {_e(_flow_emoji(flow))}")
+        lines.append(f"⚡ Pre\\-Breakout: `{pre:.0f}/100`")
 
         lines.append(f"💰 מחיר: `{_fmt_price(price)}` \\| RVOL: `{c.get('rvol',0):.1f}x` \\| RSI: `{c.get('rsi_14',0):.0f}`")
         lines.append(f"⏱ Mom: 5m `{_fmt_pct(c.get('momentum_5m',0))}` 15m `{_fmt_pct(c.get('momentum_15m',0))}` 1h `{_fmt_pct(c.get('momentum_1h',0))}` \\| BTC RS: `{_fmt_pct(c.get('rs_1h',0))}`")
@@ -122,23 +172,20 @@ def format_message(top_coins: list[dict], portfolio_usd: float = 1000.0) -> str:
         # ── החלטה ────────────────────────────────────────────────────────────
         if dec == "BUY" and entry_p > 0:
             pos_info = calc_position(score, pre, flow, regime, portfolio_usd)
-            runner   = calc_runner_exits(entry_p, entry_sl, atr, pre)
+            runner   = _runner_exits(entry_p, entry_sl, pre)
 
             lines.append(f"\n🟢 *פעולה: קנייה*")
             lines.append(f"📌 מחיר כניסה: `{_fmt_price(entry_p)}`")
-            lines.append(f"🛑 עצירת הפסד: `{_fmt_price(runner.get('sl', entry_sl))}` \\(סיכון: `{runner.get('risk_pct','?')}%`\\)")
+            lines.append(f"🛑 עצירת הפסד: `{_fmt_price(entry_sl)}` \\(סיכון: `{runner.get('risk_pct','?')}%`\\)")
             lines.append("")
-            lines.append(f"🎯 *יעד ראשון \\({runner.get('tp1_size','25%')}\\)*")
-            lines.append(f"`{_fmt_price(runner.get('tp1',0))}` \\({_e(_fmt_pct(runner.get('tp1_pct',0)))}\\) — להחזיר סיכון")
-            lines.append(f"🎯 *יעד שני \\({runner.get('tp2_size','25%')}\\)*")
-            lines.append(f"`{_fmt_price(runner.get('tp2',0))}` \\({_e(_fmt_pct(runner.get('tp2_pct',0)))}\\)")
-            lines.append(f"🚀 *Runner \\({runner.get('tp3_size','50% + Trailing')}\\)*")
-            lines.append(f"מטרה: `{_fmt_price(runner.get('tp3_target',0))}` \\({_e(_fmt_pct(runner.get('tp3_pct',0)))}\\)")
-            lines.append(f"Trailing Stop: `{runner.get('trail_pct','?')}%`")
+            lines.append(f"🎯 *יעד ראשון \\(20%\\)* — `{_fmt_price(runner.get('tp1',0))}` \\({_e(_fmt_pct(runner.get('tp1_pct',0)))}\\)")
+            lines.append("   להחזיר סיכון — הישאר חינם בשוק")
+            lines.append(f"🎯 *יעד שני \\(20%\\)* — `{_fmt_price(runner.get('tp2',0))}` \\({_e(_fmt_pct(runner.get('tp2_pct',0)))}\\)")
+            lines.append(f"🚀 *Runner \\(60%\\)* — מטרה: `{_fmt_price(runner.get('tp3',0))}` \\({_e(_fmt_pct(runner.get('tp3_pct',0)))}\\)")
+            lines.append(f"   Trailing Stop: `{runner.get('trail','?')}%` \\| יעד פתוח: 50%\\-200%\\+")
             lines.append("")
-            lines.append(f"💰 גודל פוזיציה: `{pos_info['pct_of_portfolio']*100:.1f}%` מהתיק \\(`${pos_info['usd_amount']:.0f}`\\)")
-            lines.append(f"⚖️ יחס סיכוי/סיכון: `{runner.get('rr','?')}x`")
-            lines.append(f"🔮 Confidence: `{pos_info['confidence']:.0f}` \\({_e(pos_info['confidence_label'])}\\)")
+            lines.append(f"💰 גודל: `{pos_info['pct_of_portfolio']*100:.1f}%` מהתיק \\(`${pos_info['usd_amount']:.0f}`\\)")
+            lines.append(f"⚖️ R:R: `{runner.get('rr','?')}x` \\| Confidence: `{pos_info['confidence']:.0f}` \\({_e(pos_info['confidence_label'])}\\)")
 
         elif dec == "WAIT":
             lines.append(f"\n🟡 *מה לעשות עכשיו?*")
@@ -198,7 +245,11 @@ def send_telegram(top_coins: list[dict], portfolio_usd: float = 1000.0) -> bool:
                 if dec == "BUY":
                     plain += f" | כניסה: {_fmt_price(c.get('entry_price',0))}"
                 plain += "\n\n"
-            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=10)
-        except Exception:
-            pass
+            
+            resp_fallback = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=10)
+            resp_fallback.raise_for_status()
+            log.info("Telegram Fallback Plain Text ✓")
+            return True
+        except Exception as fallback_e:
+            log.error(f"Telegram Fallback also failed: {fallback_e}")
         return False
