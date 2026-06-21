@@ -1,4 +1,8 @@
 def get_signal_state(raw_decision: str, confidence: float, is_active_runner: bool) -> str:
+    """
+    Decision Layer:
+    מחשב ומחזיר את המצב הטהור של המטבע בלבד.
+    """
     if is_active_runner:
         return "RUNNER"
         
