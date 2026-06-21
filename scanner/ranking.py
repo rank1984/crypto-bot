@@ -16,6 +16,7 @@ from scanner.scoring    import (
 from scanner.relative_strength import calc_relative_strength, set_btc_reference
 from scanner.sympathy          import find_leaders, find_sympathy_plays, sympathy_bonus
 from scanner.flow_engine       import calc_flow_score
+from scanner.pre_breakout      import calc_pre_breakout_score, get_runner_exits
 from scanner.regime            import detect_regime, get_regime_weights, get_min_threshold
 from scanner.flow_engine          import calc_flow_score
 from scanner.pre_explosion_engine import calc_pre_explosion
@@ -202,7 +203,20 @@ def scan_coin(symbol: str) -> Optional[dict]:
     # ── Liquidity Engine ──────────────────────────────────────────────────────
     liquidity = calc_liquidity_score(symbol)
 
-    # ── Entry Engine ──────────────────────────────────────────────────────────
+    # ── Pre-Breakout Score ────────────────────────────────────────────────────
+    pre   = calc_pre_breakout_score(
+        df_5m=df_5m, df_1h=df_1h,
+        oi_change_pct=flow.get("oi_change", 0),
+        funding_rate=flow.get("funding_rate", 0),
+        rs_1h=rs["rs_1h"], rs_4h=rs["rs_4h"],
+        mom_15m=mom["momentum_15m"],
+        mom_1h=mom["momentum_1h"],
+        ema20=ind["ema20"], ema50=ind["ema50"],
+        price=last_price,
+    )
+
+    # Runner exits (למהלכים גדולים)
+    runner = get_runner_exits(last_price, ind["atr_14"])
     entry_signal = evaluate_entry(
         coin={
             **mom, **vol, **ind,
