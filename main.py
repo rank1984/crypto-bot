@@ -1,101 +1,107 @@
 """
 CRYPTO-BOT Elite — Main Loop
-רץ כל 5 דקות, סורק את ה-universe, ושולח לטלגרם.
 
-Usage:
-    python main.py
-
-Environment variables required:
-    TELEGRAM_TOKEN   — bot token from @BotFather
-    TELEGRAM_CHAT_ID — your chat/channel ID
+Environment variables:
+    TELEGRAM_TOKEN        — bot token
+    TELEGRAM_CHAT_ID      — chat/channel ID
+    USE_DYNAMIC_UNIVERSE  — true/false (default: true)
 """
-import time
-import signal
-import sys
-import argparse
+import time, signal, sys, argparse
 
-from scanner.universe  import build_universe
-from scanner.ranking   import rank_universe
-from notifier.sender   import send_telegram
-from utils.config      import SCAN_INTERVAL_SECONDS
-from utils.logger      import get_logger
+from scanner.universe         import build_universe
+from scanner.dynamic_universe import build_dynamic_universe
+from scanner.market_data      import get_candles
+from scanner.ranking          import rank_universe
+from notifier.sender          import send_telegram
+from utils.config             import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
+from utils.logger             import get_logger
 
 log = get_logger("main")
 
-# ─── Graceful shutdown ────────────────────────────────────────────────────────
 _running = True
 
 def _handle_signal(sig, frame):
     global _running
-    log.info("Shutdown signal received — stopping after current scan")
+    log.info("Shutdown signal — stopping after current scan")
     _running = False
 
 signal.signal(signal.SIGINT,  _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
 
 
-# ─── Single scan cycle ────────────────────────────────────────────────────────
-
 def run_scan() -> None:
     log.info("── Scan started ──────────────────────────────────────")
 
-    # 1. Universe
-    symbols = build_universe()
+    # ── 1. Universe ───────────────────────────────────────────────────────────
+    if USE_DYNAMIC_UNIVERSE:
+        log.info("Mode: Dynamic Universe")
+        # BTC 1h move לLayer RS
+        btc_df     = get_candles("BTCUSDT", "1hour", limit=3)
+        btc_1h_mov = 0.0
+        if btc_df is not None and len(btc_df) >= 2:
+            btc_1h_mov = (float(btc_df["close"].iloc[-1]) - float(btc_df["close"].iloc[-2])) \
+                         / float(btc_df["close"].iloc[-2]) * 100
+        symbols = build_dynamic_universe(
+            get_candles_fn=get_candles,
+            btc_1h_move=btc_1h_mov,
+            use_layers=True,
+        )
+    else:
+        log.info("Mode: Static Universe")
+        symbols = build_universe()
+
     if not symbols:
         log.error("Empty universe — skipping scan")
         return
 
-    # 2. Score & rank
+    # ── 2. Score & Rank ───────────────────────────────────────────────────────
     top = rank_universe(symbols)
     if not top:
         log.warning("No coins passed scoring — nothing to send")
         return
 
-    # 3. Send
+    # ── 3. Send ───────────────────────────────────────────────────────────────
     send_telegram(top)
 
+    # ── 4. Log summary ────────────────────────────────────────────────────────
     log.info("── Scan complete ─────────────────────────────────────")
     for i, c in enumerate(top, 1):
         log.info(
-            f"  {i}. {c['symbol']:<12}  "
+            f"  {i}. {c['symbol']:<12} "
             f"score={c['final_score']:.0f}  "
-            f"rvol={c['rvol']:.1f}x  "
-            f"mom5m={c['momentum_5m']:+.2f}%"
+            f"flow={c.get('flow_score',0):.0f}  "
+            f"pre={c.get('pre_exp_score',0):.0f}  "
+            f"phase={c.get('pre_exp_phase',''):<20}  "
+            f"entry={c.get('entry_decision','NO')}"
         )
 
 
-# ─── Main loop ────────────────────────────────────────────────────────────────
-
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Run a single scan and exit (used by GitHub Actions)",
-    )
+    parser.add_argument("--once", action="store_true",
+                        help="Single scan and exit (GitHub Actions)")
     args = parser.parse_args()
 
-    log.info("CRYPTO-BOT Elite starting...")
+    log.info(f"CRYPTO-BOT Elite starting | dynamic_universe={USE_DYNAMIC_UNIVERSE}")
 
     if args.once:
-        log.info("Mode: single scan (--once)")
+        log.info("Mode: --once")
         run_scan()
         sys.exit(0)
 
-    log.info(f"Mode: loop every {SCAN_INTERVAL_SECONDS}s ({SCAN_INTERVAL_SECONDS//60}m)")
+    log.info(f"Mode: loop every {SCAN_INTERVAL_SECONDS}s")
     while _running:
         try:
             run_scan()
         except Exception as e:
-            log.error(f"Unhandled error in scan cycle: {e}", exc_info=True)
+            log.error(f"Scan error: {e}", exc_info=True)
 
         if not _running:
             break
 
-        log.info(f"Sleeping {SCAN_INTERVAL_SECONDS}s until next scan...")
+        log.info(f"Sleeping {SCAN_INTERVAL_SECONDS}s...")
         for _ in range(SCAN_INTERVAL_SECONDS):
-            if not _running:
-                break
+            if not _running: break
             time.sleep(1)
 
     log.info("CRYPTO-BOT Elite stopped.")
