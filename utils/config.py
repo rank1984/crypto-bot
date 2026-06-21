@@ -37,12 +37,10 @@ FRESHNESS_WEIGHTS = {
     "vol_accel": 0.20,
 }
 
-# Ranking
-TOP_N = int(os.getenv("TOP_N", "5"))
+# Universe
+USE_DYNAMIC_UNIVERSE  = os.getenv("USE_DYNAMIC_UNIVERSE", "true").lower() == "true"
 
 # Telegram
-import os
-
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
