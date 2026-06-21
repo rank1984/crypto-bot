@@ -20,6 +20,9 @@ from scanner.regime            import detect_regime, get_regime_weights, get_min
 from scanner.flow_engine          import calc_flow_score
 from scanner.pre_explosion_engine import calc_pre_explosion
 from scanner.fakeout_engine       import detect_fakeout
+from scanner.alignment_engine     import calc_alignment, alignment_summary
+from scanner.alpha_engine         import calc_alpha_score, alpha_bonus
+from scanner.liquidity_engine     import calc_liquidity_score
 from scanner.entry_engine         import evaluate_entry, EntrySignal
 from storage.sqlite_db            import init_db, save_signal
 from utils.config import TOP_N
@@ -80,6 +83,10 @@ def scan_coin(symbol: str) -> Optional[dict]:
         symbol=symbol, df_5m=df_5m,
         rs_btc_1h=rs["rs_1h"], rs_eth_1h=0.0,
     )
+
+    # ── Alignment Engine ──────────────────────────────────────────────────────
+    df_4h = dfs.get("4hour")   # KuCoin: "4hour"
+    align = calc_alignment(df_5m, df_15m, df_1h, df_4h)
 
     # ── Fakeout Detector — פסילה מוחלטת ──────────────────────────────────────
     fakeout = detect_fakeout(
@@ -174,6 +181,19 @@ def scan_coin(symbol: str) -> Optional[dict]:
     flow_bonus = min(8.0, flow["flow_score"] / 100 * 8)
     score = round(min(score + flow_bonus, 100.0), 1)
 
+    # ── Alpha Engine ──────────────────────────────────────────────────────────
+    alpha = calc_alpha_score(
+        flow_components=flow["components"],
+        alignment_score=align["alignment_score"],
+        regime=regime if "regime" in dir() else "RANGE",
+        rs_btc_1h=rs["rs_1h"],
+        rs_btc_4h=rs["rs_4h"],
+    )
+    score = round(min(score + alpha_bonus(alpha["alpha_score"]), 100.0), 1)
+
+    # ── Liquidity Engine ──────────────────────────────────────────────────────
+    liquidity = calc_liquidity_score(symbol)
+
     # ── Entry Engine ──────────────────────────────────────────────────────────
     entry_signal = evaluate_entry(
         coin={
@@ -227,6 +247,17 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "pre_exp_phase":   pre_exp["phase"],
         "pre_exp_emoji":   pre_exp["emoji"],
         "pre_exp_dir":     pre_exp["direction"],
+        # alignment
+        "alignment_score":   align["alignment_score"],
+        "aligned_count":     align["aligned_count"],
+        "alignment_summary": alignment_summary(align["details"]),
+        # alpha
+        "alpha_score":       alpha["alpha_score"],
+        "signal_quality":    alpha["signal_quality"],
+        "edge_factors":      alpha["edge_factors"],
+        # liquidity
+        "liquidity_score":   liquidity["liquidity_score"],
+        "bid_ask_ratio":     liquidity["bid_ask_ratio"],
         # entry engine
         "entry_decision":  entry_signal.decision,
         "entry_setup":     entry_signal.setup_type,
