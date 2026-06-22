@@ -11,17 +11,17 @@ def get_candles(symbol: str, timeframe: str, limit: int = 100, end_time: Optiona
     מושך נרות מ-KuCoin עבור סימבול ואינטרוול מסוים.
     אם end_time מסופק (בפורמט Unix Timestamp בשניות), המערכת תמשוך נתונים היסטוריים עד לאותה נקודה.
     """
+    # ניהול ה-Cache: נשתמש בזה רק בריצה רגילה (לייב) ולא בזמן Replay
+    # התיקון כאן: מעבירים את symbol ו-timeframe בנפרד כפי שהפונקציה שלך מצפה לקבל
+    if end_time is None:
+        cached_data = cache_load(symbol, timeframe)
+        if cached_data is not None:
+            return pd.DataFrame(cached_data)
+
     # התאמת פורמט הסימבול ל-KuCoin (למשל מ-SYNUSDT ל-SYN-USDT)
     kucoin_symbol = symbol
     if "USDT" in symbol and "-" not in symbol:
         kucoin_symbol = symbol.replace("USDT", "-USDT")
-
-    # ניהול ה-Cache: נרצה להשתמש בזה רק בריצה רגילה (לייב) ולא בזמן Replay
-    cache_key = f"candles_{symbol}_{timeframe}_{limit}"
-    if end_time is None:
-        cached_data = cache_load(cache_key)
-        if cached_data is not None:
-            return pd.DataFrame(cached_data)
 
     # בניית הפרמטרים לקריאת ה-API
     params = {
@@ -46,7 +46,6 @@ def get_candles(symbol: str, timeframe: str, limit: int = 100, end_time: Optiona
             return pd.DataFrame()
             
         # בניית ה-DataFrame מהמבנה של KuCoin
-        # הפורמט של KuCoin מחזיר רשימה של רשימות: [time, open, close, high, low, volume, turnover]
         df = pd.DataFrame(data, columns=['open_time', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
         
         # המרת טיפוסים
@@ -54,13 +53,12 @@ def get_candles(symbol: str, timeframe: str, limit: int = 100, end_time: Optiona
         for col in ['open', 'close', 'high', 'low', 'volume', 'turnover']:
             df[col] = df[col].astype(float)
             
-        # KuCoin מחזיר מהחדש לישן (Reverse Chronological). 
-        # אנחנו הופכים את הסדר כדי שהאינדיקטורים הטכניים יחושבו נכון (מהישן ביותר לחדש ביותר)
+        # היפוך סדר כרונולוגי (מהישן לחדש) עבור האינדיקטורים
         df = df.iloc[::-1].reset_index(drop=True)
 
-        # שמירה ב-Cache (רק אם אנחנו בריצת לייב רגילה)
+        # שמירה ב-Cache (רק אם אנחנו בריצת לייב רגילה ובזמן אמת)
         if end_time is None:
-            cache_save(cache_key, df.to_dict(orient='records'))
+            cache_save(symbol, timeframe, df.to_dict(orient='records'))
 
         return df
 
@@ -71,9 +69,7 @@ def get_candles(symbol: str, timeframe: str, limit: int = 100, end_time: Optiona
 def get_all_timeframes(symbol: str, end_time: Optional[int] = None) -> Dict[str, pd.DataFrame]:
     """
     מוריד ומארגן את כל ה-Timeframes הנדרשים לצורך ה-Ranking של המטבע.
-    מזרים את ה-end_time הלאה אל פונקציית הבסיס.
     """
-    # רשימת האינטרוולים שהבוט שלך צריך לצורך חישוב ה-Score (ודא שזה תואם לאינטרוולים שלך)
     timeframes = ["5min", "15min", "1hour", "4hour"]
     dfs = {}
     
