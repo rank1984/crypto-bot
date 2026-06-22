@@ -11,12 +11,14 @@ def get_candles(symbol: str, timeframe: str, limit: int = 100, end_time: Optiona
     מושך נרות מ-KuCoin עבור סימבול ואינטרוול מסוים.
     אם end_time מסופק (בפורמט Unix Timestamp בשניות), המערכת תמשוך נתונים היסטוריים עד לאותה נקודה.
     """
-    # ניהול ה-Cache: נשתמש בזה רק בריצה רגילה (לייב) ולא בזמן Replay
-    # התיקון כאן: מעבירים את symbol ו-timeframe בנפרד כפי שהפונקציה שלך מצפה לקבל
+    # ניהול ה-Cache: טעינה (רק בריצת לייב רגילה)
     if end_time is None:
         cached_data = cache_load(symbol, timeframe)
         if cached_data is not None:
-            return pd.DataFrame(cached_data)
+            df = pd.DataFrame(cached_data)
+            if not df.empty and 'open_time' in df.columns:
+                df['open_time'] = pd.to_datetime(df['open_time'])
+            return df
 
     # התאמת פורמט הסימבול ל-KuCoin (למשל מ-SYNUSDT ל-SYN-USDT)
     kucoin_symbol = symbol
@@ -30,7 +32,7 @@ def get_candles(symbol: str, timeframe: str, limit: int = 100, end_time: Optiona
         "limit": limit
     }
 
-    # 🔥 הצינור ל-Replay Engine: הזרקת חותמת הזמן של העבר ל-KuCoin
+    # הצינור ל-Replay Engine: הזרקת חותמת הזמן של העבר ל-KuCoin
     if end_time is not None:
         params["endAt"] = int(end_time)
 
@@ -53,12 +55,20 @@ def get_candles(symbol: str, timeframe: str, limit: int = 100, end_time: Optiona
         for col in ['open', 'close', 'high', 'low', 'volume', 'turnover']:
             df[col] = df[col].astype(float)
             
+        # פתרון למלכודת הנפח: מייצרים עמודה ייעודית לנפח ב-USDT (turnover במונחי KuCoin)
+        df['volume_usdt'] = df['turnover']
+            
         # היפוך סדר כרונולוגי (מהישן לחדש) עבור האינדיקטורים
         df = df.iloc[::-1].reset_index(drop=True)
 
         # שמירה ב-Cache (רק אם אנחנו בריצת לייב רגילה ובזמן אמת)
         if end_time is None:
-            cache_save(symbol, timeframe, df.to_dict(orient='records'))
+            try:
+                df_cache = df.copy()
+                df_cache['open_time'] = df_cache['open_time'].astype(str) # המרה לטקסט כדי למנוע שגיאת סיריאליזציה
+                cache_save(symbol, timeframe, df_cache.to_dict(orient='records'))
+            except Exception as cache_err:
+                print(f"⚠️ אזהרת שמירה ב-Cache: {cache_err}")
 
         return df
 
