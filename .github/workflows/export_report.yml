@@ -1,0 +1,27 @@
+name: Daily DB Export
+on:
+  schedule:
+    - cron: '5 0 * * *' # רץ בכל יום ב-00:05 UTC
+  workflow_dispatch: # מאפשר הרצה ידנית בלחיצת כפתור לטסטים
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Daily Export
+        run: |
+          python -c "from db.manager import export_daily_csv; export_daily_csv()"
+
+      - name: Upload Daily Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-filtered-report
+          path: exports/filtered_coins_*.csv
