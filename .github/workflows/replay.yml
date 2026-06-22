@@ -34,7 +34,8 @@ jobs:
           TOP_N:                 ${{ vars.TOP_N }}
           MAX_SYMBOLS:           ${{ vars.MAX_SYMBOLS }}
           MIN_PRICE:             ${{ vars.MIN_PRICE }}
-          run: python -m tools.replay_engine
+        run: python -m tools.replay_engine # <-- התיקון כאן! השורה יצאה מה-env ומיושרת כמו שצריך
+
       - name: 💾 Save Replay CSV Report
         uses: actions/upload-artifact@v4
         with:
