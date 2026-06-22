@@ -1,23 +1,22 @@
 from datetime import datetime
-from db.manager import log_filtered_coin
+from db.research_layer import log_filtered_coin
 
-def check_and_log_filters(coin_metrics: dict) -> bool:
+def passes_hard_filters(coin_metrics: dict) -> bool:
     """
-    מריץ פילטרים קשיחים. אם מטבע נפסל, 
-    מתעד את כל המטריקות שלו ואת סיבת הפסילה ב-DB.
+    בודק פילטרים קשיחים פיזיים (נפח, נזילות).
+    במידה ונכשל, מתעד את כל המטריקות לתוך SQLite למחקר עתידי.
     """
-    reason_filtered = None
     rvol = coin_metrics.get('rvol', 0)
+    reason_filtered = None
     
-    # הפילטר הקשיח הנוכחי (לפני השינוי ל-Adaptive)
+    # הרף הקשיח המקורי לפני המעבר למודל אדפטיבי
     if rvol < 3.0:
         reason_filtered = "Low RVOL"
         
-    # [כאן אפשר להוסיף פילטרים קשיחים נוספים כמו סחירות, מרווחים וכו']
-    # elif gap_risk > X: reason_filtered = "High Gap Risk"
+    # במידה ויש פילטרים קשיחים נוספים בעתיד
+    # elif market_cap < 5000000: reason_filtered = "Ultra-Small Cap"
 
     if reason_filtered:
-        # בניית אובייקט התיעוד המלא
         log_data = {
             "timestamp": datetime.now().isoformat(),
             "symbol": coin_metrics['symbol'],
@@ -27,14 +26,11 @@ def check_and_log_filters(coin_metrics: dict) -> bool:
             "rvol": rvol,
             "oi_change": coin_metrics.get('oi_change', 0),
             "rs_1h": coin_metrics.get('rs_1h', 0),
-            "rs_4h": coin_metrics.get('rs_4h', 0),
             "is_compressed": int(coin_metrics.get('is_compressed', False)),
             "whale_detected": int(coin_metrics.get('whale_detected', False)),
             "reason_filtered": reason_filtered
         }
-        
-        # שמירה אסינכרונית או ישירה ל-DB
         log_filtered_coin(log_data)
-        return False # המטבע נפסל
+        return False
         
-    return True # המטבע עבר את הפילטרים
+    return True
