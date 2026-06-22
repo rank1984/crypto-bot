@@ -23,18 +23,19 @@ jobs:
 
       - name: Run Replay Engine
         env:
-          # העתקת משתני הסביבה כדי למנוע קריסות של רכיבי הבוט וה-Config הפנימי
+          # Secrets
           TELEGRAM_TOKEN:      ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
           BINANCE_API_KEY:     ${{ secrets.BINANCE_API_KEY }}
           BINANCE_API_SECRET:  ${{ secrets.BINANCE_API_SECRET }}
           
-          SCAN_INTERVAL_SECONDS: ${{ vars.SCAN_INTERVAL_SECONDS }}
-          MIN_DAILY_VOLUME:      ${{ vars.MIN_DAILY_VOLUME }}
-          TOP_N:                 ${{ vars.TOP_N }}
-          MAX_SYMBOLS:           ${{ vars.MAX_SYMBOLS }}
-          MIN_PRICE:             ${{ vars.MIN_PRICE }}
-        run: python -m tools.replay_engine # <-- התיקון כאן! השורה יצאה מה-env ומיושרת כמו שצריך
+          # Variables עם הגנות מובנות מפני ערכים ריקים (אם המשתנה ריק, ייבחר ערך ברירת המחדל מימין)
+          SCAN_INTERVAL_SECONDS: ${{ vars.SCAN_INTERVAL_SECONDS || '300' }}
+          MIN_DAILY_VOLUME:      ${{ vars.MIN_DAILY_VOLUME || '1500000' }}
+          TOP_N:                 ${{ vars.TOP_N || '5' }}
+          MAX_SYMBOLS:           ${{ vars.MAX_SYMBOLS || '100' }}
+          MIN_PRICE:             ${{ vars.MIN_PRICE || '0.0001' }}
+        run: python -m tools.replay_engine
 
       - name: 💾 Save Replay CSV Report
         uses: actions/upload-artifact@v4
