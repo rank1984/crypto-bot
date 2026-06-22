@@ -1,127 +1,85 @@
-"""
-CRYPTO-BOT Elite — Market Data (Time Machine Ready)
-מקור: KuCoin (חינמי, ללא הרשמה, עובד מ-GitHub Actions).
-
-KuCoin intervals: 1min, 5min, 15min, 1hour
-"""
-import time
-import pandas as pd
+import os
 import requests
+import pandas as pd
+from typing import Optional, Dict
 
+from utils.config import KUCOIN_BASE
 from utils.cache  import load as cache_load, save as cache_save
-from utils.config import KUCOIN_BASE, CANDLES_PER_TF, TIMEFRAMES
-from utils.logger import get_logger
 
-log = get_logger(__name__)
-
-_HEADERS = {"User-Agent": "crypto-bot/1.0"}
-_DELAY   = 0.12  # 120ms בין קריאות → ~8 req/s
-
-def _fetch_kucoin(symbol: str, interval: str, end_time: int = None):
+def get_candles(symbol: str, timeframe: str, limit: int = 100, end_time: Optional[int] = None) -> pd.DataFrame:
     """
-    symbol: "BTCUSDT" → KuCoin רוצה "BTC-USDT"
-    interval: "5min"
-    end_time: Unix timestamp בשניות (s). אם מסופק, יחזיר נרות עד לנקודה זו בעבר.
+    מושך נרות מ-KuCoin עבור סימבול ואינטרוול מסוים.
+    אם end_time מסופק (בפורמט Unix Timestamp בשניות), המערכת תמשוך נתונים היסטוריים עד לאותה נקודה.
     """
-    kucoin_sym = symbol.replace("USDT", "-USDT")
-    
+    # התאמת פורמט הסימבול ל-KuCoin (למשל מ-SYNUSDT ל-SYN-USDT)
+    kucoin_symbol = symbol
+    if "USDT" in symbol and "-" not in symbol:
+        kucoin_symbol = symbol.replace("USDT", "-USDT")
+
+    # ניהול ה-Cache: נרצה להשתמש בזה רק בריצה רגילה (לייב) ולא בזמן Replay
+    cache_key = f"candles_{symbol}_{timeframe}_{limit}"
+    if end_time is None:
+        cached_data = cache_load(cache_key)
+        if cached_data is not None:
+            return pd.DataFrame(cached_data)
+
+    # בניית הפרמטרים לקריאת ה-API
     params = {
-        "symbol": kucoin_sym, 
-        "type": interval
+        "symbol": kucoin_symbol,
+        "type": timeframe,
+        "limit": limit
     }
-    
-    # 🕒 מנוע מכונת הזמן: אם הוגדר end_time, נבקש מ-KuCoin לחתוך את ההיסטוריה שם
+
+    # 🔥 הצינור ל-Replay Engine: הזרקת חותמת הזמן של העבר ל-KuCoin
     if end_time is not None:
         params["endAt"] = int(end_time)
 
     try:
-        resp = requests.get(
-            f"{KUCOIN_BASE}/api/v1/market/candles",
-            headers=_HEADERS,
-            params=params,
-            timeout=12,
-        )
+        url = f"{KUCOIN_BASE}/api/v1/market/candles"
+        resp = requests.get(url, params=params, timeout=10)
         resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") != "200000":
-            log.debug(f"KuCoin error {symbol}/{interval}: {data.get('msg')}")
-            return None
-        return data.get("data", [])
+        
+        res_json = resp.json()
+        data = res_json.get("data", [])
+        
+        if not data:
+            return pd.DataFrame()
+            
+        # בניית ה-DataFrame מהמבנה של KuCoin
+        # הפורמט של KuCoin מחזיר רשימה של רשימות: [time, open, close, high, low, volume, turnover]
+        df = pd.DataFrame(data, columns=['open_time', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
+        
+        # המרת טיפוסים
+        df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='s')
+        for col in ['open', 'close', 'high', 'low', 'volume', 'turnover']:
+            df[col] = df[col].astype(float)
+            
+        # KuCoin מחזיר מהחדש לישן (Reverse Chronological). 
+        # אנחנו הופכים את הסדר כדי שהאינדיקטורים הטכניים יחושבו נכון (מהישן ביותר לחדש ביותר)
+        df = df.iloc[::-1].reset_index(drop=True)
+
+        # שמירה ב-Cache (רק אם אנחנו בריצת לייב רגילה)
+        if end_time is None:
+            cache_save(cache_key, df.to_dict(orient='records'))
+
+        return df
+
     except Exception as e:
-        log.debug(f"KuCoin fetch failed {symbol}/{interval}: {e}")
-        return None
-
-
-def _to_df(raw: list, limit: int) -> pd.DataFrame:
-    if not raw:
+        print(f"❌ שגיאה במשיכת נרות עבור {symbol} ב-TF {timeframe}: {e}")
         return pd.DataFrame()
 
-    # KuCoin: [timestamp, open, close, high, low, volume, turnover]
-    # סדר הפוך — הישן ראשון אחרי reverse
-    rows = list(reversed(raw))
-    df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume", "turnover"])
+def get_all_timeframes(symbol: str, end_time: Optional[int] = None) -> Dict[str, pd.DataFrame]:
+    """
+    מוריד ומארגן את כל ה-Timeframes הנדרשים לצורך ה-Ranking של המטבע.
+    מזרים את ה-end_time הלאה אל פונקציית הבסיס.
+    """
+    # רשימת האינטרוולים שהבוט שלך צריך לצורך חישוב ה-Score (ודא שזה תואם לאינטרוולים שלך)
+    timeframes = ["5min", "15min", "1hour", "4hour"]
+    dfs = {}
     
-    for col in ["open", "high", "low", "close", "volume"]:
-        df[col] = df[col].astype(float)
-        
-    df["open_time"]  = pd.to_datetime(df["ts"].astype(int), unit="s", utc=True)
-    df["close_time"] = df["open_time"]
-    df["quote_volume"] = df["turnover"].astype(float)
-    df["trades"] = 0
-    
-    # חיתוך מדויק: לוקחים רק את ה-X נרות האחרונים שהיו זמינים עד אותה נקודת זמן
-    df = df.tail(limit).reset_index(drop=True)
-    
-    return df[["open_time","open","high","low","close","volume","close_time","quote_volume","trades"]]
-
-
-def get_candles(symbol: str, interval: str, limit: int = CANDLES_PER_TF, end_time: int = None):
-    """
-    מושך נרות למטבע. תומך במצב Live (ברירת מחדל) ובמצב Replay (באמצעות end_time).
-    """
-    # ⚠️ אם אנחנו מריצים בדיקה על העבר, עוקפים את ה-Cache כדי למנוע זיהום נתונים
-    if end_time is not None:
-        raw = _fetch_kucoin(symbol, interval, end_time=end_time)
-        if not raw:
-            return None
-        return _to_df(raw, limit)
-        
-    # מצב LIVE רגיל - משתמש בבסיס הנתונים הזמני (Cache)
-    cached = cache_load(symbol, interval)
-    if cached is not None:
-        return _to_df(cached, limit)
-
-    raw = _fetch_kucoin(symbol, interval)
-    if not raw:
-        return None
-
-    cache_save(symbol, interval, raw)
-    time.sleep(_DELAY)
-    return _to_df(raw, limit)
-
-
-def get_all_timeframes(symbol: str, end_time: int = None) -> dict:
-    """
-    מושך את כל טווחי הזמן עבור מטבע מסוים, תומך ב-end_time עבור סימולציית עבר.
-    """
-    result = {}
-    for tf in TIMEFRAMES:
-        df = get_candles(symbol, tf, end_time=end_time)
-        if df is not None and not df.empty:
-            result[tf] = df
-    return result
-
-
-if __name__ == "__main__":
-    # בדיקת ריצת Live רגילה להווה
-    print("--- 🟢 Testing LIVE Mode ---")
-    dfs = get_all_timeframes("BTCUSDT")
-    if "5min" in dfs:
-        print(f"LIVE 5min: {len(dfs['5min'])} candles, last close = {dfs['5min']['close'].iloc[-1]:.2f}")
-        
-    # בדיקת סימולציה לעבר (למשל, נתוני שוק של לפני 6 שעות)
-    print("\n--- 🕒 Testing REPLAY Mode (6 hours ago) ---")
-    six_hours_ago = int(time.time()) - (6 * 60 * 60)
-    dfs_past = get_all_timeframes("BTCUSDT", end_time=six_hours_ago)
-    if "5min" in dfs_past:
-        print(f"REPLAY 5min: {len(dfs_past['5min'])} candles, past close = {dfs_past['5min']['close'].iloc[-1]:.2f}")
+    for tf in timeframes:
+        df = get_candles(symbol, tf, limit=100, end_time=end_time)
+        if not df.empty:
+            dfs[tf] = df
+            
+    return dfs
