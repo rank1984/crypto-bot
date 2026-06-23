@@ -10,7 +10,6 @@ log = get_logger(__name__)
 
 _HEADERS = {"User-Agent": "crypto-bot/1.0"}
 
-
 _BLACKLIST = {
     "USDCUSDT", "USDTUSDT", "BUSDUSDT", "TUSDUSDT",
     "DAIUSDT",  "FRAXUSDT", "PYUSDUSDT", "USDDUSDT",
@@ -68,7 +67,6 @@ def build_universe() -> list[str]:
     result = symbols[:MAX_SYMBOLS]
     log.info(f"Universe: {len(result)} symbols")
     return result
-
 
 if __name__ == "__main__":
     coins = build_universe()
