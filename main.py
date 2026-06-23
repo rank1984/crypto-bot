@@ -3,6 +3,7 @@ CRYPTO-BOT Elite — MAIN FLOW (Fixed Integration)
 """
 
 from scanner.signal_filter import filter_coins
+from scanner.data_normalizer import normalize_universe
 from utils.logger import get_logger
 
 # 👇 זה ה-renderer החדש הבטוח
@@ -11,16 +12,19 @@ from utils.telegram_renderer import send_telegram
 log = get_logger(__name__)
 
 
-def run_once(coins: list[dict]):
+def run_once(raw_coins: list):
     """
     ריצה אחת של הבוט
     """
 
-    log.info(f"Starting scan — coins received: {len(coins)}")
+    log.info(f"Starting scan — coins received: {len(raw_coins)}")
 
     # ─────────────────────────────
-    # 1. Signal Filtering
+    # 1. Data Normalization & Signal Filtering
     # ─────────────────────────────
+    # הופך את רשימת המחרוזות לרשימת מילונים עם נתוני אמת
+    coins = normalize_universe(raw_coins)
+    
     result = filter_coins(coins)
 
     buy     = result["buy"]
@@ -81,9 +85,7 @@ def run_once(coins: list[dict]):
 # CLI entry
 # ─────────────────────────────
 if __name__ == "__main__":
-    # כאן בדרך כלל יבוא data מה-scanner שלך
-    from scanner.universe import get_coins  # אם קיים אצלך
-
-    coins = get_coins()
-
-    run_once(coins)
+    from scanner.universe import get_coins  
+    
+    coins_list = get_coins()
+    run_once(coins_list)
