@@ -115,4 +115,20 @@ def run_pipeline(debug_mode: bool = False):
         log.info(f"Found {len(buy_signals)} BUY signals! Dispatching alerts...")
         if send_alert_func:
             for signal in buy_signals:
-                send_alert_func(
+                send_alert_func(signal)
+    else:
+        log.info("No coins passed the threshold.")
+        # סיכום "Near Misses" (Top 3)
+        if all_scanned_data and send_summary_func:
+            df_potential = pd.DataFrame(all_scanned_data)
+            top_misses = df_potential.sort_values(by="score", ascending=False).head(3).to_dict(orient="records")
+            log.info("Sending 'Near Misses' summary to Telegram.")
+            send_summary_func(top_misses)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="CRYPTO-BOT Execution Pipeline")
+    parser.add_argument("--once", action="store_true", help="Run the scanner exactly once")
+    parser.add_argument("--debug", action="store_true", help="Run in debug mode with lowered thresholds")
+    args = parser.parse_args()
+    
+    run_pipeline(debug_mode=args.debug)
