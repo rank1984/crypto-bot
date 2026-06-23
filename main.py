@@ -1,11 +1,11 @@
 """
-CRYPTO-BOT Elite — Main Orchestrator
+CRYPTO-BOT Elite — Main Orchestrator (Robust Version)
 
 מנהל את זרימת העבודה מקצה לקצה:
-    1. טעינת היקום וזיהוי משטר השוק
+    1. טעינת היקום וזיהוי משטר השוק (עם זיהוי פונקציות אוטומטי)
     2. סריקה, דירוג והערכת כניסה לכל מטבע
     3. שמירה מלאה של כל הנתונים (כולל פסילות) ל-DB לטובת למידה
-    4. שליחת סיגנלים חמים או סיכום שוק ממוקד לטלגרם (ללא ספאם)
+    4. שליחת סיגנלים חמים או סיכום שוק ממוקד לטלגרם
 """
 import argparse
 import sys
@@ -13,37 +13,55 @@ import pandas as pd
 from datetime import datetime
 
 from utils.logger import get_logger
-from scanner.universe import get_coingecko_universe
-from scanner.regime import detect_market_regime
-from scanner.ranking import scan_coin
 from engines.flow_engine import calc_flow_score
 from engines.entry_engine import evaluate_entry
 from engines.pre_explosion import calc_pre_explosion
 
-# מוקשים/פונקציות עזר מדומות לתשתית שלך - ודא שמותאמות לנתיבי הייבוא האמיתיים שלך
-# מאחר שאתה משתמש ב-storage.sqlite_db ובמערכת טלגרם:
-from storage.sqlite_db import save_scan_results, log_failed_coin  
-from utils.telegram import send_telegram_alert, send_telegram_summary
+# ייבוא המודולים עצמם באופן מלא כדי למנוע שגיאות ImportError על שמות פונקציות
+import scanner.universe
+import scanner.regime
+import scanner.ranking
+import storage.sqlite_db
+import utils.telegram
 
 log = get_logger(__name__)
+
+
+def _get_smart_function(module, possible_names: list):
+    """מוצאת באופן דינמי את הפונקציה הנכונה מתוך המודול כדי למנוע קריסת אימפורט"""
+    for name in possible_names:
+        if hasattr(module, name):
+            return getattr(module, name)
+    raise AttributeError(f"Could not find any of {possible_names} in module {module.__name__}")
 
 
 def run_pipeline(debug_mode: bool = False):
     log.info(f"Starting scan pipeline | Mode: {'DEBUG (Low Thresholds)' if debug_mode else 'PRODUCTION'}")
     
+    # חילוץ פונקציות חכם - מתאים את עצמו לשמות שבקוד שלך
+    try:
+        get_universe_func = _get_smart_function(scanner.universe, ['get_coingecko_universe', 'get_universe', 'load_universe', 'build_universe'])
+        detect_regime_func = _get_smart_function(scanner.regime, ['detect_market_regime', 'get_market_regime', 'detect_regime'])
+        scan_coin_func = _get_smart_function(scanner.ranking, ['scan_coin', 'score_coin', 'process_coin'])
+        save_results_func = _get_smart_function(storage.sqlite_db, ['save_scan_results', 'save_results', 'log_results'])
+        
+        send_alert_func = _get_smart_function(utils.telegram, ['send_telegram_alert', 'send_alert'])
+        send_summary_func = _get_smart_function(utils.telegram, ['send_telegram_summary', 'send_summary', 'send_report'])
+    except AttributeError as e:
+        log.error(f"Initialization Error: {e}")
+        sys.exit(1)
+
     # 1. טעינת יקום המטבעות
-    symbols = get_coingecko_universe()
+    symbols = get_universe_func()
     if not symbols:
         log.error("Failed to fetch universe symbols. Exiting.")
         return
     
-    # 2. זיהוי משטר שוק וקביעת רף (נניח מתוך נתוני ביטקוין)
-    # נניח שקיבלנו את נתוני ה-1h וה-5m של BTC
-    btc_mom_1h = -0.1   # דוגמה מתוך הלוג שלך
+    # 2. זיהוי משטר שוק וקביעת רף
+    btc_mom_1h = -0.1   
     btc_mom_5m = -0.05
-    regime = detect_market_regime() 
+    regime = detect_regime_func() 
     
-    # הגדרת רף דירוג קשיח - אם אנחנו במצב דיבאג, נוריד את הרף באופן משמעותי לטובת ניתוח
     min_score_threshold = 40.0 if debug_mode else 60.0
     log.info(f"Market Regime: {regime} | Active Score Threshold: {min_score_threshold}")
 
@@ -53,9 +71,7 @@ def run_pipeline(debug_mode: bool = False):
     # 3. לולאת הסריקה הראשית
     for idx, sym in enumerate(symbols, 1):
         try:
-            # אמידת המטבע וקבלת נתונים היסטוריים (נרות 5m ומדדים)
-            # הפונקציה scan_coin מחזירה את המדדים הטכניים ומילון הנתונים הבסיסי
-            coin_data, df_5m = scan_coin(sym)
+            coin_data, df_5m = scan_coin_func(sym)
             if coin_data is None or df_5m is None:
                 continue
                 
@@ -76,7 +92,7 @@ def run_pipeline(debug_mode: bool = False):
                 vol_accel=flow_res["vol_accel"]
             )
             
-            # בדיקת סיגנל כניסה (BUY / WAIT / NO)
+            # בדיקת סיגנל כניסה
             entry_signal = evaluate_entry(coin_data, df_5m, btc_mom_1h, btc_mom_5m)
             
             record = {
@@ -94,7 +110,6 @@ def run_pipeline(debug_mode: bool = False):
             }
             all_scanned_data.append(record)
             
-            # אם יש החלטת קנייה אמיתית והיא עומדת ברף הציון
             if entry_signal.decision == "BUY" and pre_exp["score"] >= min_score_threshold:
                 buy_signals.append(record)
                 
@@ -102,28 +117,27 @@ def run_pipeline(debug_mode: bool = False):
             log.debug(f"Error processing {sym}: {e}")
             continue
 
-    # ─── יישום עדיפות 1: שמירה מלאה של כל הממצאים לתוך ה-DB ───
+    # ─── עדיפות 1: שמירה מלאה של כל הממצאים לתוך ה-DB ───
     if all_scanned_data:
         df_log = pd.DataFrame(all_scanned_data)
-        save_scan_results(df_log)  # פונקציית השמירה שלך שמזינה את טבלת ההיסטוריה/מנוע הלמידה
+        save_results_func(df_log)  
         log.info(f"Saved {len(all_scanned_data)} coin metrics to SQLite database for continuous learning.")
 
     # ─── ניתוח תוצאות והחלטת הפצה (עדיפות 2 ועדיפות 3) ───
     if buy_signals:
         log.info(f"Found {len(buy_signals)} valid BUY signals! Dispatching immediate alerts...")
         for signal in buy_signals:
-            send_telegram_alert(signal)
+            send_alert_func(signal)
     else:
         log.info("No coins passed the execution thresholds for a BUY signal.")
         
-        # ─── יישום עדיפות 2: יצירת הודעת סיכום חכמה (Top 3) במקום שתיקה ───
+        # ─── עדיפות 2: יצירת הודעת סיכום חכמה (Top 3) לטלגרם במקום שתיקה ───
         if all_scanned_data:
-            # ממיינים לפי ציון הפיצוץ הגבוה ביותר כדי למצוא את המטבעות שהיו "הכי קרובים"
             df_potential = pd.DataFrame(all_scanned_data)
             top_misses = df_potential.sort_values(by="pre_explosion_score", ascending=False).head(3).to_dict(orient="records")
             
             log.info("Sending 'Near Misses' summary report to Telegram to prevent dark spots.")
-            send_telegram_summary(top_misses, regime=regime)
+            send_summary_func(top_misses, regime=regime)
         else:
             log.warning("No scanned data available to generate a summary report.")
 
@@ -135,5 +149,4 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # הפעלה עם הגנת מתג הפיתוח
     run_pipeline(debug_mode=args.debug)
