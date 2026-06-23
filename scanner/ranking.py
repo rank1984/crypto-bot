@@ -57,6 +57,7 @@ def scan_coin(symbol: str) -> Optional[dict]:
 
     # RVOL filter
     if vol["rvol"] < 1.5:
+        log.debug(f"{symbol}: RVOL {vol['rvol']:.2f} < 1.5 — filtered")
         return None
 
     # Hard filters
@@ -173,20 +174,23 @@ def rank_universe(symbols: list[str]) -> list[dict]:
 
     regime        = detect_regime(btc_1h_move, btc_4h_move, btc_24h_move, 0.0)
     min_threshold = get_min_threshold(regime)
-    log.info(f"Regime: {regime} | BTC 1h={btc_1h_move:+.1f}% | Min: {min_threshold}")
+    log.info(f"Regime: {regime} | BTC 1h={btc_1h_move:+.1f}% | Min threshold: {min_threshold}")
 
     # Sympathy
     leaders        = find_leaders(symbols)
     sympathy_plays = find_sympathy_plays(leaders, symbols)
 
     results = []
+    rejected = {"rvol": 0, "hard_filter": 0, "error": 0, "scored": 0}
+
     for i, sym in enumerate(symbols, 1):
         if i % 50 == 0:
-            log.info(f"Scanning {i}/{len(symbols)}...")
+            log.info(f"Scanning {i}/{len(symbols)}... (scored so far: {rejected['scored']})")
         try:
             r = scan_coin(sym)
             if r is None:
                 continue
+            rejected["scored"] += 1
             s_bonus = sympathy_bonus(sym, sympathy_plays)
             if s_bonus > 0:
                 r["final_score"] = round(min(r["final_score"] + s_bonus, 100.0), 1)
@@ -198,8 +202,18 @@ def rank_universe(symbols: list[str]) -> list[dict]:
         except Exception as e:
             log.warning(f"{sym}: {e}")
 
+    log.info(f"Scan complete: {rejected['scored']}/{len(symbols)} passed initial filters")
+
     results.sort(key=lambda x: x["final_score"], reverse=True)
     top = [r for r in results if r["final_score"] >= min_threshold][:TOP_N]
+
+    if not top:
+        # אבחון: מה הציונים שהיו?
+        if results:
+            scores = [r["final_score"] for r in results[:10]]
+            log.warning(f"No coins above threshold={min_threshold}. Top scores: {scores}")
+        else:
+            log.warning(f"0 coins scored — all filtered by RVOL or hard filters")
 
     for coin in top:
         try:
