@@ -94,9 +94,12 @@ def _cvd_score(df_5m: pd.DataFrame) -> tuple[float, float]:
     # טרנד: האם CVD עולה ב-10 הנרות האחרונים?
     cvd_recent = cvd.iloc[-10:]
     slope = float(np.polyfit(range(10), cvd_recent.values, 1)[0])
-    cvd_trend_pct = slope / (abs(float(cvd_recent.mean())) + 1e-10) * 100
+    
+    # התיקון: חלוקה בממוצע הנפח של אותם נרות ולא בסכום ה-CVD עצמו
+    avg_vol_10 = float(vol.iloc[-10:].mean()) + 1e-10
+    cvd_trend_pct = (slope / avg_vol_10) * 100
 
-    score = min(20.0, max(0.0, cvd_trend_pct * 2)) if cvd_trend_pct > 0 else 0.0
+    score = min(20.0, max(0.0, cvd_trend_pct * 4)) if cvd_trend_pct > 0 else 0.0
     return round(cvd_trend_pct, 2), round(score, 1)
 
 
