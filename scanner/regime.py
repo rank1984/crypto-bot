@@ -23,53 +23,28 @@ log = get_logger(__name__)
 REGIMES = {
     "TRENDING_BULL": {
         "description": "BTC עולה חזק, momentum עובד",
-        "weights": {
-            "freshness": 0.20,
-            "momentum":  0.35,   # momentum חשוב יותר בטרנד
-            "breakout":  0.30,
-            "pattern":   0.15,
-        },
-        "min_score_threshold": 65,
+        "weights": {"freshness":0.20,"momentum":0.35,"breakout":0.30,"pattern":0.15},
+        "min_score_threshold": 58,
     },
     "ALTSEASON": {
         "description": "BTC sideways, אלטים מתפרצים",
-        "weights": {
-            "freshness": 0.25,
-            "momentum":  0.25,
-            "breakout":  0.20,
-            "pattern":   0.30,   # פטרנים חשובים יותר באלטסיזון
-        },
-        "min_score_threshold": 60,
+        "weights": {"freshness":0.25,"momentum":0.25,"breakout":0.20,"pattern":0.30},
+        "min_score_threshold": 55,
     },
     "RANGE": {
-        "description": "שוק רגוע, mean reversion",
-        "weights": {
-            "freshness": 0.35,   # freshness חשוב יותר ב-range
-            "momentum":  0.20,
-            "breakout":  0.25,
-            "pattern":   0.20,
-        },
-        "min_score_threshold": 70,   # דורש ציון גבוה יותר
+        "description": "שוק רגוע",
+        "weights": {"freshness":0.35,"momentum":0.20,"breakout":0.25,"pattern":0.20},
+        "min_score_threshold": 60,   # הוריד מ-70 ל-60
     },
     "RISK_OFF": {
         "description": "סיכון גבוה — זהירות",
-        "weights": {
-            "freshness": 0.30,
-            "momentum":  0.20,
-            "breakout":  0.30,
-            "pattern":   0.20,
-        },
-        "min_score_threshold": 78,   # דורש ציון גבוה מאוד
+        "weights": {"freshness":0.30,"momentum":0.20,"breakout":0.30,"pattern":0.20},
+        "min_score_threshold": 70,   # הוריד מ-78 ל-70
     },
     "TRENDING_BEAR": {
-        "description": "שוק יורד — לא מומלץ לקנות",
-        "weights": {
-            "freshness": 0.25,
-            "momentum":  0.25,
-            "breakout":  0.25,
-            "pattern":   0.25,
-        },
-        "min_score_threshold": 85,   # כמעט בלתי אפשרי — בכוונה
+        "description": "שוק יורד",
+        "weights": {"freshness":0.25,"momentum":0.25,"breakout":0.25,"pattern":0.25},
+        "min_score_threshold": 75,   # הוריד מ-85 ל-75
     },
 }
 
