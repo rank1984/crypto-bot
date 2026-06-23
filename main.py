@@ -1,89 +1,89 @@
 """
-CRYPTO-BOT Elite — Signal Filter
-
-4 מצבים בלבד:
-    IGNORE  — לא מעניין, לא לשלוח
-    WATCH   — יש משהו, מוקדם מדי
-    PREPARE — הצטברות אמיתית, להתכונן
-    BUY     — פריצה מאושרת
-
-קריטריונים קשיחים:
-    PREPARE דורש compression + flow>60 + OI עולה + RS חיובי
-    בלי כולם — WATCH לכל היותר
-    WATCH חלש (flow<40, אין compression, אין OI) — IGNORE
+CRYPTO-BOT Elite — MAIN FLOW (Fixed Integration)
 """
+
+from scanner.signal_filter import filter_coins
 from utils.logger import get_logger
+
+# 👇 זה ה-renderer החדש הבטוח
+from utils.telegram_renderer import send_telegram
+
 log = get_logger(__name__)
 
 
-def classify_signal(c: dict) -> str:
+def run_once(coins: list[dict]):
     """
-    מקבל coin dict מ-ranking ומחזיר: IGNORE / WATCH / PREPARE / BUY
+    ריצה אחת של הבוט
     """
-    dec        = c.get("entry_decision", "NO")
-    flow       = c.get("flow_score", 0)
-    pre        = c.get("pre_score", 0)
-    compressed = c.get("is_compressed", False)
-    oi_change  = c.get("oi_change", 0)
-    rs_1h      = c.get("rs_1h", 0)
-    comp_parts = c.get("pre_components", {})
-    flow_parts = c.get("flow_components", {})
 
-    oi_growing  = oi_change > 2.0 or flow_parts.get("oi", 0) >= 10
-    rs_positive = rs_1h > 0
-    cvd_pos     = flow_parts.get("cvd", 0) >= 8
+    log.info(f"Starting scan — coins received: {len(coins)}")
 
-    # ── BUY: טריגר הופעל ────────────────────────────────────────────────────
-    if dec == "BUY":
-        return "BUY"
+    # ─────────────────────────────
+    # 1. Signal Filtering
+    # ─────────────────────────────
+    result = filter_coins(coins)
 
-    # ── PREPARE: הצטברות אמיתית — כל 4 התנאים חייבים להתקיים ────────────
-    prepare_conditions = [
-        compressed,     # Compression קיים
-        flow >= 60,     # Flow חזק
-        oi_growing,     # OI מתחיל לעלות
-        rs_positive,    # RS מול BTC חיובי
-    ]
-    if all(prepare_conditions):
-        return "PREPARE"
+    buy     = result["buy"]
+    prepare = result["prepare"]
+    watch   = result["watch"]
 
-    # ── WATCH: יש משהו אבל לא מספיק ────────────────────────────────────────
-    # דורש לפחות 2 מתוך: compression / flow>40 / OI / RS
-    watch_score = sum([compressed, flow >= 40, oi_growing, rs_positive])
-    if watch_score >= 2:
-        return "WATCH"
+    has_quality = result["has_quality"]
 
-    # ── IGNORE: רעש ─────────────────────────────────────────────────────────
-    return "IGNORE"
+    log.info(
+        f"FILTER RESULT → BUY:{len(buy)} PREPARE:{len(prepare)} WATCH:{len(watch)}"
+    )
+
+    # ─────────────────────────────
+    # 2. Build top coins list
+    # ─────────────────────────────
+    top_coins = []
+
+    # BUY קודם
+    top_coins.extend(buy)
+
+    # PREPARE שני
+    top_coins.extend(prepare)
+
+    # WATCH רק אם אין מספיק איכות
+    if not has_quality:
+        top_coins.extend(watch)
+
+    # מקסימום 5 כדי לא להציף טלגרם
+    top_coins = sorted(
+        top_coins,
+        key=lambda x: x.get("flow_score", 0) + x.get("pre_score", 0),
+        reverse=True
+    )[:5]
+
+    # ─────────────────────────────
+    # 3. Safety check
+    # ─────────────────────────────
+    if not top_coins:
+        log.info("No quality signals — skipping Telegram")
+        return
+
+    # ─────────────────────────────
+    # 4. Send Telegram (SAFE renderer)
+    # ─────────────────────────────
+    try:
+        ok = send_telegram(top_coins)
+
+        if ok:
+            log.info("Telegram sent successfully")
+        else:
+            log.warning("Telegram failed or fallback used")
+
+    except Exception as e:
+        log.error(f"CRITICAL MAIN ERROR: {e}")
 
 
-def filter_coins(coins: list[dict]) -> dict:
-    """
-    מקבל רשימת מטבעות, מחלק ל-4 קבוצות, מסנן רעש.
+# ─────────────────────────────
+# CLI entry
+# ─────────────────────────────
+if __name__ == "__main__":
+    # כאן בדרך כלל יבוא data מה-scanner שלך
+    from scanner.universe import get_coins  # אם קיים אצלך
 
-    Returns
-    -------
-    {
-        "buy":     [coin, ...],
-        "prepare": [coin, ...],
-        "watch":   [coin, ...],    # מקסימום 3
-        "has_quality": bool,
-    }
-    """
-    buy, prepare, watch = [], [], []
+    coins = get_coins()
 
-    for c in coins:
-        sig = classify_signal(c)
-        c["signal"] = sig
-        if   sig == "BUY":     buy.append(c)
-        elif sig == "PREPARE": prepare.append(c)
-        elif sig == "WATCH":   watch.append(c)
-        # IGNORE — לא נכנס לשום רשימה
-
-    # WATCH — מקסימום 3, רק הטובים ביותר
-    watch = sorted(watch, key=lambda x: x.get("flow_score",0)+x.get("pre_score",0), reverse=True)[:3]
-
-    has_quality = bool(buy or prepare)
-
-    log.info(f"Signal filter: BUY={len(buy)} PREPARE={len(prepare)} WATCH={len(watch)}")
-    return {"buy": buy, "prepare": prepare, "watch": watch, "has_quality": has_quality}
+    run_once(coins)
