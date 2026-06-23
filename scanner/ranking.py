@@ -38,8 +38,8 @@ def _recent_high_stats(df_5m, lookback=20):
     return high_price, float(high_age), round(pullback, 3)
 
 
-def scan_coin(symbol: str, end_time: Optional[int] = None) -> Optional[dict]:
-    dfs = get_all_timeframes(symbol, end_time=end_time) # מעביר את הזמן ההיסטורי הלאה
+def scan_coin(symbol: str) -> Optional[dict]:
+    dfs = get_all_timeframes(symbol)
     if not all(tf in dfs for tf in ["1min","5min","15min","1hour"]):
         return None
 
