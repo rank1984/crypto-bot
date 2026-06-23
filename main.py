@@ -1,9 +1,10 @@
 """
-CRYPTO-BOT Elite — MAIN FLOW (Fixed Integration)
+CRYPTO-BOT Elite — MAIN FLOW (Fixed Integration with Feature Engine)
 """
 
 from scanner.signal_filter import filter_coins
 from scanner.data_normalizer import normalize_universe
+from scanner.feature_engine import enrich_universe
 from utils.logger import get_logger
 
 # 👇 זה ה-renderer החדש הבטוח
@@ -14,17 +15,21 @@ log = get_logger(__name__)
 
 def run_once(raw_coins: list):
     """
-    ריצה אחת של הבוט
+    ריצה אחת של הבוט - צינור עיבוד נתונים מלא
     """
 
     log.info(f"Starting scan — coins received: {len(raw_coins)}")
 
     # ─────────────────────────────
-    # 1. Data Normalization & Signal Filtering
+    # 1. Data Pipeline (Normalize -> Enrich -> Filter)
     # ─────────────────────────────
-    # הופך את רשימת המחרוזות לרשימת מילונים עם נתוני אמת
+    # א. הפיכת רשימת הסימבולים למילונים בסיסיים
     coins = normalize_universe(raw_coins)
     
+    # ב. הרצת מנוע תכונות והזרקת נתוני שוק (נפח, OI, מחיר, פילטרים)
+    coins = enrich_universe(coins)
+    
+    # ג. סינון האותות וחלוקה לקטגוריות (BUY, PREPARE, WATCH)
     result = filter_coins(coins)
 
     buy     = result["buy"]
