@@ -215,15 +215,6 @@ def calc_risk(
 ) -> tuple[float, float, float]:
     """
     מחזיר (sl, tp1, tp2).
-
-    Stop Loss:
-        BREAKOUT     → מתחת ל-cons_high - 1%
-        VWAP_RECLAIM → מתחת ל-VWAP - 1%
-        DIP_BUY      → מתחת ל-swing low האחרון
-
-    Take Profit:
-        TP1 = +3% עד +5%
-        TP2 = +8% עד +15%
     """
     if entry <= 0:
         return 0.0, 0.0, 0.0
@@ -258,28 +249,26 @@ def calc_risk(
 # ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 def evaluate_entry(
-    coin:       dict,
-    df_5m:      pd.DataFrame,
-    btc_mom_5m: float = 0.0,
+    coin:        dict,
+    df_5m:       pd.DataFrame,
+    btc_mom_1h:  float = 0.0,
+    btc_mom_5m:  float = 0.0,
 ) -> EntrySignal:
     """
     מריץ את כל ה-engine ומחזיר החלטה אחת.
 
     Parameters
     ----------
-    coin       : תוצאת scan_coin מ-ranking.py
+    coin       : תוצאת scan_coin
     df_5m      : נרות 5m של המטבע
+    btc_mom_1h : % שינוי BTC ב-1h
     btc_mom_5m : % שינוי BTC ב-5m (לזיהוי dump)
-
-    Returns
-    -------
-    EntrySignal עם decision = BUY / WAIT / NO
     """
     no_trade = EntrySignal("NO", "", 0, 0, 0, 0, 0, "")
 
     # ── 1. Market Filter ──────────────────────────────────────────────────────
     allowed, reason = market_allows_trade(
-        btc_mom_1h=coin.get("momentum_1h", 0),
+        btc_mom_1h=btc_mom_1h,
         btc_mom_5m=btc_mom_5m,
         rs_1h=coin.get("rs_1h", 0),
     )
