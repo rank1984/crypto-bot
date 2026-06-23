@@ -104,4 +104,4 @@ def run_pipeline(debug_mode: bool = False):
             )
             
             # בדיקת סיגנל כניסה
-            entry_signal = evaluate_entry(coin_data, df_5m, btc_mom_1h, btc_mom
+entry_signal = evaluate_entry(coin_data, df_5m, btc_mom_1h, btc_mom_5m)
