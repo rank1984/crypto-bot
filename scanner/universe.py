@@ -17,7 +17,9 @@ _BLACKLIST = {
     "FDUSDUSDT", "EURUSDT", "GBPUSDT",
 }
 
-
+def get_coins():
+    return build_universe()
+    
 def build_universe() -> list[str]:
     """
     מחזיר רשימת USDT pairs לפי volume.
