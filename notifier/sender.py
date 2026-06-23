@@ -230,7 +230,7 @@ def send_telegram(top_coins: list[dict], portfolio_usd: float = 1000.0,
         url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         try:
             requests.post(url, json={
-                "chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "MarkdownV2",
+                "chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode":  None,
             }, timeout=10)
             log.info("Telegram: no signal message sent")
         except Exception as e:
@@ -242,7 +242,7 @@ def send_telegram(top_coins: list[dict], portfolio_usd: float = 1000.0,
 
     try:
         resp = requests.post(url, json={
-            "chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "MarkdownV2",
+            "chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode":  None,
         }, timeout=10)
         resp.raise_for_status()
         log.info("Telegram ✓")
