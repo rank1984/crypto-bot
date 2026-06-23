@@ -81,7 +81,6 @@ def _cvd_score(df_5m: pd.DataFrame) -> tuple[float, float]:
     vol   = df_5m["volume"]
 
     # Buy volume אומדן: אם נר ירוק → כל הנפח הוא buy, אם אדום → sell
-    # שיטה מדויקת יותר: (close-low)/(high-low) * volume
     high  = df_5m["high"]
     low   = df_5m["low"]
     hl    = (high - low).replace(0, np.nan)
@@ -170,11 +169,9 @@ def _vol_accel_score(df_5m: pd.DataFrame) -> tuple[float, float]:
     if vol_60m == 0:
         return 1.0, 0.0
 
-    # נורמל: vol_15m צפוי להיות ~25% מ-vol_60m (1/4 מהשעה)
     expected_15m = vol_60m * 0.25
     accel = vol_15m / expected_15m if expected_15m > 0 else 1.0
 
-    # 1x = נורמלי, 2x = האצה, 3x+ = חריג
     score = min(10.0, (accel - 1.0) * 5) if accel > 1.0 else 0.0
     return round(accel, 2), round(score, 1)
 
@@ -245,34 +242,13 @@ def _whale_score(df_5m: pd.DataFrame) -> tuple[bool, float]:
 # ─── Main Entry ───────────────────────────────────────────────────────────────
 
 def calc_flow_score(
-    symbol:     str,
-    df_5m:      pd.DataFrame,
-    rs_btc_1h:  float = 0.0,
-    rs_eth_1h:  float = 0.0,
+    symbol:      str,
+    df_5m:       pd.DataFrame,
+    rs_btc_1h:   float = 0.0,
+    rs_eth_1h:   float = 0.0,
 ) -> dict:
     """
     מחשב את ה-Flow Score המלא.
-
-    Returns
-    -------
-    {
-        "flow_score":        float,  # 0–100
-        "oi_change":         float,
-        "cvd_trend":         float,
-        "funding_rate":      float,
-        "vol_accel":         float,
-        "is_compressed":     bool,
-        "whale_detected":    bool,
-        "components": {
-            "oi":          float,
-            "cvd":         float,
-            "funding":     float,
-            "rs":          float,
-            "vol_accel":   float,
-            "compression": float,
-            "whale":       float,
-        }
-    }
     """
     oi_chg,  oi_s   = _oi_expansion(symbol)
     cvd_t,   cvd_s  = _cvd_score(df_5m)
