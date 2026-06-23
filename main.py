@@ -1,109 +1,89 @@
 """
-CRYPTO-BOT Elite — Main Loop
+CRYPTO-BOT Elite — Signal Filter
 
-Environment variables:
-    TELEGRAM_TOKEN        — bot token
-    TELEGRAM_CHAT_ID      — chat/channel ID
-    USE_DYNAMIC_UNIVERSE  — true/false (default: true)
+4 מצבים בלבד:
+    IGNORE  — לא מעניין, לא לשלוח
+    WATCH   — יש משהו, מוקדם מדי
+    PREPARE — הצטברות אמיתית, להתכונן
+    BUY     — פריצה מאושרת
+
+קריטריונים קשיחים:
+    PREPARE דורש compression + flow>60 + OI עולה + RS חיובי
+    בלי כולם — WATCH לכל היותר
+    WATCH חלש (flow<40, אין compression, אין OI) — IGNORE
 """
-import time, signal, sys, argparse
-
-from scanner.universe         import build_universe
-from scanner.dynamic_universe import build_dynamic_universe
-from scanner.market_data      import get_candles
-from scanner.ranking          import rank_universe
-from notifier.sender          import send_telegram
-from utils.config             import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
-from utils.logger             import get_logger
-
-log = get_logger("main")
-
-_running = True
-
-def _handle_signal(sig, frame):
-    global _running
-    log.info("Shutdown signal — stopping after current scan")
-    _running = False
-
-signal.signal(signal.SIGINT,  _handle_signal)
-signal.signal(signal.SIGTERM, _handle_signal)
+from utils.logger import get_logger
+log = get_logger(__name__)
 
 
-def run_scan() -> None:
-    log.info("── Scan started ──────────────────────────────────────")
+def classify_signal(c: dict) -> str:
+    """
+    מקבל coin dict מ-ranking ומחזיר: IGNORE / WATCH / PREPARE / BUY
+    """
+    dec        = c.get("entry_decision", "NO")
+    flow       = c.get("flow_score", 0)
+    pre        = c.get("pre_score", 0)
+    compressed = c.get("is_compressed", False)
+    oi_change  = c.get("oi_change", 0)
+    rs_1h      = c.get("rs_1h", 0)
+    comp_parts = c.get("pre_components", {})
+    flow_parts = c.get("flow_components", {})
 
-    # ── 1. Universe ───────────────────────────────────────────────────────────
-    if USE_DYNAMIC_UNIVERSE:
-        log.info("Mode: Dynamic Universe")
-        # BTC 1h move לLayer RS
-        btc_df     = get_candles("BTCUSDT", "1hour", limit=3)
-        btc_1h_mov = 0.0
-        if btc_df is not None and len(btc_df) >= 2:
-            btc_1h_mov = (float(btc_df["close"].iloc[-1]) - float(btc_df["close"].iloc[-2])) \
-                         / float(btc_df["close"].iloc[-2]) * 100
-        
-        symbols = build_dynamic_universe(btc_1h_move=btc_1h_mov)
-    else:
-        log.info("Mode: Static Universe")
-        symbols = build_universe()
+    oi_growing  = oi_change > 2.0 or flow_parts.get("oi", 0) >= 10
+    rs_positive = rs_1h > 0
+    cvd_pos     = flow_parts.get("cvd", 0) >= 8
 
-    if not symbols:
-        log.error("Empty universe — skipping scan")
-        return
+    # ── BUY: טריגר הופעל ────────────────────────────────────────────────────
+    if dec == "BUY":
+        return "BUY"
 
-    # ── 2. Score & Rank ───────────────────────────────────────────────────────
-    top = rank_universe(symbols)
-    if not top:
-        log.warning("No coins passed scoring — nothing to send")
-        return
+    # ── PREPARE: הצטברות אמיתית — כל 4 התנאים חייבים להתקיים ────────────
+    prepare_conditions = [
+        compressed,     # Compression קיים
+        flow >= 60,     # Flow חזק
+        oi_growing,     # OI מתחיל לעלות
+        rs_positive,    # RS מול BTC חיובי
+    ]
+    if all(prepare_conditions):
+        return "PREPARE"
 
-    # ── 3. Send ───────────────────────────────────────────────────────────────
-    send_telegram(top)
+    # ── WATCH: יש משהו אבל לא מספיק ────────────────────────────────────────
+    # דורש לפחות 2 מתוך: compression / flow>40 / OI / RS
+    watch_score = sum([compressed, flow >= 40, oi_growing, rs_positive])
+    if watch_score >= 2:
+        return "WATCH"
 
-    # ── 4. Log summary ────────────────────────────────────────────────────────
-    log.info("── Scan complete ─────────────────────────────────────")
-    for i, c in enumerate(top, 1):
-        log.info(
-            f"  {i}. {c['symbol']:<12} "
-            f"score={c['final_score']:.0f}  "
-            f"flow={c.get('flow_score',0):.0f}  "
-            f"pre={c.get('pre_exp_score',0):.0f}  "
-            f"phase={c.get('pre_exp_phase',''):<20}  "
-            f"entry={c.get('entry_decision','NO')}"
-        )
+    # ── IGNORE: רעש ─────────────────────────────────────────────────────────
+    return "IGNORE"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true",
-                        help="Single scan and exit (GitHub Actions)")
-    args = parser.parse_args()
+def filter_coins(coins: list[dict]) -> dict:
+    """
+    מקבל רשימת מטבעות, מחלק ל-4 קבוצות, מסנן רעש.
 
-    log.info(f"CRYPTO-BOT Elite starting | dynamic_universe={USE_DYNAMIC_UNIVERSE}")
+    Returns
+    -------
+    {
+        "buy":     [coin, ...],
+        "prepare": [coin, ...],
+        "watch":   [coin, ...],    # מקסימום 3
+        "has_quality": bool,
+    }
+    """
+    buy, prepare, watch = [], [], []
 
-    if args.once:
-        log.info("Mode: --once")
-        run_scan()
-        sys.exit(0)
+    for c in coins:
+        sig = classify_signal(c)
+        c["signal"] = sig
+        if   sig == "BUY":     buy.append(c)
+        elif sig == "PREPARE": prepare.append(c)
+        elif sig == "WATCH":   watch.append(c)
+        # IGNORE — לא נכנס לשום רשימה
 
-    log.info(f"Mode: loop every {SCAN_INTERVAL_SECONDS}s")
-    while _running:
-        try:
-            run_scan()
-        except Exception as e:
-            log.error(f"Scan error: {e}", exc_info=True)
+    # WATCH — מקסימום 3, רק הטובים ביותר
+    watch = sorted(watch, key=lambda x: x.get("flow_score",0)+x.get("pre_score",0), reverse=True)[:3]
 
-        if not _running:
-            break
+    has_quality = bool(buy or prepare)
 
-        log.info(f"Sleeping {SCAN_INTERVAL_SECONDS}s...")
-        for _ in range(SCAN_INTERVAL_SECONDS):
-            if not _running: break
-            time.sleep(1)
-
-    log.info("CRYPTO-BOT Elite stopped.")
-    sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()
+    log.info(f"Signal filter: BUY={len(buy)} PREPARE={len(prepare)} WATCH={len(watch)}")
+    return {"buy": buy, "prepare": prepare, "watch": watch, "has_quality": has_quality}
