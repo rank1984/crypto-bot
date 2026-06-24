@@ -136,27 +136,29 @@ def build_dynamic_universe(
     btc_1h_move: float = 0.0,
     use_layers: bool = True,
 ) -> list[str]:
-    """
-    Union של כל השכבות — OI Leaders ראשון (הכי חשוב).
-    """
+
     log.info("Building dynamic universe...")
-    
-if get_candles_fn:
-    global get_candles
-    get_candles = get_candles_fn
 
-base = _base_universe()
+    if get_candles_fn:
+        global get_candles
+        get_candles = get_candles_fn
 
-if not use_layers:
-    return base[:MAX_SYMBOLS]    oi_l   = _oi_leaders(base)
+    base = _base_universe()
+
+    if not use_layers:
+        return base[:MAX_SYMBOLS]
+
+    oi_l   = _oi_leaders(base)
     comp_l = _compression_leaders(base)
     rs_l   = _rs_leaders(base, btc_1h_move)
 
     seen, result = set(), []
+
     for sym in oi_l + comp_l + rs_l + base:
         if sym not in seen:
             seen.add(sym)
             result.append(sym)
+
         if len(result) >= MAX_SYMBOLS:
             break
 
@@ -164,4 +166,5 @@ if not use_layers:
         f"Dynamic Universe: {len(result)} "
         f"(OI:{len(oi_l)} Comp:{len(comp_l)} RS:{len(rs_l)} Base:{len(base)})"
     )
+
     return result
