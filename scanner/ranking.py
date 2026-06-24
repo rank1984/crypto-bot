@@ -67,7 +67,7 @@ def scan_coin(symbol: str) -> Optional[dict]:
         rvol=vol["rvol"], rs_1h=rs["rs_1h"], momentum_1h=mom["momentum_1h"],
     )
     if not passed:
-        log.debug(f"{symbol}: {reason}")
+        log.debug(f"{symbol}: hard_filter — {reason}")
         return None
 
     high_price, high_age, pullback = _recent_high_stats(df_5m)
@@ -181,16 +181,39 @@ def rank_universe(symbols: list[str]) -> list[dict]:
     sympathy_plays = find_sympathy_plays(leaders, symbols)
 
     results = []
-    rejected = {"rvol": 0, "hard_filter": 0, "error": 0, "scored": 0}
+    cnt = {"rvol": 0, "hard": 0, "ok": 0, "err": 0}
 
     for i, sym in enumerate(symbols, 1):
         if i % 50 == 0:
-            log.info(f"Scanning {i}/{len(symbols)}... (scored so far: {rejected['scored']})")
+            log.info(f"Scanning {i}/{len(symbols)}... ok={cnt['ok']} rvol_fail={cnt['rvol']} hard_fail={cnt['hard']}")
         try:
+            dfs = get_all_timeframes(sym)
+            if not all(tf in dfs for tf in ["1min","5min","15min","1hour"]):
+                continue
+            vol = calc_volume(dfs["5min"])
+            if vol["rvol"] < 0.8:
+                cnt["rvol"] += 1
+                continue
+            from scanner.scoring import passes_hard_filters
+            from scanner.indicators import calc_indicators
+            from scanner.momentum import calc_momentum
+            ind = calc_indicators(dfs["5min"], dfs["1hour"])
+            mom = calc_momentum(dfs["1min"], dfs["5min"], dfs["15min"], dfs["1hour"])
+            from scanner.relative_strength import calc_relative_strength
+            rs = calc_relative_strength(dfs["1hour"])
+            passed, reason = passes_hard_filters(
+                rsi_14=ind["rsi_14"], vwap_dist=ind["vwap_dist"],
+                momentum_5m=mom["momentum_5m"], momentum_15m=mom["momentum_15m"],
+                rvol=vol["rvol"], rs_1h=rs["rs_1h"], momentum_1h=mom["momentum_1h"],
+            )
+            if not passed:
+                cnt["hard"] += 1
+                continue
             r = scan_coin(sym)
             if r is None:
                 continue
-            rejected["scored"] += 1
+            cnt["ok"] += 1
+            results.append(r)
             s_bonus = sympathy_bonus(sym, sympathy_plays)
             if s_bonus > 0:
                 r["final_score"] = round(min(r["final_score"] + s_bonus, 100.0), 1)
