@@ -130,5 +130,31 @@ if __name__ == "__main__":
     parser.add_argument("--once", action="store_true", help="Run the scanner exactly once")
     parser.add_argument("--debug", action="store_true", help="Run in debug mode with lowered thresholds")
     args = parser.parse_args()
+    import scanner.universe
+import scanner.regime
+import scanner.ranking
+import storage.sqlite_db
+import utils.telegram
+
+def debug_modules():
+    print("--- Debugging Available Functions ---")
+    modules = {
+        "scanner.universe": scanner.universe,
+        "scanner.regime": scanner.regime,
+        "scanner.ranking": scanner.ranking,
+        "storage.sqlite_db": storage.sqlite_db,
+        "utils.telegram": utils.telegram
+    }
     
+    for mod_name, mod in modules.items():
+        print(f"\nFunctions in {mod_name}:")
+        attrs = [a for a in dir(mod) if not a.startswith("__")]
+        for a in attrs:
+            print(f" - {a}")
+    print("\n-------------------------------------")
+
+if __name__ == "__main__":
+    debug_modules()
+
+
     run_pipeline(debug_mode=args.debug)
