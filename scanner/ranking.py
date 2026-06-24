@@ -55,9 +55,9 @@ def scan_coin(symbol: str) -> Optional[dict]:
     ind = calc_indicators(df_5m, df_1h)
     rs  = calc_relative_strength(df_1h)
 
-    # RVOL filter
-    if vol["rvol"] < 1.5:
-        log.debug(f"{symbol}: RVOL {vol['rvol']:.2f} < 1.5 — filtered")
+    # RVOL filter — מסנן מטבעות ללא נפח בסיסי
+    if vol["rvol"] < 0.8:
+        log.debug(f"{symbol}: RVOL {vol['rvol']:.2f} < 0.8 — filtered")
         return None
 
     # Hard filters
@@ -208,12 +208,17 @@ def rank_universe(symbols: list[str]) -> list[dict]:
     top = [r for r in results if r["final_score"] >= min_threshold][:TOP_N]
 
     if not top:
-        # אבחון: מה הציונים שהיו?
+        # אבחון מפורט
         if results:
             scores = [r["final_score"] for r in results[:10]]
-            log.warning(f"No coins above threshold={min_threshold}. Top scores: {scores}")
+            rvols  = [r.get("rvol",0) for r in results[:5]]
+            log.warning(
+                f"No coins above threshold={min_threshold}. "
+                f"Top scores: {[round(s,1) for s in scores]} | "
+                f"Top RVOLs: {[round(r,2) for r in rvols]}"
+            )
         else:
-            log.warning(f"0 coins scored — all filtered by RVOL or hard filters")
+            log.warning("0 coins scored — all filtered by RVOL or hard filters")
 
     for coin in top:
         try:
