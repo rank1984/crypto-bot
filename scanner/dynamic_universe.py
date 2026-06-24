@@ -131,13 +131,24 @@ def _rs_leaders(base: list[str], btc_1h_move: float, top_n: int = 20) -> list[st
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-def build_dynamic_universe(btc_1h_move: float = 0.0) -> list[str]:
+def build_dynamic_universe(
+    get_candles_fn=None,
+    btc_1h_move: float = 0.0,
+    use_layers: bool = True,
+) -> list[str]:
     """
     Union של כל השכבות — OI Leaders ראשון (הכי חשוב).
     """
     log.info("Building dynamic universe...")
-    base   = _base_universe()
-    oi_l   = _oi_leaders(base)
+    
+if get_candles_fn:
+    global get_candles
+    get_candles = get_candles_fn
+
+base = _base_universe()
+
+if not use_layers:
+    return base[:MAX_SYMBOLS]    oi_l   = _oi_leaders(base)
     comp_l = _compression_leaders(base)
     rs_l   = _rs_leaders(base, btc_1h_move)
 
