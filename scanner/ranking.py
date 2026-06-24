@@ -189,6 +189,7 @@ def rank_universe(symbols: list[str]) -> list[dict]:
         try:
             dfs = get_all_timeframes(sym)
             if not all(tf in dfs for tf in ["1min","5min","15min","1hour"]):
+                cnt["err"] = cnt.get("err",0) + 1
                 continue
             vol = calc_volume(dfs["5min"])
             if vol["rvol"] < 0.8:
@@ -225,7 +226,7 @@ def rank_universe(symbols: list[str]) -> list[dict]:
         except Exception as e:
             log.warning(f"{sym}: {e}")
 
-    log.info(f"Scan complete: {rejected['scored']}/{len(symbols)} passed initial filters")
+    log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters (rvol_fail={cnt['rvol']} hard_fail={cnt['hard']})")
 
     results.sort(key=lambda x: x["final_score"], reverse=True)
     top = [r for r in results if r["final_score"] >= min_threshold][:TOP_N]
