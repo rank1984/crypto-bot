@@ -61,8 +61,36 @@ def run_scan() -> None:
     from scanner.signal_filter import filter_coins
     filtered = filter_coins(top)
 
+    # debug — מה יש לפני הסינון
+    log.info(f"TOP COINS BEFORE FILTER = {len(top)}")
+    for c in top[:10]:
+        log.info(
+            f"  {c['symbol']:<12} "
+            f"score={c.get('final_score',0):.0f} "
+            f"flow={c.get('flow_score',0):.0f} "
+            f"pre={c.get('pre_score',0):.0f} "
+            f"compressed={c.get('is_compressed',False)} "
+            f"oi={c.get('oi_change',0):.1f} "
+            f"rs={c.get('rs_1h',0):.2f} "
+            f"decision={c.get('entry_decision','NO')}"
+        )
+    log.info(
+        f"FILTER RESULT → "
+        f"BUY={len(filtered['buy'])} "
+        f"PREPARE={len(filtered['prepare'])} "
+        f"WATCH={len(filtered['watch'])}"
+    )
+
     # ── 4. Send ───────────────────────────────────────────────────────────────
-    send_telegram(top, filtered=filtered)
+    if filtered["has_quality"]:
+        send_telegram(top, filtered=filtered)
+    elif filtered["watch"]:
+        # fallback: שלח WATCH כדי לאבחן
+        log.info("No BUY/PREPARE — sending WATCH as diagnostic")
+        send_telegram(filtered["watch"], filtered={"buy":[],"prepare":[],"watch":filtered["watch"]})
+    else:
+        log.warning("No coins passed signal filter — sending no signal")
+        send_telegram([])
 
     # ── 5. Log summary ────────────────────────────────────────────────────────
     log.info("── Scan complete ─────────────────────────────────────")
