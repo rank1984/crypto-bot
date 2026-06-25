@@ -147,15 +147,15 @@ def format_message(top_coins: list[dict], portfolio_usd: float = 1000.0,
         whale      = c.get("whale_detected", False)
         pos_r, neg_r = _pos_neg(c)
 
-        event_score = c.get("event_score", 0)
-        catalysts   = c.get("catalysts", [])
-        big_move    = _big_move_score(pre, flow, event_score)
-        rare        = _rare_setup(pre, flow, score, fakeout_risk, event_score)
-
         fakeout_risk, fakeout_emoji = assess_fakeout_risk(
             c.get("rvol",1), c.get("vwap_dist",0),
             c.get("rsi_14",50), flow, is_comp,
         )
+
+        event_score = c.get("event_score", 0)
+        catalysts   = c.get("catalysts", [])
+        big_move    = _big_move_score(pre, flow, event_score)
+        rare        = _rare_setup(pre, flow, score, fakeout_risk, event_score)
 
         # ── כותרת ────────────────────────────────────────────────────────────
         lines.append(f"{_medal(i)} *{_e(sym)}* \\[{_grade(score)}\\]")
