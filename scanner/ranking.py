@@ -229,6 +229,15 @@ def rank_universe(symbols: list[str]) -> list[dict]:
     log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters (rvol_fail={cnt['rvol']} hard_fail={cnt['hard']})")
 
     results.sort(key=lambda x: x["final_score"], reverse=True)
+
+    # dedup — מטבע לא יופיע פעמיים
+    seen, unique = set(), []
+    for r in results:
+        if r["symbol"] not in seen:
+            seen.add(r["symbol"])
+            unique.append(r)
+    results = unique
+
     top = [r for r in results if r["final_score"] >= min_threshold][:TOP_N]
 
     if not top:
