@@ -17,6 +17,11 @@ from scanner.market_data import get_candles
 
 log = get_logger(__name__)
 
+_BLACKLIST = {
+    "USDCUSDT","USDTUSDT","BUSDUSDT","TUSDUSDT","FDUSDUSDT",
+    "DAIUSDT","PYUSDUSDT","USDSUSDT","EURCUSDT","FRAXUSDT",
+}
+
 _HEADERS   = {"User-Agent": "crypto-bot/1.0"}
 _KUCOIN_FUT = "https://api-futures.kucoin.com"
 
@@ -131,34 +136,23 @@ def _rs_leaders(base: list[str], btc_1h_move: float, top_n: int = 20) -> list[st
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-def build_dynamic_universe(
-    get_candles_fn=None,
-    btc_1h_move: float = 0.0,
-    use_layers: bool = True,
-) -> list[str]:
-
+def build_dynamic_universe(btc_1h_move: float = 0.0) -> list[str]:
+    """
+    Union של כל השכבות — OI Leaders ראשון (הכי חשוב).
+    """
     log.info("Building dynamic universe...")
-
-    if get_candles_fn:
-        global get_candles
-        get_candles = get_candles_fn
-
-    base = _base_universe()
-
-    if not use_layers:
-        return base[:MAX_SYMBOLS]
-
+    base   = _base_universe()
     oi_l   = _oi_leaders(base)
     comp_l = _compression_leaders(base)
     rs_l   = _rs_leaders(base, btc_1h_move)
 
     seen, result = set(), []
-
     for sym in oi_l + comp_l + rs_l + base:
+        if sym in _BLACKLIST:
+            continue
         if sym not in seen:
             seen.add(sym)
             result.append(sym)
-
         if len(result) >= MAX_SYMBOLS:
             break
 
@@ -166,5 +160,4 @@ def build_dynamic_universe(
         f"Dynamic Universe: {len(result)} "
         f"(OI:{len(oi_l)} Comp:{len(comp_l)} RS:{len(rs_l)} Base:{len(base)})"
     )
-
     return result
