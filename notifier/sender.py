@@ -48,9 +48,14 @@ def _medal(i: int) -> str:
     return ["🥇","🥈","🥉","4️⃣","5️⃣"][i] if i < 5 else f"{i+1}."
 
 def _regime_label(r: str) -> str:
-    return {"TRENDING_BULL":"🟢 טרנד עולה","ALTSEASON":"🚀 עונת אלטים",
-            "RANGE":"🟡 ללא כיוון","RISK_OFF":"🔴 שוק בפחד",
-            "TRENDING_BEAR":"⛔ טרנד יורד"}.get(r, "")
+    regimes = {
+        "TRENDING_BULL": "🟢 טרנד עולה\nכסף זורם לאלטים — אגרסיביים יותר",
+        "ALTSEASON": "🚀 עונת אלטים\nכל הכסף בבטא גבוה — קח סיגנלים חלקים",
+        "RANGE": "🟡 שוק ללא כיוון\nקח רק סיגנלים חזקים במיוחד",
+        "RISK_OFF": "🔴 שוק בפחד\nסיכון גבוה — מזער פוזיציות",
+        "TRENDING_BEAR": "⛔ טרנד יורד\nתחכה לתחתון — אל תקנה",
+    }
+    return regimes.get(r, "")
 
 
 def _format_coin(i: int, c: dict) -> str:
