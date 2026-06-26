@@ -33,9 +33,13 @@ def classify_signal(c: dict) -> str:
     rs_positive = rs_1h > 0
     cvd_pos     = flow_parts.get("cvd", 0) >= 8
 
-    # ── BUY: טריגר הופעל ────────────────────────────────────────────────────
+    # ── BUY: טריגר הופעל + Gatekeeper ──────────────────────────────────────
     if dec == "BUY":
-        return "BUY"
+        # Gatekeeper: BUY רק אם יש מינימום
+        if flow >= 55 and (pre >= 40 or oi_growing):
+            return "BUY"
+        else:
+            return "PREPARE"  # downgrade ל-PREPARE
 
     # ── PREPARE: הצטברות אמיתית — כל 4 התנאים חייבים להתקיים ────────────
     prepare_conditions = [
