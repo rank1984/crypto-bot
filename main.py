@@ -57,7 +57,11 @@ def run_scan() -> None:
         send_telegram([])   # שולח הודעת "אין סיגנל" לטלגרם
         return
 
-    # ── 3. Signal Filter ─────────────────────────────────────────────────────
+    # ── 3. Quality Gate ──────────────────────────────────────────────────────
+    from scanner.quality_gate import apply_quality_gate_all
+    top = apply_quality_gate_all(top)
+
+    # ── 4. Signal Filter ─────────────────────────────────────────────────────
     from scanner.signal_filter import filter_coins
     filtered = filter_coins(top)
 
@@ -81,7 +85,7 @@ def run_scan() -> None:
         f"WATCH={len(filtered['watch'])}"
     )
 
-    # ── 4. Send ───────────────────────────────────────────────────────────────
+    # ── 5. Send ───────────────────────────────────────────────────────────────
     if filtered["has_quality"]:
         send_telegram(top, filtered=filtered)
     elif filtered["watch"]:
