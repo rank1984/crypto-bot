@@ -228,7 +228,10 @@ def rank_universe(symbols: list[str]) -> list[dict]:
 
     log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters (rvol_fail={cnt['rvol']} hard_fail={cnt['hard']})")
 
-    results.sort(key=lambda x: x["final_score"], reverse=True)
+    results.sort(
+        key=lambda x: x.get("flow_score", 0) * 0.50 + x.get("pre_score", 0) * 0.50,
+        reverse=True
+    )
 
     # dedup — מטבע לא יופיע פעמיים
     seen, unique = set(), []
