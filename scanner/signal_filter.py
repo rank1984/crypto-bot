@@ -16,48 +16,37 @@ from utils.logger import get_logger
 log = get_logger(__name__)
 
 
+def _big_move_score(c: dict) -> float:
+    """מיון לפי פוטנציאל מהלך גדול."""
+    return c.get("flow_score", 0) * 0.50 + c.get("pre_score", 0) * 0.50
+
+
 def classify_signal(c: dict) -> str:
-    """
-    מקבל coin dict מ-ranking ומחזיר: IGNORE / WATCH / PREPARE / BUY
-    """
     dec        = c.get("entry_decision", "NO")
     flow       = c.get("flow_score", 0)
     pre        = c.get("pre_score", 0)
     compressed = c.get("is_compressed", False)
     oi_change  = c.get("oi_change", 0)
     rs_1h      = c.get("rs_1h", 0)
-    comp_parts = c.get("pre_components", {})
     flow_parts = c.get("flow_components", {})
 
     oi_growing  = oi_change > 2.0 or flow_parts.get("oi", 0) >= 10
     rs_positive = rs_1h > 0
-    cvd_pos     = flow_parts.get("cvd", 0) >= 8
 
-    # ── BUY: טריגר הופעל + Gatekeeper ──────────────────────────────────────
+    # BUY: טריגר טכני + איכות מינימלית
     if dec == "BUY":
-        # Gatekeeper: BUY רק אם יש מינימום
-        if flow >= 55 and (pre >= 40 or oi_growing):
+        if flow >= 60 and pre >= 50:
             return "BUY"
-        else:
-            return "PREPARE"  # downgrade ל-PREPARE
+        return "WATCH"  # downgrade
 
-    # ── PREPARE: הצטברות אמיתית — כל 4 התנאים חייבים להתקיים ────────────
-    prepare_conditions = [
-        compressed,     # Compression קיים
-        flow >= 60,     # Flow חזק
-        oi_growing,     # OI מתחיל לעלות
-        rs_positive,    # RS מול BTC חיובי
-    ]
-    if all(prepare_conditions):
+    # PREPARE: הצטברות אמיתית
+    if compressed and flow >= 55 and oi_growing and rs_positive and pre >= 45:
         return "PREPARE"
 
-    # ── WATCH: יש משהו אבל לא מספיק ────────────────────────────────────────
-    # דורש לפחות 2 מתוך: compression / flow>40 / OI / RS
-    watch_score = sum([compressed, flow >= 40, oi_growing, rs_positive])
-    if watch_score >= 2:
+    # WATCH: יש משהו מינימלי
+    if flow >= 45 or pre >= 45:
         return "WATCH"
 
-    # ── IGNORE: רעש ─────────────────────────────────────────────────────────
     return "IGNORE"
 
 
