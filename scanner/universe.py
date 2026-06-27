@@ -10,15 +10,14 @@ log = get_logger(__name__)
 
 _HEADERS = {"User-Agent": "crypto-bot/1.0"}
 
+
 _BLACKLIST = {
-    "USDCUSDT", "USDTUSDT", "BUSDUSDT", "TUSDUSDT",
-    "DAIUSDT",  "FRAXUSDT", "PYUSDUSDT", "USDDUSDT",
-    "FDUSDUSDT", "EURUSDT", "GBPUSDT",
+    "USDCUSDT","USDTUSDT","BUSDUSDT","TUSDUSDT","USDSUSDT",
+    "USD1USDT","USDEUSDT","FDUSDUSDT","DAIUSDT","FRAXUSDT",
+    "PYUSDUSDT","USDDUSDT","EURCUSDT","USDPUSDT","GUSDUSDT",
 }
 
-def get_coins():
-    return build_universe()
-    
+
 def build_universe() -> list[str]:
     """
     מחזיר רשימת USDT pairs לפי volume.
@@ -67,6 +66,7 @@ def build_universe() -> list[str]:
     result = symbols[:MAX_SYMBOLS]
     log.info(f"Universe: {len(result)} symbols")
     return result
+
 
 if __name__ == "__main__":
     coins = build_universe()
