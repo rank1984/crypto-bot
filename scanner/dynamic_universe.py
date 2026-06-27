@@ -18,8 +18,9 @@ from scanner.market_data import get_candles
 log = get_logger(__name__)
 
 _BLACKLIST = {
-    "USDCUSDT","USDTUSDT","BUSDUSDT","TUSDUSDT","FDUSDUSDT",
-    "DAIUSDT","PYUSDUSDT","USDSUSDT","EURCUSDT","FRAXUSDT",
+    "USDCUSDT","USDTUSDT","BUSDUSDT","TUSDUSDT","USDSUSDT",
+    "USD1USDT","USDEUSDT","FDUSDUSDT","DAIUSDT","FRAXUSDT",
+    "PYUSDUSDT","USDDUSDT","EURCUSDT","USDPUSDT","GUSDUSDT",
 }
 
 _HEADERS   = {"User-Agent": "crypto-bot/1.0"}
