@@ -26,22 +26,43 @@ def _flow_label(f: float) -> str:
 
 def _why_positive(c: dict) -> list[str]:
     pos = []
-    if c.get("flow_score", 0) >= 60:       pos.append("Flow חזק")
-    if c.get("oi_change", 0) > 2:          pos.append("OI עולה — כסף נכנס")
-    if c.get("is_compressed"):             pos.append("Compression — שקט לפני סערה")
-    if c.get("rs_1h", 0) > 0:             pos.append("חוזק מול BTC")
-    if c.get("whale_detected"):            pos.append("פעילות לווייתנים")
-    if c.get("momentum_1h", 0) > 1:       pos.append(f"מומנטום 1H {_fmt_pct(c.get('momentum_1h',0))}")
-    if c.get("is_sympathy"):              pos.append(f"Sympathy אחרי {c.get('leader','').replace('USDT','')}")
+    flow = c.get("flow_score", 0)
+    oi   = c.get("oi_change", 0)
+    rs   = c.get("rs_1h", 0)
+    mom  = c.get("momentum_1h", 0)
+
+    if flow >= 60:
+        pos.append(f"Flow חזק ({flow:.0f}/100)")
+    if oi > 2:
+        pos.append(f"OI עולה {oi:+.1f}% — כסף נכנס")
+    if c.get("is_compressed"):
+        pos.append("Compression — שקט לפני סערה")
+    if rs > 0.5:
+        pos.append(f"מתחזק מול BTC ב-{rs:+.1f}%")
+    elif rs > 0:
+        pos.append("חוזק מול BTC")
+    if c.get("whale_detected"):
+        pos.append("פעילות לווייתנים זוהתה")
+    if mom > 1:
+        pos.append(f"מומנטום 1H {mom:+.1f}%")
+    if c.get("is_sympathy"):
+        pos.append(f"Sympathy אחרי {c.get('leader','').replace('USDT','')}")
     return pos
+
 
 def _why_missing(c: dict) -> list[str]:
     neg = []
-    if c.get("flow_score", 0) < 60:       neg.append("Flow מעל 60")
-    if c.get("oi_change", 0) <= 0:        neg.append("OI עולה")
-    if not c.get("is_compressed"):        neg.append("Compression")
-    if c.get("rs_1h", 0) <= 0:           neg.append("חוזק מול BTC")
-    if c.get("entry_decision") != "BUY":  neg.append("אישור פריצה")
+    flow = c.get("flow_score", 0)
+    if flow < 60:
+        neg.append(f"Flow חלש ({flow:.0f}/100 — צריך 60+)")
+    if c.get("oi_change", 0) <= 0:
+        neg.append("OI לא עולה — אין כסף חדש")
+    if not c.get("is_compressed"):
+        neg.append("אין Compression")
+    if c.get("rs_1h", 0) <= 0:
+        neg.append("חולשה מול BTC")
+    if c.get("entry_decision") != "BUY":
+        neg.append("אין טריגר פריצה")
     return neg[:3]
 
 def _medal(i: int) -> str:
