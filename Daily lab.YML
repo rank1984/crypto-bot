@@ -1,0 +1,56 @@
+name: 🔬 Daily Research Lab
+
+on:
+  schedule:
+    - cron: '30 23 * * *'   # 23:30 UTC כל יום
+  workflow_dispatch:
+    inputs:
+      min_gain:
+        description: 'מינימום עלייה לניתוח'
+        default: '30'
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt
+
+      - name: Missed Winners Analysis
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python tools/missed_winners.py \
+            --min-gain ${{ github.event.inputs.min_gain || '30' }} \
+            --top 25 --send
+
+      - name: Threshold Simulation
+        env:
+          DB_PATH: data/shadow.db
+        run: |
+          python tools/threshold_sim.py || echo "Not enough data yet"
+
+      - name: Shadow Mode Report
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DB_PATH: data/shadow.db
+        run: |
+          python -c "
+          from tools.shadow_mode import shadow_report
+          import requests, os
+          report = shadow_report()
+          print(report)
+          token = os.getenv('TELEGRAM_TOKEN')
+          chat  = os.getenv('TELEGRAM_CHAT_ID')
+          if token and chat and 'צריך' not in report:
+              requests.post(f'https://api.telegram.org/bot{token}/sendMessage',
+                  json={'chat_id': chat, 'text': report[:4096]}, timeout=10)
+          " || echo "Shadow report skipped"
