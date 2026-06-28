@@ -97,6 +97,17 @@ def run_scan() -> None:
         send_telegram([])
 
     # ── 5. Log summary ────────────────────────────────────────────────────────
+    # ── 6. Shadow Mode — שמור הכל בשקט ──────────────────────────────────────
+    try:
+        from tools.shadow_mode import save_shadow_signal, init_shadow_db, update_forward_returns
+        init_shadow_db()
+        for c in top:
+            save_shadow_signal(c, c.get("signal", "IGNORE"))
+        update_forward_returns()   # מעדכן returns מסריקות קודמות
+        log.info(f"Shadow Mode: saved {len(top)} signals")
+    except Exception as e:
+        log.debug(f"Shadow Mode skipped: {e}")
+
     log.info("── Scan complete ─────────────────────────────────────")
     for i, c in enumerate(top, 1):
         log.info(
