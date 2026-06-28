@@ -1,6 +1,6 @@
 """
-CRYPTO-BOT Elite — Telegram Renderer
-עונה על: מה לעשות, למה, מה חסר, איפה כניסה.
+CRYPTO-BOT Elite — Telegram Renderer v3
+פילוסופיה: מטבעות שיכולים לעשות 50%-100% היום.
 """
 import requests
 from utils.config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
@@ -10,178 +10,190 @@ log = get_logger(__name__)
 
 
 def _fmt_price(p: float) -> str:
-    if p <= 0:       return "—"
-    if p >= 1:       return f"{p:.4f}"
-    if p >= 0.01:    return f"{p:.5f}"
-    if p >= 0.0001:  return f"{p:.6f}"
+    if p <= 0:      return "—"
+    if p >= 100:    return f"{p:.2f}"
+    if p >= 1:      return f"{p:.4f}"
+    if p >= 0.01:   return f"{p:.5f}"
+    if p >= 0.0001: return f"{p:.6f}"
     return f"{p:.8f}"
-
-def _fmt_pct(v: float) -> str:
-    return f"+{v:.1f}%" if v >= 0 else f"{v:.1f}%"
-
-def _flow_label(f: float) -> str:
-    if f >= 70: return "🟢 חזקה"
-    if f >= 50: return "🟡 בינונית"
-    return "🔴 חלשה"
-
-def _why_positive(c: dict) -> list[str]:
-    pos = []
-    flow = c.get("flow_score", 0)
-    oi   = c.get("oi_change", 0)
-    rs   = c.get("rs_1h", 0)
-    mom  = c.get("momentum_1h", 0)
-
-    if flow >= 60:
-        pos.append(f"Flow חזק ({flow:.0f}/100)")
-    if oi > 2:
-        pos.append(f"OI עולה {oi:+.1f}% — כסף נכנס")
-    if c.get("is_compressed"):
-        pos.append("Compression — שקט לפני סערה")
-    if rs > 0.5:
-        pos.append(f"מתחזק מול BTC ב-{rs:+.1f}%")
-    elif rs > 0:
-        pos.append("חוזק מול BTC")
-    if c.get("whale_detected"):
-        pos.append("פעילות לווייתנים זוהתה")
-    if mom > 1:
-        pos.append(f"מומנטום 1H {mom:+.1f}%")
-    if c.get("is_sympathy"):
-        pos.append(f"Sympathy אחרי {c.get('leader','').replace('USDT','')}")
-    return pos
-
-
-def _why_missing(c: dict) -> list[str]:
-    neg = []
-    flow = c.get("flow_score", 0)
-    if flow < 60:
-        neg.append(f"Flow חלש ({flow:.0f}/100 — צריך 60+)")
-    if c.get("oi_change", 0) <= 0:
-        neg.append("OI לא עולה — אין כסף חדש")
-    if not c.get("is_compressed"):
-        neg.append("אין Compression")
-    if c.get("rs_1h", 0) <= 0:
-        neg.append("חולשה מול BTC")
-    if c.get("entry_decision") != "BUY":
-        neg.append("אין טריגר פריצה")
-    return neg[:3]
 
 def _medal(i: int) -> str:
     return ["🥇","🥈","🥉","4️⃣","5️⃣"][i] if i < 5 else f"{i+1}."
 
-def _regime_label(r: str) -> str:
-    regimes = {
-        "TRENDING_BULL": "🟢 טרנד עולה\nכסף זורם לאלטים — אגרסיביים יותר",
-        "ALTSEASON": "🚀 עונת אלטים\nכל הכסף בבטא גבוה — קח סיגנלים חלקים",
-        "RANGE": "🟡 שוק ללא כיוון\nקח רק סיגנלים חזקים במיוחד",
-        "RISK_OFF": "🔴 שוק בפחד\nסיכון גבוה — מזער פוזיציות",
-        "TRENDING_BEAR": "⛔ טרנד יורד\nתחכה לתחתון — אל תקנה",
+def _regime_line(r: str) -> tuple[str, str]:
+    m = {
+        "TRENDING_BULL": ("🟢 שוק עולה",  "היום מחפשים פוטנציאל 50%+ עם מומנטום"),
+        "ALTSEASON":     ("🚀 עונת אלטים", "היום מחפשים פוטנציאל 100%+ — אגרסיביים"),
+        "RANGE":         ("🟡 שוק מדשדש",  "היום מחפשים רק פוטנציאל 50%+ חזק"),
+        "RISK_OFF":      ("🔴 שוק בפחד",   "היום ממתינים — סיכון גבוה"),
+        "TRENDING_BEAR": ("⛔ שוק יורד",   "היום לא קונים — ממתינים לתחתית"),
     }
-    return regimes.get(r, "")
+    return m.get(r, ("📊 שוק", ""))
+
+def _probability(flow: float, pre: float, oi: float,
+                 compressed: bool, whale: bool) -> int:
+    """הסתברות למהלך גדול 0-100%"""
+    score = (
+        flow  * 0.35 +
+        pre   * 0.30 +
+        min(oi * 5, 20) +
+        (10 if compressed else 0) +
+        (5  if whale else 0)
+    )
+    return min(99, max(1, round(score)))
+
+def _prob_emoji(p: int) -> str:
+    if p >= 70: return "🟢"
+    if p >= 50: return "🟡"
+    if p >= 35: return "🟠"
+    return "🔴"
+
+def _stars(p: int) -> str:
+    if p >= 75: return "★★★★★"
+    if p >= 60: return "★★★★☆"
+    if p >= 45: return "★★★☆☆"
+    if p >= 30: return "★★☆☆☆"
+    return "★☆☆☆☆"
+
+def _positives(c: dict) -> list[str]:
+    pos = []
+    if c.get("flow_score", 0) >= 60:     pos.append("Flow מתחזק")
+    if c.get("oi_change", 0) > 2:        pos.append(f"OI קפץ {c['oi_change']:+.1f}%")
+    if c.get("is_compressed"):            pos.append("Compression נשבר")
+    if c.get("rs_1h", 0) > 0.5:         pos.append(f"חזק מ-BTC ב-{c['rs_1h']:+.1f}%")
+    elif c.get("rs_1h", 0) > 0:         pos.append("חזק מ-BTC")
+    if c.get("whale_detected"):           pos.append("לווייתנים פעילים")
+    if c.get("momentum_1h", 0) > 1.5:   pos.append(f"מומנטום חזק {c['momentum_1h']:+.1f}%")
+    if c.get("is_sympathy"):             pos.append(f"גורר אחרי {c.get('leader','').replace('USDT','')}")
+    return pos
+
+def _negatives(c: dict) -> list[str]:
+    neg = []
+    if c.get("oi_change", 0) <= 0:       neg.append("OI עדיין לא עולה")
+    if not c.get("is_compressed"):        neg.append("אין Compression")
+    if c.get("rs_1h", 0) <= 0:          neg.append("חולשה מול BTC")
+    if c.get("flow_score", 0) < 55:      neg.append("Flow עדיין חלש")
+    return neg[:3]
 
 
-def _format_coin(i: int, c: dict) -> str:
-    sig   = c.get("signal", "NO")
-    sym   = c["symbol"]
-    price = c.get("price", 0)
-    flow  = c.get("flow_score", 0)
-    pre   = c.get("pre_score", 0)
-    pos   = _why_positive(c)
-    neg   = _why_missing(c)
+def _format_buy(medal: str, c: dict, prob: int) -> str:
+    pos = _positives(c)
+    ep  = c.get("entry_price", 0)
+    sl  = c.get("entry_sl", 0)
+    tp1 = c.get("entry_tp1", 0)
+    tp2 = c.get("entry_tp2", 0)
 
-    lines = [f"{_medal(i)} {sym}",
-             f"💰 מחיר: {_fmt_price(price)}",
-             f"🌊 Flow: {flow:.0f}/100 {_flow_label(flow)}  |  📈 Pre: {pre:.0f}/100",
-             ""]
-
-    if sig == "BUY":
-        ep  = c.get("entry_price", 0)
-        sl  = c.get("entry_sl", 0)
-        tp1 = c.get("entry_tp1", 0)
-        tp2 = c.get("entry_tp2", 0)
-        rr  = c.get("entry_rr", 0)
-        lines += [
-            "🟢 פעולה: קנה",
-            "",
-            f"📌 כניסה:    {_fmt_price(ep)}",
-            f"🛑 סטופ:     {_fmt_price(sl)}",
-            f"🎯 יעד 1:    {_fmt_price(tp1)}",
-            f"🎯 יעד 2:    {_fmt_price(tp2)}",
-            f"⚖️ R:R:      {rr:.1f}x",
-        ]
-        if pos:
-            lines.append("")
-            lines.append("למה?")
-            for p in pos: lines.append(f"  ✅ {p}")
-
-    elif sig == "PREPARE":
-        lines += [
-            "🟡 פעולה: התכונן",
-            "",
-            "הכסף מתחיל להיכנס — עדיין אין טריגר.",
-            "",
-            "מה לעשות?",
-            "  ✅ הוסף ל-Watchlist",
-            "  ✅ עקוב ב-30 הדקות הקרובות",
-        ]
-        if neg:
-            lines.append("")
-            lines.append("מה עוד חסר?")
-            for n in neg: lines.append(f"  ❌ {n}")
-
-    else:  # WATCH / NO
-        lines += ["👀 פעולה: עקוב בלבד", ""]
-        if pos:
-            lines.append("מה חיובי?")
-            for p in pos: lines.append(f"  ✅ {p}")
-        if neg:
-            lines.append("")
-            lines.append("מה חסר?")
-            for n in neg: lines.append(f"  ❌ {n}")
-
+    lines = [
+        f"🚨 BUY NOW",
+        f"",
+        f"{medal} {c['symbol'].replace('USDT','')}",
+        f"{_stars(prob)}",
+        f"",
+        f"סיכוי גבוה למהלך 50%-100%",
+        f"",
+        f"כניסה:       {_fmt_price(ep)}",
+        f"סטופ:        {_fmt_price(sl)}",
+        f"יעד ראשון:   {_fmt_price(tp1)}",
+        f"יעד שני:     {_fmt_price(tp2)}",
+        f"R:R:         {c.get('entry_rr',0):.1f}x",
+    ]
+    if pos:
+        lines += ["", "למה עכשיו?"]
+        for p in pos: lines.append(f"  ✅ {p}")
     return "\n".join(lines)
+
+
+def _format_prepare(medal: str, c: dict, prob: int) -> str:
+    pos = _positives(c)
+    neg = _negatives(c)
+    sym = c['symbol'].replace('USDT','')
+
+    lines = [
+        f"{medal} {sym}",
+        f"{_prob_emoji(prob)} הסתברות למהלך גדול: {prob}%",
+        f"💰 מחיר: {_fmt_price(c.get('price',0))}",
+    ]
+    if pos:
+        lines += ["", "למה ברשימה?"]
+        for p in pos: lines.append(f"  ✅ {p}")
+    if neg:
+        lines += ["", "מה עדיין חסר?"]
+        for n in neg: lines.append(f"  ❌ {n}")
+    lines += [
+        "",
+        "👉 פעולה:",
+        "להוסיף ל-Watchlist.",
+        "לחכות לפריצה.",
+    ]
+    return "\n".join(lines)
+
+
+def _format_watch(medal: str, c: dict, prob: int) -> str:
+    sym = c['symbol'].replace('USDT','')
+    action = "רק מעקב.\nעדיין לא מספיק חזק." if prob >= 40 else "לא מומלץ כרגע."
+    return f"{medal} {sym}\n{_prob_emoji(prob)} הסתברות: {prob}%\n\n👉 {action}"
 
 
 def format_message(coins: list[dict], **kwargs) -> str:
     if not coins:
-        return "🔥 CRYPTO-BOT Elite\n\n❌ אין כרגע Setup איכותי.\n⏳ סבלנות."
+        return (
+            "🔥 CRYPTO-BOT ELITE\n\n"
+            "❌ אין כרגע מועמדים למהלך גדול.\n\n"
+            "⏳ ממשיכים לסרוק."
+        )
 
-    regime = coins[0].get("regime","") if coins else ""
-    header = ["🔥 CRYPTO-BOT Elite"]
-    if regime:
-        header.append(f"📊 {_regime_label(regime)}")
+    regime = coins[0].get("regime", "")
+    r_title, r_tip = _regime_line(regime)
+
+    lines = [
+        "🔥 CRYPTO-BOT ELITE",
+        "",
+        f"📊 מצב שוק: {r_title}",
+    ]
+    if r_tip:
+        lines.append(f"🎯 {r_tip}")
+    lines.append("")
 
     buy_coins     = [c for c in coins if c.get("signal") == "BUY"]
     prepare_coins = [c for c in coins if c.get("signal") == "PREPARE"]
     watch_coins   = [c for c in coins if c.get("signal") == "WATCH"]
 
-    sections = []
+    # ── BUY ──────────────────────────────────────────────────────────────────
+    for i, c in enumerate(buy_coins):
+        prob = _probability(c.get("flow_score",0), c.get("pre_score",0),
+                            c.get("oi_change",0), c.get("is_compressed",False),
+                            c.get("whale_detected",False))
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        lines.append(_format_buy(_medal(i), c, prob))
+        lines.append("")
 
-    if buy_coins:
-        sections.append("━━━━━━━━━━━━\n🚨 BUY ALERT")
-        for i, c in enumerate(buy_coins):
-            sections.append(_format_coin(i, c))
+    # ── PREPARE ───────────────────────────────────────────────────────────────
+    if prepare_coins or watch_coins:
+        lines.append("━━━━━━━━━━━━━━━━━━")
 
-    if prepare_coins:
-        sections.append("━━━━━━━━━━━━\n🟡 PREPARE")
-        for i, c in enumerate(prepare_coins):
-            sections.append(_format_coin(i, c))
+    idx = 0
+    for c in prepare_coins:
+        prob = _probability(c.get("flow_score",0), c.get("pre_score",0),
+                            c.get("oi_change",0), c.get("is_compressed",False),
+                            c.get("whale_detected",False))
+        lines.append(_format_prepare(_medal(idx), c, prob))
+        lines.append("")
+        idx += 1
 
-    if watch_coins:
-        sections.append("━━━━━━━━━━━━\n👀 WATCH")
-        for i, c in enumerate(watch_coins):
-            sections.append(_format_coin(i, c))
+    # ── WATCH ─────────────────────────────────────────────────────────────────
+    for c in watch_coins:
+        prob = _probability(c.get("flow_score",0), c.get("pre_score",0),
+                            c.get("oi_change",0), c.get("is_compressed",False),
+                            c.get("whale_detected",False))
+        lines.append(_format_watch(_medal(idx), c, prob))
+        lines.append("")
+        idx += 1
 
-    if not sections:
-        sections = ["━━━━━━━━━━━━"]
-        for i, c in enumerate(coins[:3]):
-            sections.append(_format_coin(i, c))
-
-    return "\n".join(header + sections)
+    return "\n".join(lines).strip()
 
 
 def send_telegram(coins: list[dict], portfolio_usd: float = 1000.0,
                   filtered: dict = None) -> bool:
-    # אם filtered קיים — שלח לפיו, אחרת שלח את coins ישירות
     if filtered:
         display = filtered.get("buy",[]) + filtered.get("prepare",[]) + filtered.get("watch",[])
     else:
@@ -190,25 +202,18 @@ def send_telegram(coins: list[dict], portfolio_usd: float = 1000.0,
     text = format_message(display)
 
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        log.warning("Telegram not configured — printing:")
         print(text)
         return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
-        resp = requests.post(url, json={
+        r = requests.post(url, json={
             "chat_id": TELEGRAM_CHAT_ID,
-            "text":    text,
+            "text":    text[:4096],
         }, timeout=10)
-        resp.raise_for_status()
+        r.raise_for_status()
         log.info("Telegram ✓")
         return True
     except Exception as e:
         log.error(f"Telegram failed: {e}")
-        # fallback ללא formatting
-        try:
-            plain = format_message(display)
-            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain[:4000]}, timeout=10)
-        except Exception:
-            pass
         return False
