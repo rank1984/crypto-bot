@@ -57,6 +57,7 @@ def _stars(p: int) -> str:
 
 def _positives(c: dict) -> list[str]:
     pos = []
+    if c.get("vol_explosion"):            pos.append("💥 פיצוץ נפח — נבנה בנרות האחרונים")
     if c.get("flow_score", 0) >= 60:     pos.append("Flow מתחזק")
     if c.get("oi_change", 0) > 2:        pos.append(f"OI קפץ {c['oi_change']:+.1f}%")
     if c.get("is_compressed"):            pos.append("Compression נשבר")
