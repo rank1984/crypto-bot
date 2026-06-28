@@ -113,6 +113,8 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "momentum_1h":  mom["momentum_1h"],
         "rvol":         vol["rvol"],
         "vol_accel":    vol["vol_accel"],
+        "vol_explosion": vol.get("vol_explosion", False),
+        "vol_surge_score": vol.get("vol_surge_score", 0.0),
         "dollar_volume": vol["dollar_volume"],
         "vwap":         ind["vwap"],
         "vwap_dist":    ind["vwap_dist"],
