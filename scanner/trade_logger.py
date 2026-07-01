@@ -53,8 +53,12 @@ def init_trade_db() -> None:
                 -- Performance
                 pnl_pct         REAL,
                 pnl_usd         REAL,
-                max_runup_pct   REAL,   -- הכי גבוה שהגיע
-                max_drawdown_pct REAL,  -- הכי נמוך שירד
+                max_runup_pct   REAL,   -- MFE: הכי גבוה שהגיע
+                max_drawdown_pct REAL,  -- MAE: הכי נמוך שירד
+                hit_tp1         INTEGER DEFAULT 0,
+                hit_tp2         INTEGER DEFAULT 0,
+                hit_sl          INTEGER DEFAULT 0,
+                setup_type_label TEXT,  -- לדוגמה: "Compression+OI", "Whale+RS"
                 hold_minutes    REAL,
                 -- Exit indicators
                 cvd_at_exit     REAL,
