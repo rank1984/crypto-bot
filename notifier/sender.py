@@ -78,20 +78,20 @@ def _negatives(c: dict) -> list[str]:
 
 
 def _format_buy(medal: str, c: dict, prob: int) -> str:
-    pos = _positives(c)
-    ep  = c.get("entry_price", 0)
-    sl  = c.get("entry_sl", 0)
-    tp1 = c.get("entry_tp1", 0)
-    tp2 = c.get("entry_tp2", 0)
+    pos    = _positives(c)
+    ep     = c.get("entry_price", 0)
+    sl     = c.get("entry_sl", 0)
+    tp1    = c.get("entry_tp1", 0)
+    tp2    = c.get("entry_tp2", 0)
+    rating = c.get("rating", "")
+    conf   = c.get("confidence", 0)
 
+    rating_line = f"{_stars(prob)}  דירוג: {rating}  ({conf:.0f}/100)" if rating else f"{_stars(prob)}"
     lines = [
-        f"🚨 BUY NOW",
-        f"",
+        "🚨 BUY NOW", "",
         f"{medal} {c['symbol'].replace('USDT','')}",
-        f"{_stars(prob)}",
-        f"",
-        f"סיכוי גבוה למהלך 50%-100%",
-        f"",
+        rating_line, "",
+        "סיכוי גבוה למהלך 50%-100%", "",
         f"כניסה:       {_fmt_price(ep)}",
         f"סטופ:        {_fmt_price(sl)}",
         f"יעד ראשון:   {_fmt_price(tp1)}",
