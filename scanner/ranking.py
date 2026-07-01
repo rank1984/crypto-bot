@@ -21,6 +21,12 @@ from scanner.regime            import detect_regime, get_min_threshold
 from scanner.entry_engine      import evaluate_entry, EntrySignal
 from storage.sqlite_db         import init_db, save_signal
 from utils.config import TOP_N
+try:
+    from tools.scan_diagnostics import ScanStats
+    _HAS_DIAG = True
+except ImportError:
+    _HAS_DIAG = False
+    class ScanStats: pass
 from utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -184,6 +190,8 @@ def rank_universe(symbols: list[str]) -> list[dict]:
 
     results = []
     cnt = {"rvol": 0, "hard": 0, "ok": 0, "err": 0}
+    _stats = ScanStats() if _HAS_DIAG else None
+    if _stats: _stats.scanned = len(symbols); _stats.regime = regime
 
     for i, sym in enumerate(symbols, 1):
         if i % 50 == 0:
@@ -194,8 +202,10 @@ def rank_universe(symbols: list[str]) -> list[dict]:
                 cnt["err"] = cnt.get("err",0) + 1
                 continue
             vol = calc_volume(dfs["5min"])
+            if _stats: _stats.record_rvol(vol['rvol'])
             if vol["rvol"] < 0.8:
                 cnt["rvol"] += 1
+                if _stats: _stats.rvol_fail += 1
                 continue
             from scanner.scoring import passes_hard_filters
             from scanner.indicators import calc_indicators
@@ -211,11 +221,13 @@ def rank_universe(symbols: list[str]) -> list[dict]:
             )
             if not passed:
                 cnt["hard"] += 1
+                if _stats: _stats.hard_fail += 1; _stats.hard_reasons[reason] = _stats.hard_reasons.get(reason,0)+1
                 continue
             r = scan_coin(sym)
             if r is None:
                 continue
             cnt["ok"] += 1
+            if _stats and 'flow_score' in (r or {}): _stats.record_flow(r['flow_score'])
             results.append(r)
             s_bonus = sympathy_bonus(sym, sympathy_plays)
             if s_bonus > 0:
@@ -266,5 +278,9 @@ def rank_universe(symbols: list[str]) -> list[dict]:
         except Exception as e:
             log.warning(f"DB save: {e}")
 
+    if _stats:
+        _stats.watch   = sum(1 for c in top if c.get('signal') == 'WATCH')
+        _stats.prepare = sum(1 for c in top if c.get('signal') == 'PREPARE')
+        _stats.buy     = sum(1 for c in top if c.get('signal') == 'BUY')
     log.info(f"Done: {len(results)} scored | {len(top)} selected | regime={regime}")
-    return top
+    return top, _stats
