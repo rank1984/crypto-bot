@@ -1,0 +1,24 @@
+name: 🔬 Pipeline Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: 'כמה מטבעות לבדוק'
+        default: '50'
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -r requirements.txt
+      - name: Run Pipeline Audit
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          USE_DYNAMIC_UNIVERSE: "true"
+        run: python tools/pipeline_audit.py --sample ${{ github.event.inputs.sample || '50' }} --send
