@@ -57,7 +57,15 @@ def run_scan() -> None:
         send_telegram([])   # שולח הודעת "אין סיגנל" לטלגרם
         return
 
-    # ── 3. Quality Gate ──────────────────────────────────────────────────────
+    # ── 3. Setup Rating ──────────────────────────────────────────────────────
+    from scanner.setup_rating import rate_setup, should_send
+    for c in top:
+        rating, confidence, reasons = rate_setup(c)
+        c["rating"]      = rating
+        c["confidence"]  = confidence
+        c["rating_reasons"] = reasons
+
+    # ── 4. Quality Gate ──────────────────────────────────────────────────────
     from scanner.quality_gate import apply_quality_gate_all
     top = apply_quality_gate_all(top)
 
@@ -108,7 +116,14 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Shadow Mode skipped: {e}")
 
-    log.info("── Scan complete ─────────────────────────────────────")
+    # ── 7. Score History ─────────────────────────────────────────────────────
+    try:
+        from tools.score_history import init_score_history, save_score
+        init_score_history()
+        for c in top:
+            save_score(c, c.get("rating", "C"))
+    except Exception as e:
+        log.debug(f"Score history skipped: {e}")
     for i, c in enumerate(top, 1):
         log.info(
             f"  {i}. {c['symbol']:<12} "
