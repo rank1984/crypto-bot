@@ -51,7 +51,8 @@ def run_scan() -> None:
         return
 
     # ── 2. Score & Rank ───────────────────────────────────────────────────────
-    top = rank_universe(symbols)
+    result = rank_universe(symbols)
+    top, _diag = result if isinstance(result, tuple) else (result, None)
     if not top:
         log.warning("No coins passed scoring — sending 'no signal' message")
         send_telegram([])   # שולח הודעת "אין סיגנל" לטלגרם
