@@ -17,23 +17,28 @@ log = get_logger(__name__)
 def apply_quality_gate(coin: dict) -> dict:
     """
     בדיקה אחרונה לפני BUY.
-    אם entry_decision == "BUY" אבל איכות נמוכה — downgrade ל-WAIT.
+    Regime-aware: ב-Bear/Risk-Off הרף עולה — רק A+ עם catalyst עוברים.
     """
     entry_dec = coin.get("entry_decision", "NO")
     flow      = coin.get("flow_score", 0)
     pre       = coin.get("pre_score", 0)
     oi        = coin.get("oi_change", 0)
+    regime    = coin.get("regime", "RANGE")
+    catalyst  = coin.get("has_catalyst", False)
 
-    # אם לא BUY — תעבור בלי שינוי
     if entry_dec != "BUY":
         return coin
 
-    # Gatekeeper: BUY דורש איכות מינימלית
-    if flow >= 55 and (pre >= 40 or oi > 2):
-        # עבר — שאר BUY
+    if regime in ("TRENDING_BEAR", "RISK_OFF"):
+        if flow >= 75 and pre >= 65 and catalyst:
+            return coin
+        log.debug(f"{coin['symbol']}: BUY blocked in {regime} (needs A+ + catalyst)")
+        coin["entry_decision"] = "WAIT"
         return coin
 
-    # נפסל — downgrade ל-WAIT
+    if flow >= 55 and (pre >= 40 or oi > 2):
+        return coin
+
     log.debug(
         f"{coin['symbol']}: BUY downgrade → WAIT "
         f"(flow={flow:.0f}, pre={pre:.0f}, oi={oi:.1f})"
