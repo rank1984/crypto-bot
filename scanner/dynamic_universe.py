@@ -35,6 +35,13 @@ def _kucoin_fut_sym(sym: str) -> str:
 
 # ─── Layer A: Base ────────────────────────────────────────────────────────────
 
+def _min_volume_for_mcap(mcap: float) -> float:
+    """סף נזילות דינמי: Large(>1B)=20M$ Mid(100M-1B)=5M$ Small(<100M)=1M$"""
+    if mcap >= 1_000_000_000: return 20_000_000
+    if mcap >= 100_000_000:   return 5_000_000
+    return 1_000_000
+
+
 def _base_universe() -> list[str]:
     symbols = []
     for page in range(1, 3):
@@ -50,8 +57,10 @@ def _base_universe() -> list[str]:
             for c in r.json():
                 vol   = c.get("total_volume") or 0
                 price = c.get("current_price") or 0
+                mcap  = c.get("market_cap") or 0
                 sym   = (c.get("symbol") or "").upper()
-                if vol < MIN_DAILY_VOLUME or price < MIN_PRICE or not sym:
+                min_vol = max(MIN_DAILY_VOLUME, _min_volume_for_mcap(mcap))
+                if vol < min_vol or price < MIN_PRICE or not sym:
                     continue
                 s = f"{sym}USDT"
                 if s not in symbols:
