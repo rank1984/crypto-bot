@@ -58,15 +58,11 @@ def run_scan() -> None:
         send_telegram([])   # שולח הודעת "אין סיגנל" לטלגרם
         return
 
-    # ── 3. Setup Rating ──────────────────────────────────────────────────────
-    from scanner.setup_rating import rate_setup, should_send
-    for c in top:
-        rating, confidence, reasons = rate_setup(c)
-        c["rating"]      = rating
-        c["confidence"]  = confidence
-        c["rating_reasons"] = reasons
+    # ── 3. Decision Engine — החלטה אחת מרכזית ──────────────────────────────
+    from scanner.decision_engine import decide_batch
+    top = decide_batch(top)
 
-    # ── 4. Quality Gate ──────────────────────────────────────────────────────
+    # ── 4. Quality Gate (legacy - מנוטרל) ───────────────────────────────────
     from scanner.quality_gate import apply_quality_gate_all
     top = apply_quality_gate_all(top)
 
