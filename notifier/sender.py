@@ -1,15 +1,22 @@
 """
-### CRYPTO-BOT Elite — Telegram Renderer V3 ###
-פילוסופיה: איתור עסקאות בעלות הסתברות גבוהה לרווח של 10%-25%,
-תוך שמירה על יחס סיכון/סיכוי קשוח (R:R >= 3:1) המשתלם גם לאחר עמלות ומיסוי בישראל.
-"""
+CRYPTO-BOT Elite — Telegram Renderer v4
 
+פילוסופיה: תשובה לשלוש שאלות בלבד.
+    1. יש עסקה?
+    2. למה אין?
+    3. מה לחכות שיקרה?
+
+אין "הסתברות". יש "דירוג איכות" (A+/A/B+/B).
+אין WATCH חלש. יש "מועמד קרוב" עם מה חסר לו.
+"""
 import requests
 from utils.config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 from utils.logger import get_logger
 
 log = get_logger(__name__)
 
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _fmt_price(p: float) -> str:
     if p <= 0:      return "—"
@@ -19,226 +26,254 @@ def _fmt_price(p: float) -> str:
     if p >= 0.0001: return f"{p:.6f}"
     return f"{p:.8f}"
 
-
 def _medal(i: int) -> str:
-    return ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i] if i < 5 else f"{i+1}."
+    return ["🥇","🥈","🥉","4.","5."][i] if i < 5 else f"{i+1}."
 
+def _regime_line(r: str) -> str:
+    return {
+        "TRENDING_BULL": "🟢 שוק עולה",
+        "ALTSEASON":     "🚀 עונת אלטים",
+        "RANGE":         "🟡 שוק מדשדש",
+        "RISK_OFF":      "🔴 שוק בפחד",
+        "TRENDING_BEAR": "⛔ שוק יורד",
+    }.get(r, "📊 שוק")
 
-def _regime_line(r: str) -> tuple[str, str]:
-    """שלב 2 — התאמת פילטרים ומסרים לפי מצב השוק הנוכחי"""
-    m = {
-        "BULL": ("Bull (שוק עולה) 🟢", "תנאי סף מרוככים, מחפשים עסקאות מומנטום חזקות"),
-        "TRENDING_BULL": ("Bull (שוק עולה) 🟢", "תנאי סף מרוככים, מחפשים עסקאות מומנטום חזקות"),
-        "ALTSEASON": ("Altseason (עונת אלטים) 🚀", "שוק אגרסיבי — סורקים הזדמנויות בנזילות גבוהה"),
-        "RANGE": ("Range (שוק מדשדש) 🟡", "תנאי סף קשוחים, עסקאות איכותיות ומבוססות קומפרשן בלבד"),
-        "BEAR": ("Bear (שוק יורד) 🔴", "מצב הגנה — המערכת מסננת באגרסיביות / מחוץ לשוק"),
-        "TRENDING_BEAR": ("Bear (שוק יורד) 🔴", "מצב הגנה — המערכת מסננת באגרסיביות / מחוץ לשוק"),
-        "RISK_OFF": ("Risk-Off (שוק בפחד) ⛔", "סיכון גבוה — ממתינים לאישור או כניסת כסף חכם אמיתי"),
-    }
-    return m.get(r.upper(), ("📊 שוק משתנה", "ממתינים לכיוון ברור"))
+def _what_is_missing(c: dict) -> list[str]:
+    """מה בדיוק חסר למטבע כדי לקבל BUY."""
+    missing = []
+    if c.get("oi_change", 0) <= 1:
+        missing.append("OI חיובי — כניסת כסף")
+    if c.get("rvol", 0) < 1.5:
+        missing.append(f"RVOL מעל 1.5 (יש {c.get('rvol',0):.1f}x)")
+    if not c.get("is_compressed"):
+        missing.append("Compression — צבירה שקטה")
+    if c.get("rs_1h", 0) <= 0:
+        missing.append("חוזק מול BTC")
+    if c.get("flow_score", 0) < 60:
+        missing.append(f"Flow מעל 60 (יש {c.get('flow_score',0):.0f})")
+    return missing[:3]
 
-
-def _probability_engine(flow: float, pre: float, oi: float,
-                        compressed: bool, whale: bool, rs: float) -> tuple[str, int]:
-    """
-    שלב 10 — Probability Engine
-    מחשב ציון מורכב ומחזיר דירוג אותיות (A+, A, B, C) יחד עם אחוז הסתברות מוערך.
-    """
-    score = (
-        flow * 0.35 +
-        pre * 0.25 +
-        min(oi * 5, 15) +
-        (15 if compressed else 0) +
-        (5 if whale else 0) +
-        (5 if rs > 0 else 0)
-    )
-    final_score = min(99, max(1, round(score)))
-
-    if final_score >= 90:
-        return "A+ (90%) — העסקאות הטובות ביותר", final_score
-    elif final_score >= 80:
-        return "A (80%) — טובות מאוד", final_score
-    elif final_score >= 70:
-        return "B (70%) — שווה מעקב", final_score
-    else:
-        return "C (<70%) — להתעלם", final_score
-
+def _why_blocked(c: dict) -> list[str]:
+    """למה נחסם — סיבות קצרות."""
+    reasons = []
+    if c.get("oi_change", 0) <= 0:
+        reasons.append("אין כניסת כסף חדשה (OI)")
+    if c.get("rvol", 0) < 1.0:
+        reasons.append("נפח מסחר חלש")
+    if c.get("flow_score", 0) < 45:
+        reasons.append("Flow חלש מדי")
+    if c.get("rs_1h", 0) < -0.5:
+        reasons.append("חולשה מול BTC")
+    if not c.get("is_compressed"):
+        reasons.append("אין צבירה (Compression)")
+    return reasons[:3]
 
 def _positives(c: dict) -> list[str]:
-    """שלב 3, 4, 5, 6 — זיהוי היתרונות הטכנולוגיים שנשברו למעלה"""
     pos = []
-    if c.get("vol_explosion") or c.get("vol_acceleration"):
-        pos.append("Flow & Volume חזק (פיצוץ נפח)")
-    elif c.get("flow_score", 0) >= 60:
-        pos.append("Flow מתחזק (כניסת כסף חכם)")
-        
-    if c.get("oi_change", 0) > 2:
-        pos.append("OI עולה (פוזיציות חדשות נפתחות)")
-    if c.get("is_compressed") or c.get("squeeze_detected"):
-        pos.append("Compression (פריצת קומפרשן/Squeeze)")
-    if c.get("rs_1h", 0) > 0:
-        pos.append("RS חיובי מול BTC")
-    if c.get("whale_detected") or c.get("whale_activity"):
-        pos.append("Whale Activity (פעילות לווייתנים)")
-    if c.get("sector_bonus"):
-        pos.append(f"Sector Rotation (בונוס סקטור: {c.get('sector','')})")
-    if c.get("has_catalyst"):
-        pos.append("Catalyst Engine (קיים אירוע פונדמנטלי קרוב)")
+    if c.get("vol_explosion"):            pos.append("💥 פיצוץ נפח")
+    if c.get("flow_score", 0) >= 60:     pos.append("Flow חזק")
+    if c.get("oi_change", 0) > 2:        pos.append(f"OI עולה {c['oi_change']:+.1f}%")
+    if c.get("is_compressed"):            pos.append("Compression — שקט לפני סערה")
+    if c.get("rs_1h", 0) > 0.5:         pos.append(f"חזק מ-BTC {c['rs_1h']:+.1f}%")
+    if c.get("whale_detected"):           pos.append("פעילות לווייתנים")
+    if c.get("momentum_1h", 0) > 1.5:   pos.append(f"מומנטום {c['momentum_1h']:+.1f}%")
     return pos
 
 
-def _negatives(c: dict) -> list[str]:
-    """מזהה מה חסר לעסקה מושלמת כדי להציג בסטטוס WATCH / WAIT"""
-    neg = []
-    if c.get("oi_change", 0) <= 0:
-        neg.append("OI")
-    if not c.get("is_compressed") and not c.get("squeeze_detected"):
-        neg.append("Compression")
-    if c.get("rs_1h", 0) <= 0:
-        neg.append("RS מול BTC")
-    if c.get("flow_score", 0) < 60:
-        neg.append("Flow חזק")
-    return neg
+# ─── Sections ─────────────────────────────────────────────────────────────────
 
-
-def _format_buy(medal_str: str, c: dict, grade_str: str) -> str:
-    """שלב 14 — פורמט הודעת קנייה ממוקדת ומקצועית"""
-    pos = _positives(c)
-    ep = c.get("entry_price", 0)
-    sl = c.get("entry_sl", 0)
-    tp1 = c.get("entry_tp1", 0)
-    
-    # חישוב רווח צפוי ריאלי באחוזים לפי יעד ראשון
-    expected_gain = c.get("expected_gain", 0)
-    if expected_gain == 0 and ep > 0 and tp1 > 0:
-        expected_gain = ((tp1 - ep) / ep) * 100
+def _format_buy(i: int, c: dict) -> str:
+    rating = c.get("rating", "")
+    conf   = c.get("confidence", 0)
+    pos    = _positives(c)
+    ep, sl = c.get("entry_price", 0), c.get("entry_sl", 0)
+    tp1, tp2 = c.get("entry_tp1", 0), c.get("entry_tp2", 0)
 
     lines = [
-        "🟢 BUY",
-        f"מטבע: {medal_str} {c['symbol'].replace('USDT','')}",
-        f"דירוג: {grade_str}",
+        f"🚨 עסקת {rating} — {c['symbol'].replace('USDT','')}",
+        f"איכות: {conf:.0f}/100",
         "",
-        "למה?"
+        f"כניסה:     {_fmt_price(ep)}",
+        f"סטופ:      {_fmt_price(sl)}",
+        f"יעד 1:     {_fmt_price(tp1)}",
+        f"יעד 2:     {_fmt_price(tp2)}",
+        f"R:R:       {c.get('entry_rr',0):.1f}x",
     ]
-    
     if pos:
-        for p in pos:
-            lines.append(f"  ✅ {p}")
-    else:
-        lines.append("  ✅ עומד בתנאי ה-Quality Gate של האסטרטגיה")
-
-    lines += [
-        "",
-        f"כניסה: {_fmt_price(ep)}",
-        f"סטופ:  {_fmt_price(sl)}",
-        f"יעד:   {_fmt_price(tp1)}",
-        f"R:R:   {c.get('entry_rr', 3.0):.1f}x",
-        "",
-        f"🎯 רווח צפוי: +{expected_gain:.1f}%",
-        f"⏱ זמן משוער: {c.get('estimated_time', '12-48 שעות')}",
-    ]
+        lines += ["", "למה עכשיו?"]
+        for p in pos: lines.append(f"  ✅ {p}")
     return "\n".join(lines)
 
 
-def _format_wait(medal_str: str, c: dict, grade_str: str) -> str:
-    """שלב 14 — פורמט הודעת המתנה ברורה ללא עומס קוגניטיבי"""
-    neg = _negatives(c)
-    sym = c['symbol'].replace('USDT','')
-    
+def _format_near_buy(i: int, c: dict) -> str:
+    """מועמד קרוב ל-BUY — מה בדיוק חסר."""
+    rating  = c.get("rating", "B+")
+    missing = _what_is_missing(c)
+    blocked = _why_blocked(c)
+
     lines = [
-        "🟡 WATCH / WAIT",
-        f"מטבע: {medal_str} {sym}",
-        f"דירוג פוטנציאלי: {grade_str.split('—')[0].strip()}",
+        f"{_medal(i)} {c['symbol'].replace('USDT','')}   דירוג: {rating}",
         "",
-        "מה עדיין חסר?"
     ]
-    
-    if neg:
-        missing_triggers = " + ".join(neg)
-        lines.append(f"  ❌ {missing_triggers}")
-    else:
-        lines.append("  ❌ אישור נפח סופי / כניסת כסף חכם")
-        
-    lines.append("\nאל תקנה עדיין. המתזר לאישור פריצה.")
+    if blocked:
+        lines.append("לא נשלח BUY בגלל:")
+        for b in blocked: lines.append(f"  ❌ {b}")
+        lines.append("")
+    if missing:
+        lines.append("כדי לעבור ל-BUY:")
+        for m in missing: lines.append(f"  • {m}")
+        lines.append("")
+    lines.append("אם התנאים יתקיימו — תקבל התראה.")
     return "\n".join(lines)
 
 
-def format_message(coins: list[dict], **kwargs) -> str:
+def _format_no_signal_with_funnel(stats) -> str:
+    """הודעת 'אין עסקה' עם funnel מלא."""
+    from tools.scan_diagnostics import format_no_signal_message
+    return format_no_signal_message(stats)
+
+
+# ─── Main Format ──────────────────────────────────────────────────────────────
+
+def _opportunity_index(coins: list[dict]) -> str:
+    """מדד הזדמנויות — כמה כוכבים."""
     if not coins:
-        return (
-            "🔥 CRYPTO-BOT Elite\n\n"
-            "❌ אין כרגע עסקאות איכותיות העומדות בתנאי ה-Quality Gate.\n\n"
-            "⏳ המערכת ממשיכה לסרוק 400+ מטבעות ב-Dynamic Universe..."
-        )
+        return "★☆☆☆☆  אין מה לחפש כרגע"
+    near = [c for c in coins if c.get("rating") in ("A+","A","B+")]
+    n = len(near)
+    if n >= 3: return "★★★★★  הרבה מועמדים קרובים"
+    if n == 2: return "★★★★☆  כמה מועמדים מעניינים"
+    if n == 1: return "★★★☆☆  מועמד אחד קרוב"
+    return "★★☆☆☆  השוק חלש כרגע"
 
-    # חילוץ וקביעת מצב שוק
-    regime = coins[0].get("regime", "RANGE")
-    r_title, r_tip = _regime_line(regime)
+
+def format_message(coins: list[dict], stats=None, **kwargs) -> str:
+    regime = coins[0].get("regime", "") if coins else ""
+
+    buy_coins  = [c for c in coins if c.get("signal") == "BUY" or c.get("decision") == "BUY"]
+    wait_coins = [c for c in coins if c.get("decision") == "WAIT" or c.get("signal") == "PREPARE"]
+
+    # ── יש BUY ──────────────────────────────────────────────────────────────
+    if buy_coins:
+        lines = [
+            "🔥 CRYPTO-BOT ELITE",
+            f"📊 מצב שוק: {_regime_line(regime)}",
+            "",
+        ]
+        for i, c in enumerate(buy_coins):
+            lines += ["━━━━━━━━━━━━━━━━━━", _format_buy(i, c), ""]
+        return "\n".join(lines)
+
+    # ── אין עסקה — diagnostic מלא ────────────────────────────────────────────
+    # פונל
+    funnel_lines = []
+    if stats:
+        try:
+            total    = getattr(stats, "scanned", len(coins))
+            no_data  = getattr(stats, "no_data", 0)
+            rv_fail  = getattr(stats, "rvol_fail", 0)
+            hd_fail  = getattr(stats, "hard_fail", 0)
+            sc_fail  = getattr(stats, "score_fail", 0)
+            fl_fail  = getattr(stats, "flow_fail", 0)
+
+            passed_rv  = total - no_data - rv_fail
+            passed_hd  = passed_rv - hd_fail
+            passed_sc  = passed_hd - sc_fail
+            passed_fl  = passed_sc - fl_fail
+            passed_sig = len(wait_coins)
+
+            def row(label, val, ok_threshold=1):
+                icon = "✅" if val >= ok_threshold else ("⚠️" if val > 0 else "❌")
+                return f"{icon} {label}: {val}"
+
+            funnel_lines = [
+                f"📈 נסרקו: {total} מטבעות",
+                "",
+                row("עברו נזילות/נתונים", total - no_data, 50),
+                row("עברו RVOL",           passed_rv,  10),
+                row("עברו Hard Filters",   passed_hd,  5),
+                row("עברו Score",          passed_sc,  3),
+                row("עברו Flow",           passed_fl,  1),
+                row("עברו דירוג A/A+",    passed_sig, 1),
+            ]
+
+            # סיבה עיקרית
+            bn, bn_cnt = stats.main_bottleneck()
+            reason_map = {
+                "RVOL נמוך":    "אין היום התפוצצות נפח משמעותית.",
+                "Flow חלש":     "אין כרגע כניסת כסף חזקה לשוק.",
+                "Hard Filters": "מטבעות רבים חרגו מגבולות RSI/VWAP.",
+                "Score נמוך":   "המטבעות לא חזקים מספיק ביחס לשוק.",
+            }
+            main_reason = reason_map.get(bn, "אין מטבע שעומד בכל התנאים.")
+            funnel_lines += ["", "הסיבה:", f"❌ {main_reason}"]
+
+            # Flow ו-RVOL מקסימום שנראו
+            if getattr(stats, "top_flow_scores", []):
+                top_flow = max(stats.top_flow_scores)
+                funnel_lines.append(f"Flow גבוה ביותר שנראה: {top_flow:.0f} (נדרש 55+)")
+            if getattr(stats, "top_rvol_values", []):
+                top_rv = max(stats.top_rvol_values)
+                funnel_lines.append(f"RVOL גבוה ביותר: {top_rv:.1f}x (נדרש 0.8+)")
+        except Exception:
+            pass
+
+    # מועמד קרוב ביותר
+    near = sorted(
+        [c for c in wait_coins if c.get("rating") in ("A+","A","B+")],
+        key=lambda x: x.get("confidence", x.get("flow_score",0)), reverse=True
+    )[:1]
 
     lines = [
-        "🔥 CRYPTO-BOT Elite",
-        f"מצב שוק: {r_title}",
-        f"💡 {r_tip}",
-        "━━━━━━━━━━━━━━"
+        "🔥 CRYPTO-BOT ELITE",
+        f"📊 מצב שוק: {_regime_line(regime)}",
+        "━━━━━━━━━━━━━━━━━━",
     ]
+    if funnel_lines:
+        lines += funnel_lines
+    else:
+        lines.append(f"נסרקו: {len(coins)} מטבעות")
 
-    buy_coins = [c for c in coins if c.get("signal") == "BUY"]
-    # פריטים במצב PREPARE או WATCH יאוחדו למנגנון ה-WATCH / WAIT החדש
-    wait_coins = [c for c in coins if c.get("signal") in ["PREPARE", "WATCH"]]
+    lines += ["━━━━━━━━━━━━━━━━━━", "אין עסקה כרגע.", ""]
 
-    # רינדור אותות קנייה קשיחים (BUY)
-    for i, c in enumerate(buy_coins):
-        grade_str, _ = _probability_engine(
-            c.get("flow_score", 0), c.get("pre_score", 0), c.get("oi_change", 0),
-            c.get("is_compressed", False) or c.get("squeeze_detected", False),
-            c.get("whale_detected", False) or c.get("whale_activity", False),
-            c.get("rs_1h", 0)
-        )
-        lines.append(_format_buy(_medal(i), c, grade_str))
-        lines.append("━━━━━━━━━━━━━━")
+    if near:
+        lines.append("המועמד הקרוב ביותר:")
+        lines.append("")
+        lines.append(_format_near_buy(0, near[0]))
+    
+    lines += ["", f"🔥 מדד הזדמנויות: {_opportunity_index(coins)}", "⏳ ממשיכים לסרוק..."]
+    return "\n".join(lines)
 
-    # רינדור אותות המתנה (WATCH / WAIT)
-    idx = len(buy_coins)
-    for c in wait_coins:
-        grade_str, score = _probability_engine(
-            c.get("flow_score", 0), c.get("pre_score", 0), c.get("oi_change", 0),
-            c.get("is_compressed", False) or c.get("squeeze_detected", False),
-            c.get("whale_detected", False) or c.get("whale_activity", False),
-            c.get("rs_1h", 0)
-        )
-        # מסננים עסקאות חלשות לחלוטין (דירוג C) כדי לא להעמיס על העיניים בטלגרם
-        if score >= 70:
-            lines.append(_format_wait(_medal(idx), c, grade_str))
-            lines.append("━━━━━━━━━━━━━━")
-            idx += 1
 
-    return "\n".join(lines).strip("━━━━━━━━━━━━━━\n ")
-
+# ─── Send ─────────────────────────────────────────────────────────────────────
 
 def send_telegram(coins: list[dict], portfolio_usd: float = 1000.0,
-                  filtered: dict = None) -> bool:
+                  filtered: dict = None, stats=None) -> bool:
     if filtered:
-        display = filtered.get("buy", []) + filtered.get("prepare", []) + filtered.get("watch", [])
+        display = filtered.get("buy",[]) + filtered.get("prepare",[]) + filtered.get("watch",[])
     else:
         display = coins
 
-    text = format_message(display)
+    # אם אין כלום — שלח diagnostic
+    if not display and stats:
+        try:
+            from tools.scan_diagnostics import format_no_signal_message
+            text = format_no_signal_message(stats)
+        except Exception:
+            text = format_message([], stats=stats)
+    else:
+        text = format_message(display, stats=stats)
 
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("\n--- TELEGRAM SIMULATION OUTPUT ---")
         print(text)
-        print("---------------------------------\n")
         return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
-        r = requests.post(url, json={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": text[:4096],
-        }, timeout=10)
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text[:4096]}, timeout=10)
         r.raise_for_status()
-        log.info("Telegram notification delivered successfully.")
+        log.info("Telegram ✓")
         return True
     except Exception as e:
-        log.error(f"Telegram communication failed: {e}")
+        log.error(f"Telegram failed: {e}")
         return False
