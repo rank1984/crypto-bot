@@ -55,7 +55,7 @@ def run_scan() -> None:
     top, _diag = result if isinstance(result, tuple) else (result, None)
     if not top:
         log.warning("No coins passed scoring — sending 'no signal' message")
-        send_telegram([])   # שולח הודעת "אין סיגנל" לטלגרם
+        send_telegram([], stats=_diag)
         return
 
     # ── 3. Decision Engine — החלטה אחת מרכזית ──────────────────────────────
@@ -92,14 +92,11 @@ def run_scan() -> None:
 
     # ── 5. Send ───────────────────────────────────────────────────────────────
     if filtered["has_quality"]:
-        send_telegram(top, filtered=filtered)
-    elif filtered["watch"]:
-        # fallback: שלח WATCH כדי לאבחן
-        log.info("No BUY/PREPARE — sending WATCH as diagnostic")
-        send_telegram(filtered["watch"], filtered={"buy":[],"prepare":[],"watch":filtered["watch"]})
+        send_telegram(top, filtered=filtered, stats=_diag)
     else:
-        log.warning("No coins passed signal filter — sending no signal")
-        send_telegram([])
+        # אין עסקה — שלח diagnostic עם מועמדים קרובים
+        log.info("No quality signals — sending diagnostic")
+        send_telegram(top, filtered=filtered, stats=_diag)
 
     # ── 5. Log summary ────────────────────────────────────────────────────────
     # ── 6. Shadow Mode — שמור הכל בשקט ──────────────────────────────────────
