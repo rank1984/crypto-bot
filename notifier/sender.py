@@ -169,54 +169,11 @@ def format_message(coins: list[dict], stats=None, all_coins=None, **kwargs) -> s
     funnel_lines = []
     if stats:
         try:
-            total    = getattr(stats, "scanned", 0) or len(coins)
-            no_data  = getattr(stats, "no_data", 0)
-            rv_fail  = getattr(stats, "rvol_fail", 0)
-            hd_fail  = getattr(stats, "hard_fail", 0)
-            sc_fail  = getattr(stats, "score_fail", 0)
-            fl_fail  = getattr(stats, "flow_fail", 0)
-
-            passed_rv  = total - no_data - rv_fail
-            passed_hd  = passed_rv - hd_fail
-            passed_sc  = passed_hd - sc_fail
-            passed_fl  = passed_sc - fl_fail
-            passed_sig = len(wait_coins)
-
-            def row(label, val, ok_threshold=1):
-                icon = "✅" if val >= ok_threshold else ("⚠️" if val > 0 else "❌")
-                return f"{icon} {label}: {val}"
-
-            funnel_lines = [
-                f"📈 נסרקו: {total} מטבעות",
-                "",
-                row("עברו נזילות/נתונים", total - no_data, 50),
-                row("עברו RVOL",           passed_rv,  10),
-                row("עברו Hard Filters",   passed_hd,  5),
-                row("עברו Score",          passed_sc,  3),
-                row("עברו Flow",           passed_fl,  1),
-                row("עברו דירוג A/A+",    passed_sig, 1),
-            ]
-
-            # סיבה עיקרית
-            bn, bn_cnt = stats.main_bottleneck()
-            reason_map = {
-                "RVOL נמוך":    "אין היום התפוצצות נפח משמעותית.",
-                "Flow חלש":     "אין כרגע כניסת כסף חזקה לשוק.",
-                "Hard Filters": "מטבעות רבים חרגו מגבולות RSI/VWAP.",
-                "Score נמוך":   "המטבעות לא חזקים מספיק ביחס לשוק.",
-            }
-            main_reason = reason_map.get(bn, "אין מטבע שעומד בכל התנאים.")
-            funnel_lines += ["", "הסיבה:", f"❌ {main_reason}"]
-
-            # Flow ו-RVOL מקסימום שנראו
-            if getattr(stats, "top_flow_scores", []):
-                top_flow = max(stats.top_flow_scores)
-                funnel_lines.append(f"Flow גבוה ביותר שנראה: {top_flow:.0f} (נדרש 55+)")
-            if getattr(stats, "top_rvol_values", []):
-                top_rv = max(stats.top_rvol_values)
-                funnel_lines.append(f"RVOL גבוה ביותר: {top_rv:.1f}x (נדרש 0.8+)")
-        except Exception:
-            pass
+            from tools.scan_diagnostics import format_full_diagnostic
+            all_c = all_coins or coins
+            funnel_lines = format_full_diagnostic(stats, all_c).split("\n")
+        except Exception as e:
+            funnel_lines = [f"נסרקו: {getattr(stats,'scanned',0)}"]
 
     # מועמד קרוב ביותר
     source = all_coins or coins
