@@ -92,11 +92,11 @@ def run_scan() -> None:
 
     # ── 5. Send ───────────────────────────────────────────────────────────────
     if filtered["has_quality"]:
-        send_telegram(top, filtered=filtered, stats=_diag)
+        send_telegram(top, filtered=filtered, stats=_diag, all_coins=top)
     else:
         # אין עסקה — שלח diagnostic עם מועמדים קרובים
         log.info("No quality signals — sending diagnostic")
-        send_telegram(top, filtered=filtered, stats=_diag)
+        send_telegram(top, filtered=filtered, stats=_diag, all_coins=top)
 
     # ── 5. Log summary ────────────────────────────────────────────────────────
     # ── 6. Shadow Mode — שמור הכל בשקט ──────────────────────────────────────
