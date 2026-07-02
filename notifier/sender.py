@@ -147,7 +147,7 @@ def _opportunity_index(coins: list[dict]) -> str:
     return "★★☆☆☆  השוק חלש כרגע"
 
 
-def format_message(coins: list[dict], stats=None, **kwargs) -> str:
+def format_message(coins: list[dict], stats=None, all_coins=None, **kwargs) -> str:
     regime = coins[0].get("regime", "") if coins else ""
 
     buy_coins  = [c for c in coins if c.get("signal") == "BUY" or c.get("decision") == "BUY"]
@@ -169,7 +169,7 @@ def format_message(coins: list[dict], stats=None, **kwargs) -> str:
     funnel_lines = []
     if stats:
         try:
-            total    = getattr(stats, "scanned", len(coins))
+            total    = getattr(stats, "scanned", 0) or len(coins)
             no_data  = getattr(stats, "no_data", 0)
             rv_fail  = getattr(stats, "rvol_fail", 0)
             hd_fail  = getattr(stats, "hard_fail", 0)
@@ -219,8 +219,10 @@ def format_message(coins: list[dict], stats=None, **kwargs) -> str:
             pass
 
     # מועמד קרוב ביותר
+    source = all_coins or coins
+    wait_all = [c for c in source if c.get("decision") in ("WAIT",) or c.get("signal") in ("PREPARE","WATCH")]
     near = sorted(
-        [c for c in wait_coins if c.get("rating") in ("A+","A","B+")],
+        [c for c in wait_all if c.get("rating") in ("A+","A","B+")],
         key=lambda x: x.get("confidence", x.get("flow_score",0)), reverse=True
     )[:1]
 
@@ -248,7 +250,7 @@ def format_message(coins: list[dict], stats=None, **kwargs) -> str:
 # ─── Send ─────────────────────────────────────────────────────────────────────
 
 def send_telegram(coins: list[dict], portfolio_usd: float = 1000.0,
-                  filtered: dict = None, stats=None) -> bool:
+                  filtered: dict = None, stats=None, all_coins=None) -> bool:
     if filtered:
         display = filtered.get("buy",[]) + filtered.get("prepare",[]) + filtered.get("watch",[])
     else:
@@ -262,7 +264,7 @@ def send_telegram(coins: list[dict], portfolio_usd: float = 1000.0,
         except Exception:
             text = format_message([], stats=stats)
     else:
-        text = format_message(display, stats=stats)
+        text = format_message(display, stats=stats, all_coins=coins)
 
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print(text)
