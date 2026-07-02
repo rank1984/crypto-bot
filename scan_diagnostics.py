@@ -115,3 +115,103 @@ def format_no_signal_message(stats: ScanStats) -> str:
 
     lines.append("\n⏳ ממשיכים לסרוק...")
     return "\n".join(lines)
+
+
+# ─── Pipeline Heatmap ────────────────────────────────────────────────────────
+
+def format_pipeline_heatmap(stats: "ScanStats") -> str:
+    """
+    📡 Pipeline Heatmap — בר גרפי של כמה מטבעות עברו כל שלב.
+
+    Universe           ██████████████ 386
+    Liquidity          ████████████   342
+    RVOL               █████          96
+    Flow               ███            31
+    Quality Gate       ██             9
+    BUY                ▏              0
+    """
+    n = stats.scanned
+    if n == 0:
+        return "אין נתונים"
+
+    passed_rv  = max(0, n - getattr(stats, "no_data", 0) - getattr(stats, "rvol_fail", 0))
+    passed_hd  = max(0, passed_rv - getattr(stats, "hard_fail", 0))
+    passed_sc  = max(0, passed_hd - getattr(stats, "score_fail", 0))
+    passed_fl  = max(0, passed_sc - getattr(stats, "flow_fail", 0))
+    passed_sig = getattr(stats, "watch", 0) + getattr(stats, "prepare", 0) + getattr(stats, "buy", 0)
+    passed_buy = getattr(stats, "buy", 0)
+
+    stages = [
+        ("Universe",     n),
+        ("Liquidity",    n - getattr(stats, "no_data", 0)),
+        ("RVOL",         passed_rv),
+        ("Flow/Score",   passed_fl),
+        ("Quality Gate", passed_sig),
+        ("BUY",          passed_buy),
+    ]
+
+    max_val = n if n > 0 else 1
+    bar_len = 14   # אורך מקסימלי של הבר
+
+    lines = ["📡 Pipeline Heatmap", ""]
+    for label, val in stages:
+        filled = round(val / max_val * bar_len) if max_val > 0 else 0
+        filled = max(0, min(bar_len, filled))
+        bar = "█" * filled + ("▏" if val > 0 and filled == 0 else "")
+        pct = f"({val/n*100:.0f}%)" if n > 0 else ""
+        lines.append(f"{label:<14} {bar:<14} {val} {pct}")
+
+    # הדגש bottleneck
+    bn, _ = stats.main_bottleneck()
+    lines += ["", f"🔍 Bottleneck: {bn}"]
+    return "\n".join(lines)
+
+
+def format_full_diagnostic(stats: "ScanStats", coins: list = None) -> str:
+    """
+    הודעה מלאה: Funnel + Heatmap + מועמד קרוב.
+    """
+    coins = coins or []
+    n = stats.scanned
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    passed_rv  = max(0, n - getattr(stats, "no_data", 0) - getattr(stats, "rvol_fail", 0))
+    passed_hd  = max(0, passed_rv - getattr(stats, "hard_fail", 0))
+    passed_sc  = max(0, passed_hd - getattr(stats, "score_fail", 0))
+    passed_fl  = max(0, passed_sc - getattr(stats, "flow_fail", 0))
+    passed_sig = getattr(stats, "watch", 0) + getattr(stats, "prepare", 0) + getattr(stats, "buy", 0)
+
+    def row(label, val, warn_below=1):
+        icon = "✅" if val >= warn_below else ("⚠️" if val > 0 else "❌")
+        pct  = f"({val/n*100:.0f}%)" if n > 0 else ""
+        return f"{icon} {label}: {val} {pct}"
+
+    lines = [
+        f"📡 נסרקו:          {n}",
+        f"📊 לאחר RVOL:      {passed_rv}",
+        f"⭐ לאחר Score:     {passed_sc}",
+        f"👀 עברו Quality:   {passed_sig}",
+        "",
+        row("עברו נזילות",   n - getattr(stats, "no_data", 0), 50),
+        row("עברו RVOL",     passed_rv,  10),
+        row("עברו Filters",  passed_hd,  5),
+        row("עברו Score",    passed_sc,  3),
+        row("עברו Flow",     passed_fl,  1),
+        row("עסקאות A/A+",  passed_sig, 1),
+        "",
+        format_pipeline_heatmap(stats),
+    ]
+
+    # ── Rating breakdown ──────────────────────────────────────────────────────
+    if coins:
+        by_rating = {}
+        for c in coins:
+            r = c.get("rating", "C")
+            by_rating[r] = by_rating.get(r, 0) + 1
+        if by_rating:
+            lines += ["", "🎯 מצב הסריקה"]
+            for r in ["A+","A","B+","B","C"]:
+                if r in by_rating:
+                    lines.append(f"   {r}: {by_rating[r]}")
+
+    return "\n".join(lines)
