@@ -215,3 +215,178 @@ def format_full_diagnostic(stats: "ScanStats", coins: list = None) -> str:
                     lines.append(f"   {r}: {by_rating[r]}")
 
     return "\n".join(lines)
+
+
+# ─── True Bottleneck Detection ───────────────────────────────────────────────
+
+def calc_loss_rates(stats: "ScanStats") -> list[tuple[str, int, float]]:
+    """
+    מחשב loss rate אמיתי בכל שלב.
+    מחזיר [(stage, lost, loss_pct), ...]
+    """
+    n = stats.scanned
+    if n == 0:
+        return []
+
+    no_data = getattr(stats, "no_data", 0)
+    rv_fail = getattr(stats, "rvol_fail", 0)
+    hd_fail = getattr(stats, "hard_fail", 0)
+    sc_fail = getattr(stats, "score_fail", 0)
+    fl_fail = getattr(stats, "flow_fail", 0)
+
+    passed_liq = n - no_data
+    passed_rv  = passed_liq - rv_fail
+    passed_hd  = passed_rv  - hd_fail
+    passed_sc  = passed_hd  - sc_fail
+    passed_fl  = passed_sc  - fl_fail
+
+    stages = [
+        ("Liquidity", no_data,  n),
+        ("RVOL",      rv_fail,  passed_liq),
+        ("Filters",   hd_fail,  passed_rv),
+        ("Score",     sc_fail,  passed_hd),
+        ("Flow/OI",   fl_fail,  passed_sc),
+    ]
+
+    result = []
+    for name, lost, pool in stages:
+        pct = lost / pool * 100 if pool > 0 else 0
+        result.append((name, lost, round(pct, 1)))
+    return result
+
+
+def format_true_bottleneck(stats: "ScanStats") -> str:
+    """
+    Loss Rate per stage — איפה איבדנו הכי הרבה.
+    """
+    rates = calc_loss_rates(stats)
+    if not rates:
+        return ""
+
+    max_loss = max(r[2] for r in rates)
+    lines = ["📉 Loss Rate per Stage:"]
+    for name, lost, pct in rates:
+        bar_len = round(pct / 100 * 10)
+        bar     = "█" * bar_len
+        flag    = " 🔥 bottleneck" if pct == max_loss and pct > 30 else ""
+        lines.append(f"  {name:<12} -{pct:.0f}%  {bar}{flag}")
+    return "\n".join(lines)
+
+
+# ─── Near Miss Classifier ────────────────────────────────────────────────────
+
+def classify_near_miss(coin: dict) -> tuple[str, str]:
+    """
+    מחזיר (category, label):
+        NEAR_MISS      — חסר רק תנאי אחד קריטי
+        SETUP_BUILDING — עוד לא בשל
+    """
+    missing = coin.get("missing", [])
+    rating  = coin.get("rating", "C")
+
+    # קריטריון: מועמד ממש קרוב
+    if rating in ("A+","A","B+") and len(missing) <= 1:
+        return "NEAR_MISS", "🟡 Near Miss — חסר תנאי אחד"
+    if rating in ("B+","B") and len(missing) <= 2:
+        return "SETUP_BUILDING", "🟠 Setup Building — עוד לא בשל"
+    return "TOO_EARLY", "⚪ Too Early"
+
+
+# ─── Expected Value Engine ────────────────────────────────────────────────────
+
+def calc_expected_value(
+    win_rate_pct: float,   # % הצלחה
+    avg_win_pct:  float,   # % רווח ממוצע בעסקה מוצלחת
+    avg_loss_pct: float,   # % הפסד ממוצע (חיובי)
+    commission:   float = 0.10,   # עמלה לכל צד (%)
+    tax_rate:     float = 25.0,   # מס רווחי הון ישראל (%)
+) -> dict:
+    """
+    מחשב Expected Value נקי לאחר עמלות ומיסוי.
+
+    EV = (WR × avg_win) - ((1-WR) × avg_loss) - commissions - tax
+    """
+    wr  = win_rate_pct / 100
+    # עמלות: כניסה + יציאה
+    total_commission = commission * 2
+
+    # רווח גולמי צפוי
+    gross_ev = (wr * avg_win_pct) - ((1 - wr) * avg_loss_pct)
+
+    # רווח לאחר עמלות
+    after_commission = gross_ev - total_commission
+
+    # מס רק על רווח (אם יש)
+    tax = max(0, after_commission * tax_rate / 100)
+    net_ev = after_commission - tax
+
+    # Profit Factor
+    pf = (wr * avg_win_pct) / ((1 - wr) * avg_loss_pct) if (1 - wr) * avg_loss_pct > 0 else 0
+
+    return {
+        "gross_ev":   round(gross_ev, 2),
+        "net_ev":     round(net_ev, 2),
+        "commission": round(total_commission, 2),
+        "tax":        round(tax, 2),
+        "pf":         round(pf, 2),
+        "worthwhile": net_ev > 0.5,   # שווה לבצע רק אם נטו > 0.5%
+    }
+
+
+def expected_setups_per_day(stats: "ScanStats") -> dict:
+    """
+    אומדן עסקאות צפויות ביום לפי קצב ההצלחה הנוכחי.
+    """
+    scans_per_day = 24 * 60 // 5   # סריקה כל 5 דקות = 288 ביום
+    n = stats.scanned
+    if n == 0:
+        return {}
+
+    buy   = getattr(stats, "buy", 0)
+    watch = getattr(stats, "watch", 0) + getattr(stats, "prepare", 0)
+
+    buy_rate   = buy   / n
+    watch_rate = watch / n
+
+    return {
+        "scans_per_day":    scans_per_day,
+        "expected_buy":     round(buy_rate   * scans_per_day, 1),
+        "expected_watch":   round(watch_rate * scans_per_day, 1),
+        "buy_rate_pct":     round(buy_rate   * 100, 2),
+        "scanned_today":    n,
+    }
+
+
+def format_expected_value_section(
+    stats: "ScanStats",
+    win_rate: float   = 55.0,
+    avg_win:  float   = 8.0,
+    avg_loss: float   = 3.0,
+) -> str:
+    """
+    מציג EV + תחזית עסקאות ביום.
+    """
+    ev  = calc_expected_value(win_rate, avg_win, avg_loss)
+    exp = expected_setups_per_day(stats)
+
+    lines = [
+        "💰 Expected Value (לפי ספים נוכחיים):",
+        f"  Win Rate נדרש:  {win_rate:.0f}%",
+        f"  Avg Win:        +{avg_win:.1f}%",
+        f"  Avg Loss:       -{avg_loss:.1f}%",
+        f"  EV גולמי:       {ev['gross_ev']:+.2f}%",
+        f"  EV נטו (עמלות+מס): {ev['net_ev']:+.2f}%",
+        f"  {'✅ שווה לבצע' if ev['worthwhile'] else '❌ לא כדאי בשלב זה'}",
+    ]
+
+    if exp:
+        lines += [
+            "",
+            "📅 תחזית יומית:",
+            f"  Expected BUY/day:   {exp['expected_buy']:.1f}",
+            f"  Expected WATCH/day: {exp['expected_watch']:.1f}",
+        ]
+        if exp["expected_buy"] < 0.5:
+            lines.append("  ⚠️ פחות מ-1 עסקה ביום — בדוק אם הפילטרים קשוחים מדי")
+
+    return "\n".join(lines)
