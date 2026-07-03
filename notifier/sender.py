@@ -106,24 +106,33 @@ def _format_buy(i: int, c: dict) -> str:
 
 
 def _format_near_buy(i: int, c: dict) -> str:
-    """מועמד קרוב ל-BUY — מה בדיוק חסר."""
+    """מועמד קרוב — עם סיווג Near Miss / Setup Building."""
+    try:
+        from tools.scan_diagnostics import classify_near_miss
+        category, cat_label = classify_near_miss(c)
+    except Exception:
+        category, cat_label = "SETUP_BUILDING", "🟠 Setup Building"
+
     rating  = c.get("rating", "B+")
     missing = _what_is_missing(c)
     blocked = _why_blocked(c)
 
     lines = [
         f"{_medal(i)} {c['symbol'].replace('USDT','')}   דירוג: {rating}",
+        cat_label,
         "",
     ]
     if blocked:
         lines.append("לא נשלח BUY בגלל:")
         for b in blocked: lines.append(f"  ❌ {b}")
         lines.append("")
-    if missing:
-        lines.append("כדי לעבור ל-BUY:")
+    if missing and category == "NEAR_MISS":
+        lines.append("חסר רק:")
         for m in missing: lines.append(f"  • {m}")
         lines.append("")
-    lines.append("אם התנאים יתקיימו — תקבל התראה.")
+        lines.append("כשיתקיים — תקבל התראה.")
+    elif category == "SETUP_BUILDING":
+        lines.append("עוד לא בשל לכניסה.")
     return "\n".join(lines)
 
 
@@ -200,6 +209,16 @@ def format_message(coins: list[dict], stats=None, all_coins=None, **kwargs) -> s
         lines.append("")
         lines.append(_format_near_buy(0, near[0]))
     
+    # True bottleneck + EV
+    if stats:
+        try:
+            from tools.scan_diagnostics import format_true_bottleneck, format_expected_value_section
+            bn_text = format_true_bottleneck(stats)
+            ev_text = format_expected_value_section(stats)
+            if bn_text: lines += ["", bn_text]
+            if ev_text: lines += ["", ev_text]
+        except Exception:
+            pass
     lines += ["", f"🔥 מדד הזדמנויות: {_opportunity_index(coins)}", "⏳ ממשיכים לסרוק..."]
     return "\n".join(lines)
 
