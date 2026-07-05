@@ -99,7 +99,14 @@ def run_scan() -> None:
         send_telegram(top, filtered=filtered, stats=_diag, all_coins=top)
 
     # ── 5. Log summary ────────────────────────────────────────────────────────
-    # ── 6. Shadow Mode — שמור הכל בשקט ──────────────────────────────────────
+    # ── 6. Learning Database ──────────────────────────────────────────────────
+    try:
+        from learning.recorder import record_scan
+        record_scan(_diag, top)
+    except Exception as e:
+        log.debug(f"Learning recorder skipped: {e}")
+
+    # ── 7. Shadow Mode — שמור הכל בשקט ──────────────────────────────────────
     try:
         from tools.shadow_mode import save_shadow_signal, init_shadow_db, update_forward_returns
         init_shadow_db()
