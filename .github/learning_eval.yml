@@ -1,0 +1,44 @@
+name: 📚 Learning Evaluator
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # כל שעה
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -r requirements.txt
+      - name: Evaluate Outcomes
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          LEARNING_DB: data/learning.db
+        run: |
+          python -c "
+          from learning.evaluator import evaluate_outcomes, update_performance
+          n = evaluate_outcomes()
+          update_performance()
+          print(f'Updated {n} outcomes')
+          "
+      - name: Weekly Report (Sundays)
+        if: github.event.schedule == '0 8 * * 0'
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -c "
+          import requests, os
+          from learning.reports import weekly_report
+          report = weekly_report()
+          print(report)
+          t, ch = os.getenv('TELEGRAM_TOKEN'), os.getenv('TELEGRAM_CHAT_ID')
+          if t and ch:
+              requests.post(f'https://api.telegram.org/bot{t}/sendMessage',
+                  json={'chat_id': ch, 'text': report[:4096]}, timeout=10)
+          "
