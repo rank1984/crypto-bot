@@ -181,9 +181,16 @@ def format_message(coins: list[dict], stats=None, all_coins=None, **kwargs) -> s
         key=lambda x: x.get("confidence", x.get("flow_score", 0)), reverse=True
     )[:5]
 
+    try:
+        import os
+        mode = os.getenv("TRADE_MODE","BALANCED")
+        mode_icon = {"ELITE":"🛡️","BALANCED":"⚖️","AGGRESSIVE":"⚡"}.get(mode,"⚖️")
+    except Exception:
+        mode_icon, mode = "⚖️", "BALANCED"
+
     lines = [
         "🔥 CRYPTO-BOT ELITE",
-        f"📊 {_regime_line(regime)}",
+        f"📊 {_regime_line(regime)}  {mode_icon} {mode}",
     ]
 
     # ── יש BUY ──────────────────────────────────────────────────────────────
