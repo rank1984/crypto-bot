@@ -48,3 +48,5 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", "300"))
 
 TOP_N = int(os.getenv("TOP_N", "5"))
+
+TRADE_MODE = os.getenv("TRADE_MODE", "BALANCED")
