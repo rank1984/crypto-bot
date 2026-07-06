@@ -95,6 +95,14 @@ def _why_no_signal(stats) -> str:
         return "אין כרגע מטבע שעומד בכל התנאים."
 
 
+def _is_soft(coin: dict) -> bool:
+    """Soft candidate: מוכן 40-69%, יכול להפוך ל-BUY תוך 30-90 דקות."""
+    return (
+        coin.get("rvol", 0) >= 0.8 and
+        coin.get("flow_score", 0) >= 40 and
+        coin.get("confidence", 0) >= 40
+    )
+
 # ─── BUY Format ───────────────────────────────────────────────────────────────
 
 def _format_buy(c: dict) -> str:
@@ -165,9 +173,11 @@ def format_message(coins: list[dict], stats=None, all_coins=None, **kwargs) -> s
     buy_coins = [c for c in source
                  if c.get("decision") == "BUY" or c.get("signal") == "BUY"]
 
-    # כל המטבעות שעברו סינון, ממוינים לפי ready%
+    # Soft candidates: מתקרבים ל-BUY
     candidates = sorted(
-        [c for c in source if c.get("decision") != "BUY" and c.get("signal") != "BUY"],
+        [c for c in source
+         if c.get("decision") != "BUY" and c.get("signal") != "BUY"
+         and _is_soft(c)],
         key=lambda x: x.get("confidence", x.get("flow_score", 0)), reverse=True
     )[:5]
 
@@ -188,27 +198,37 @@ def format_message(coins: list[dict], stats=None, all_coins=None, **kwargs) -> s
 
     # Watchlist
     if candidates:
-        lines += ["", "━━━━━━━━━━━━━━━━━━", "👀 תעקוב אחרי:",""]
+        lines += ["", "━━━━━━━━━━━━━━━━━━", "👀 מתקרבים ל-BUY:",""]
         for i, c in enumerate(candidates):
             lines.append(_format_candidate(i, c))
             lines.append("")
 
     lines += ["━━━━━━━━━━━━━━━━━━", "📈 תמונת השוק", ""]
 
-    # סטטיסטיקה קצרה
+    # תמונת שוק
     if stats:
-        n = getattr(stats, "scanned", len(source))
-        rv_ok = n - getattr(stats,"no_data",0) - getattr(stats,"rvol_fail",0)
-        lines.append(f"נסרקו: {n} מטבעות")
-        lines.append(f"מועמדים: {rv_ok}")
-        lines.append(f"עסקאות BUY: 0")
+        n       = getattr(stats, "scanned", len(source))
+        rv_fail = getattr(stats, "rvol_fail", 0)
+        fl_fail = getattr(stats, "flow_fail", 0)
+        hd_fail = getattr(stats, "hard_fail", 0)
+        near    = len(candidates)
+        lines += [
+            f"נסרקו: {n} מטבעות",
+            f"קרובים ל-BUY: {near}",
+            f"עסקאות BUY: 0",
+        ]
+        lines += ["", "למה אין עסקה?"]
+        if rv_fail > 0: lines.append(f"➡️ RVOL חלש ({rv_fail} נפסלו)")
+        if fl_fail > 0: lines.append(f"➡️ Flow חלש ({fl_fail} נפסלו)")
+        if hd_fail > 0: lines.append(f"➡️ Filters קשוחים ({hd_fail} נפסלו)")
+        if near == 0:   lines.append("➡️ אין פריצות אמיתיות כרגע")
     else:
-        lines.append(f"נסרקו: {len(source)} מטבעות")
-        lines.append("עסקאות BUY: 0")
+        lines += [f"נסרקו: {len(source)} מטבעות", "עסקאות BUY: 0"]
 
-    # סיבה אחת ברורה
-    reason = _why_no_signal(stats)
-    lines += ["", f"למה אין עסקה?", f"➡️ {reason}"]
+    # הבא בתור
+    if candidates:
+        next_coin = candidates[0]["symbol"].replace("USDT","")
+        lines += ["", f"⏳ הבא בתור: {next_coin}"]
 
     if candidates:
         lines += [
