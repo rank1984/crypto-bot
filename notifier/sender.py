@@ -170,8 +170,8 @@ def format_message(coins: list[dict], stats=None, all_coins=None, **kwargs) -> s
     source = all_coins or coins
     regime = source[0].get("regime","") if source else ""
 
-    buy_coins = [c for c in source
-                 if c.get("decision") == "BUY" or c.get("signal") == "BUY"]
+    buy_coins  = [c for c in source if c.get("decision") in ("ELITE_BUY","BUY")]
+    spec_coins = [c for c in source if c.get("decision") == "SPECULATIVE"]
 
     # Soft candidates: מתקרבים ל-BUY
     candidates = sorted(
@@ -193,8 +193,26 @@ def format_message(coins: list[dict], stats=None, all_coins=None, **kwargs) -> s
             lines.append(_format_buy(c))
         return "\n".join(lines)
 
+    # ── יש SPECULATIVE אבל לא BUY ──────────────────────────────────────────
+    if not buy_coins and spec_coins:
+        lines += ["", "━━━━━━━━━━━━━━━━━━", "🔵 SPECULATIVE (רבע פוזיציה):", ""]
+        for i, co in enumerate(spec_coins[:3]):
+            sym  = co["symbol"].replace("USDT","")
+            conf = co.get("confidence", 0)
+            ep   = co.get("entry_price", 0)
+            sl   = co.get("entry_sl", 0)
+            tp1  = co.get("entry_tp1", 0)
+            pos  = _positives(co)
+            miss = _what_missing(co)
+            lines += [f"🔵 {sym}  ציון: {conf}/100  ({co.get('pos_size','1%')})"]
+            if ep: lines.append(f"   כניסה: {_fmt_price(ep)}  סטופ: {_fmt_price(sl)}  יעד: {_fmt_price(tp1)}")
+            if pos: lines.append(f"   ✅ {' | '.join(pos[:3])}")
+            if miss: lines.append(f"   ❌ {' | '.join(miss[:2])}")
+            lines.append("")
+
     # ── אין BUY ──────────────────────────────────────────────────────────────
-    lines += ["", "❌ אין עסקת BUY כרגע."]
+    if not buy_coins:
+        lines += ["", "❌ אין עסקת BUY כרגע."]
 
     # Watchlist
     if candidates:
