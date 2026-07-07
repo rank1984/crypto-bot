@@ -48,11 +48,13 @@ def _ready_emoji(pct: int) -> str:
 
 def _what_missing(c: dict) -> list[str]:
     """מה בדיוק חסר — מקסימום 3 דברים."""
+    from scanner.decision_engine import _RVOL_BY_REGIME
+    regime   = c.get("regime","RANGE")
+    rvol_min = _RVOL_BY_REGIME.get(regime, 0.8)
     m = []
     if c.get("oi_change", 0) <= 0:      m.append("OI עולה")
-    if c.get("rvol", 0) < 1.5:
-        m.append(f"RVOL מעל 1.5 (יש {c.get('rvol',0):.1f}x)")
-    if not c.get("is_compressed"):      m.append("Compression")
+    if c.get("rvol", 0) < rvol_min:
+        m.append(f"RVOL מעל {rvol_min} (יש {c.get('rvol',0):.1f}x)")
     if c.get("rs_1h", 0) <= 0:         m.append("חוזק מול BTC")
     if c.get("flow_score", 0) < 55:
         m.append(f"Flow מעל 55 (יש {c.get('flow_score',0):.0f})")
@@ -112,6 +114,16 @@ def _format_buy(c: dict) -> str:
     tp2 = c.get("entry_tp2", 0)
     rr  = c.get("entry_rr", 0)
 
+    conf     = c.get("confidence", 0)
+    pos_pct  = 5 if conf >= 85 else (3 if conf >= 70 else 1)
+    portfolio = 1000  # ברירת מחדל — אפשר לשנות ב-env
+    try:
+        import os
+        portfolio = float(os.getenv("PORTFOLIO_USD","1000"))
+    except Exception:
+        pass
+    pos_usd  = round(portfolio * pos_pct / 100)
+
     pos = []
     if c.get("vol_explosion"):            pos.append("💥 פיצוץ נפח")
     if c.get("flow_score", 0) >= 60:     pos.append("Flow חזק")
@@ -131,6 +143,7 @@ def _format_buy(c: dict) -> str:
         f"יעד 2:   {_fmt_price(tp2)}",
         f"R:R:     {rr:.1f}x",
     ]
+    lines += ["", f"💰 גודל פוזיציה: {pos_pct}%  (${pos_usd})"]
     if pos:
         lines += ["", "למה עכשיו?"]
         for p in pos: lines.append(f"  ✅ {p}")
@@ -230,30 +243,52 @@ def format_message(coins: list[dict], stats=None, all_coins=None, **kwargs) -> s
 
     lines += ["━━━━━━━━━━━━━━━━━━", "📈 תמונת השוק", ""]
 
-    # תמונת שוק
+    # distribution ציונים
+    if source:
+        above80  = sum(1 for co in source if co.get("confidence",0) >= 80)
+        bet6080  = sum(1 for co in source if 60 <= co.get("confidence",0) < 80)
+        below60  = sum(1 for co in source if co.get("confidence",0) < 60)
+        lines += [
+            "", "━━━━━━━━━━━━━━━━━━",
+            "📊 איכות המועמדים:",
+            f"  🟢 מעל 80%: {above80}",
+            f"  🟡 60–80%:  {bet6080}",
+            f"  🔴 מתחת 60%: {below60}",
+        ]
+
+    # תמונת שוק + breakdown
     if stats:
         n       = getattr(stats, "scanned", len(source))
         rv_fail = getattr(stats, "rvol_fail", 0)
         fl_fail = getattr(stats, "flow_fail", 0)
         hd_fail = getattr(stats, "hard_fail", 0)
+        sc_fail = getattr(stats, "score_fail", 0)
         near    = len(candidates)
         lines += [
-            f"נסרקו: {n} מטבעות",
-            f"קרובים ל-BUY: {near}",
-            f"עסקאות BUY: 0",
+            "", f"נסרקו: {n}  קרובים: {near}  BUY: 0",
+            "", "למה אין BUY?",
         ]
-        lines += ["", "למה אין עסקה?"]
-        if rv_fail > 0: lines.append(f"➡️ RVOL חלש ({rv_fail} נפסלו)")
-        if fl_fail > 0: lines.append(f"➡️ Flow חלש ({fl_fail} נפסלו)")
-        if hd_fail > 0: lines.append(f"➡️ Filters קשוחים ({hd_fail} נפסלו)")
-        if near == 0:   lines.append("➡️ אין פריצות אמיתיות כרגע")
-    else:
-        lines += [f"נסרקו: {len(source)} מטבעות", "עסקאות BUY: 0"]
+        if rv_fail > 0: lines.append(f"  ❌ {rv_fail} נפסלו — RVOL נמוך")
+        if fl_fail > 0: lines.append(f"  ❌ {fl_fail} נפסלו — Flow/OI חלש")
+        if hd_fail > 0: lines.append(f"  ❌ {hd_fail} נפסלו — RSI/VWAP חריג")
+        if sc_fail > 0: lines.append(f"  ❌ {sc_fail} נפסלו — Score נמוך")
+        if near == 0:   lines.append("  ❌ אין פריצות כרגע")
 
-    # הבא בתור
+        # המועמד הקרוב ביותר
+        if candidates:
+            best = candidates[0]
+            bsym = best["symbol"].replace("USDT","")
+            bpct = best.get("confidence", 0)
+            bmiss = _what_missing(best)
+            lines += ["", f"המועמד הקרוב: {bsym} ({bpct}%)"]
+            if bmiss:
+                lines.append("חסר:")
+                for m in bmiss[:2]: lines.append(f"  • {m}")
+    else:
+        lines += [f"נסרקו: {len(source)}", "BUY: 0"]
+
     if candidates:
-        next_coin = candidates[0]["symbol"].replace("USDT","")
-        lines += ["", f"⏳ הבא בתור: {next_coin}"]
+        lines += ["", "⏳ הבא בתור: " + candidates[0]["symbol"].replace("USDT","")]
 
     if candidates:
         lines += [
