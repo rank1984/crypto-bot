@@ -23,17 +23,17 @@ import os
 TRADE_MODE = os.getenv("TRADE_MODE", "BALANCED").upper()
 
 _MODE_THRESHOLDS = {
-    "ELITE":      {"buy": 90, "spec": 999},  # רק A+
-    "BALANCED":   {"buy": 75, "spec": 60},   # A + SPECULATIVE
-    "AGGRESSIVE": {"buy": 60, "spec": 45},   # גם B+
+    "ELITE":      {"buy": 85, "spec": 999},  # רק A/A+
+    "BALANCED":   {"buy": 62, "spec": 50},   # הורד — עסקאות ריאליות
+    "AGGRESSIVE": {"buy": 52, "spec": 42},   # יותר עסקאות
 }
 
 # ─── Dynamic RVOL threshold ───────────────────────────────────────────────────
 
 _RVOL_BY_REGIME = {
-    "TRENDING_BULL": 1.2,
+    "TRENDING_BULL": 1.3,
     "ALTSEASON":     1.0,
-    "RANGE":         1.0,
+    "RANGE":         0.8,   # הורד מ-1.0 ל-0.8
     "RISK_OFF":      1.5,
     "TRENDING_BEAR": 2.0,
 }
@@ -138,6 +138,12 @@ def decide(coin: dict) -> dict:
             decision = "IGNORE" if decision not in ("ELITE_BUY",) else decision
             if decision not in ("ELITE_BUY",):
                 miss.append(f"נדרש 85+ ב-{regime} (יש {sc})")
+
+    # Net profit check: entry_rr < 1.5 → לא כדאי אחרי עמלות+מס
+    rr = coin.get("entry_rr", 0)
+    if decision in ("BUY","ELITE_BUY","SPECULATIVE") and 0 < rr < 1.5:
+        decision = "WATCH"
+        miss.append(f"R:R נמוך ({rr:.1f} — נדרש 1.5+)")
 
     # גודל פוזיציה מומלץ
     pos_size = {
