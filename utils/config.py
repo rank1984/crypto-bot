@@ -11,7 +11,7 @@ KUCOIN_BASE     = "https://api.kucoin.com"
 QUOTE_ASSET      = "USDT"
 MIN_DAILY_VOLUME = float(os.getenv("MIN_DAILY_VOLUME", "5000000"))
 MIN_PRICE        = float(os.getenv("MIN_PRICE", "0.0001"))
-MAX_SYMBOLS      = int(os.getenv("MAX_SYMBOLS", "200"))
+MAX_SYMBOLS      = int(os.getenv("MAX_SYMBOLS", "300"))
 
 # Candle timeframes
 TIMEFRAMES      = ["1min", "5min", "15min", "1hour"]
