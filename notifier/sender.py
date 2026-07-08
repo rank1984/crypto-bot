@@ -290,6 +290,20 @@ def format_message(coins: list[dict], stats=None, all_coins=None, **kwargs) -> s
     if candidates:
         lines += ["", "⏳ הבא בתור: " + candidates[0]["symbol"].replace("USDT","")]
 
+    # Top 10 watchlist table
+    top10 = sorted(source, key=lambda x: x.get("confidence",0), reverse=True)[:10]
+    if top10:
+        lines += ["", "━━━━━━━━━━━━━━━━━━",
+                  "📋 Top 10 עכשיו:", ""]
+        lines.append(f"{'מטבע':<10} {'ציון':>5}  למה לא BUY")
+        lines.append("─" * 40)
+        for co in top10:
+            sym  = co["symbol"].replace("USDT","")
+            conf = co.get("confidence", 0)
+            miss = _what_missing(co)
+            reason = miss[0] if miss else "✅ מוכן"
+            lines.append(f"{sym:<10} {conf:>5.0f}%  {reason}")
+
     if candidates:
         lines += [
             "",
