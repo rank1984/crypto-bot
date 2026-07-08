@@ -55,6 +55,9 @@ def decide(coin: dict) -> dict:
     catalyst   = coin.get("has_catalyst", False)
 
     thr = _REGIME_THRESHOLDS.get(regime, _REGIME_THRESHOLDS["RANGE"])
+    
+    # הזרקת ה-RVOL הנדרש ישירות למטבע כדי ש-sender.py יוכל לקרוא אותו
+    coin["required_rvol"] = thr["rvol"]
 
     # ── ציון איכות ────────────────────────────────────────────────────────────
     score = 0
