@@ -47,19 +47,21 @@ def _ready_emoji(pct: int) -> str:
     return "🔴"
 
 def _what_missing(c: dict) -> list[str]:
-    """מה בדיוק חסר — מקסימום 3 דברים."""
-    from scanner.decision_engine import _RVOL_BY_REGIME
-    regime   = c.get("regime","RANGE")
-    rvol_min = _RVOL_BY_REGIME.get(regime, 0.8)
+    """מה בדיוק חסר — מקסימום 3 דברים. קורא מה-coin, לא מ-decision_engine."""
+    rvol_min = c.get("required_rvol", 0.8)   # קורא את הנתון שנשמר על ידי decision_engine
     m = []
-    if c.get("oi_change", 0) <= 0:      m.append("OI עולה")
+    
+    if c.get("oi_change", 0) <= 0:
+        m.append("OI עולה")
     if c.get("rvol", 0) < rvol_min:
-        m.append(f"RVOL מעל {rvol_min} (יש {c.get('rvol',0):.1f}x)")
-    if c.get("rs_1h", 0) <= 0:         m.append("חוזק מול BTC")
+        m.append(f"RVOL מעל {rvol_min:.1f} (יש {c.get('rvol',0):.1f}x)")
+    if c.get("rs_1h", 0) <= 0:
+        m.append("חוזק מול BTC")
     if c.get("flow_score", 0) < 55:
         m.append(f"Flow מעל 55 (יש {c.get('flow_score',0):.0f})")
     if c.get("entry_decision","NO") != "BUY":
         m.append("אישור פריצה")
+        
     return m[:3]
 
 def _why_no_signal(stats) -> str:
