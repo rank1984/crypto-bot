@@ -37,22 +37,21 @@ def calc_advanced_metrics(coin: dict) -> dict:
               f_rvol*w["rvol"] + f_rs*w["rs"] + f_mom*w["momentum"] + f_break*w["breakout"])
     ai_score = round(min(100, ai_raw * 100), 1)
 
-    # 2. Historical Probability (הכנה ל-Learning Database)
-    # כרגע מחושב כיחס לציון. בעתיד יוחלף בשאילתה למאגר הנתונים
+    # 2. Historical Probability
     prob = round(ai_score * 0.88, 1) if ai_score > 50 else round(ai_score * 0.6, 1)
 
-    # 3. AI Confidence
+    # 3. AI Confidence (שונה ל-ai_confidence למניעת התנגשות)
     missing = sum(1 for x in [flow, rvol, oi] if x == 0)
-    if missing >= 2: confidence = "🔴 LOW"
-    elif missing == 1: confidence = "🟡 MEDIUM"
-    else: confidence = "🟢 HIGH"
+    if missing >= 2: confidence_str = "🔴 LOW"
+    elif missing == 1: confidence_str = "🟡 MEDIUM"
+    else: confidence_str = "🟢 HIGH"
 
     # 4. Risk Level
     if rvol > 3.0 or oi > 15: risk = "🔴 High"
     elif rvol > 1.2: risk = "🟡 Medium"
     else: risk = "🟢 Low"
 
-    # 5. Deltas (מומנטום) - מחשב פער אם יש נתון קודם, אחרת 0
+    # 5. Deltas
     d_flow = flow - coin.get("prev_flow", flow)
     d_oi = oi - coin.get("prev_oi", oi)
     d_rvol = rvol - coin.get("prev_rvol", rvol)
@@ -66,7 +65,8 @@ def calc_advanced_metrics(coin: dict) -> dict:
     return {
         "ai_score": ai_score,
         "probability": prob,
-        "confidence": confidence,
+        "ai_confidence": confidence_str, # שדה חדש בטוח
+        "confidence": int(ai_score),     # תאימות לאחור: מספר שלם עבור קוד ישן
         "risk": risk,
         "d_flow": round(d_flow, 1),
         "d_oi": round(d_oi, 2),
@@ -80,11 +80,11 @@ def enrich_with_probability(coins: list[dict]) -> list[dict]:
         metrics = calc_advanced_metrics(c)
         c.update(metrics)
 
-    # מיון וחלוקת דירוג (Rank)
     sorted_coins = sorted(coins, key=lambda x: x["ai_score"], reverse=True)
     total = len(sorted_coins)
 
     for i, c in enumerate(sorted_coins):
-        c["rank"] = f"{i+1}/{total}"
+        c["rank"] = i + 1
+        c["rank_total"] = total
 
     return sorted_coins
