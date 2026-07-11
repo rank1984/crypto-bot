@@ -36,10 +36,10 @@ def _kucoin_fut_sym(symbol: str) -> str:
 
 # ─── A. OI Expansion ──────────────────────────────────────────────────────────
 
-def _oi_expansion(symbol: str) -> tuple[float, float]:
+def _oi_expansion(symbol: str, df_5m=None) -> tuple[float, float]:
     """
     מחזיר (oi_change_pct_1h, score_0_20).
-    עולה בזמן שמחיר עולה = כסף חדש אמיתי.
+    Fallback: proxy מ-volume אם KuCoin Futures לא זמין.
     """
     try:
         sym = _kucoin_fut_sym(symbol)
@@ -49,16 +49,28 @@ def _oi_expansion(symbol: str) -> tuple[float, float]:
             params={"symbol": sym},
             timeout=_TIMEOUT,
         )
-        if r.status_code != 200:
-            return 0.0, 0.0
-        data = r.json().get("data", {})
-        oi_now  = float(data.get("openInterestChange24h", 0) or 0)
-        # KuCoin מחזיר % change — נורמל ל-0-20
-        score = min(20.0, max(0.0, oi_now * 2)) if oi_now > 0 else 0.0
-        return round(oi_now, 2), round(score, 1)
+        if r.status_code == 200:
+            data = r.json().get("data", {})
+            oi_now = float(data.get("openInterestChange24h", 0) or 0)
+            score  = min(20.0, max(0.0, oi_now * 2)) if oi_now > 0 else 0.0
+            return round(oi_now, 2), round(score, 1)
     except Exception as e:
         log.debug(f"OI expansion failed {symbol}: {e}")
-        return 0.0, 0.0
+
+    # Fallback: proxy מ-volume acceleration
+    if df_5m is not None and len(df_5m) >= 10:
+        try:
+            import numpy as np
+            vol   = df_5m["volume"].values
+            avg   = float(np.mean(vol[-10:-3]))
+            last3 = float(np.mean(vol[-3:]))
+            if avg > 0:
+                ratio = (last3 - avg) / avg * 100
+                proxy_score = min(10.0, max(0.0, ratio))   # מקסימום 10 (חצי מ-OI אמיתי)
+                return round(ratio, 2), round(proxy_score, 1)
+        except Exception:
+            pass
+    return 0.0, 0.0
 
 
 # ─── B. CVD (Cumulative Volume Delta) ────────────────────────────────────────
@@ -81,6 +93,7 @@ def _cvd_score(df_5m: pd.DataFrame) -> tuple[float, float]:
     vol   = df_5m["volume"]
 
     # Buy volume אומדן: אם נר ירוק → כל הנפח הוא buy, אם אדום → sell
+    # שיטה מדויקת יותר: (close-low)/(high-low) * volume
     high  = df_5m["high"]
     low   = df_5m["low"]
     hl    = (high - low).replace(0, np.nan)
@@ -94,12 +107,9 @@ def _cvd_score(df_5m: pd.DataFrame) -> tuple[float, float]:
     # טרנד: האם CVD עולה ב-10 הנרות האחרונים?
     cvd_recent = cvd.iloc[-10:]
     slope = float(np.polyfit(range(10), cvd_recent.values, 1)[0])
-    
-    # התיקון: חלוקה בממוצע הנפח של אותם נרות ולא בסכום ה-CVD עצמו
-    avg_vol_10 = float(vol.iloc[-10:].mean()) + 1e-10
-    cvd_trend_pct = (slope / avg_vol_10) * 100
+    cvd_trend_pct = slope / (abs(float(cvd_recent.mean())) + 1e-10) * 100
 
-    score = min(20.0, max(0.0, cvd_trend_pct * 4)) if cvd_trend_pct > 0 else 0.0
+    score = min(20.0, max(0.0, cvd_trend_pct * 2)) if cvd_trend_pct > 0 else 0.0
     return round(cvd_trend_pct, 2), round(score, 1)
 
 
@@ -172,9 +182,11 @@ def _vol_accel_score(df_5m: pd.DataFrame) -> tuple[float, float]:
     if vol_60m == 0:
         return 1.0, 0.0
 
+    # נורמל: vol_15m צפוי להיות ~25% מ-vol_60m (1/4 מהשעה)
     expected_15m = vol_60m * 0.25
     accel = vol_15m / expected_15m if expected_15m > 0 else 1.0
 
+    # 1x = נורמלי, 2x = האצה, 3x+ = חריג
     score = min(10.0, (accel - 1.0) * 5) if accel > 1.0 else 0.0
     return round(accel, 2), round(score, 1)
 
@@ -245,15 +257,36 @@ def _whale_score(df_5m: pd.DataFrame) -> tuple[bool, float]:
 # ─── Main Entry ───────────────────────────────────────────────────────────────
 
 def calc_flow_score(
-    symbol:      str,
-    df_5m:       pd.DataFrame,
-    rs_btc_1h:   float = 0.0,
-    rs_eth_1h:   float = 0.0,
+    symbol:     str,
+    df_5m:      pd.DataFrame,
+    rs_btc_1h:  float = 0.0,
+    rs_eth_1h:  float = 0.0,
 ) -> dict:
     """
     מחשב את ה-Flow Score המלא.
+
+    Returns
+    -------
+    {
+        "flow_score":        float,  # 0–100
+        "oi_change":         float,
+        "cvd_trend":         float,
+        "funding_rate":      float,
+        "vol_accel":         float,
+        "is_compressed":     bool,
+        "whale_detected":    bool,
+        "components": {
+            "oi":          float,
+            "cvd":         float,
+            "funding":     float,
+            "rs":          float,
+            "vol_accel":   float,
+            "compression": float,
+            "whale":       float,
+        }
+    }
     """
-    oi_chg,  oi_s   = _oi_expansion(symbol)
+    oi_chg,  oi_s   = _oi_expansion(symbol, df_5m)
     cvd_t,   cvd_s  = _cvd_score(df_5m)
     fund_r,  fund_s = _funding_score(symbol)
     rs_s            = _rs_score(rs_btc_1h, rs_eth_1h)
