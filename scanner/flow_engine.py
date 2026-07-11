@@ -36,10 +36,10 @@ def _kucoin_fut_sym(symbol: str) -> str:
 
 # ─── A. OI Expansion ──────────────────────────────────────────────────────────
 
-def _oi_expansion(symbol: str, df_5m=None) -> tuple[float, float]:
+def _oi_expansion(symbol: str, df_5m=None) -> tuple[float, float, str]:
     """
-    מחזיר (oi_change_pct_1h, score_0_20).
-    Fallback: proxy מ-volume אם KuCoin Futures לא זמין.
+    מחזיר (oi_change_pct, score_0_20, source).
+    source: "FUTURES" / "PROXY" / "MISSING"
     """
     try:
         sym = _kucoin_fut_sym(symbol)
@@ -50,10 +50,10 @@ def _oi_expansion(symbol: str, df_5m=None) -> tuple[float, float]:
             timeout=_TIMEOUT,
         )
         if r.status_code == 200:
-            data = r.json().get("data", {})
+            data  = r.json().get("data", {})
             oi_now = float(data.get("openInterestChange24h", 0) or 0)
             score  = min(20.0, max(0.0, oi_now * 2)) if oi_now > 0 else 0.0
-            return round(oi_now, 2), round(score, 1)
+            return round(oi_now, 2), round(score, 1), "FUTURES"
     except Exception as e:
         log.debug(f"OI expansion failed {symbol}: {e}")
 
@@ -65,12 +65,12 @@ def _oi_expansion(symbol: str, df_5m=None) -> tuple[float, float]:
             avg   = float(np.mean(vol[-10:-3]))
             last3 = float(np.mean(vol[-3:]))
             if avg > 0:
-                ratio = (last3 - avg) / avg * 100
-                proxy_score = min(10.0, max(0.0, ratio))   # מקסימום 10 (חצי מ-OI אמיתי)
-                return round(ratio, 2), round(proxy_score, 1)
+                ratio       = (last3 - avg) / avg * 100
+                proxy_score = min(10.0, ratio / 20)   # 200%=10, 100%=5
+                return round(ratio, 2), round(max(0, proxy_score), 1), "PROXY"
         except Exception:
             pass
-    return 0.0, 0.0
+    return 0.0, 0.0, "MISSING"
 
 
 # ─── B. CVD (Cumulative Volume Delta) ────────────────────────────────────────
@@ -286,7 +286,7 @@ def calc_flow_score(
         }
     }
     """
-    oi_chg,  oi_s   = _oi_expansion(symbol, df_5m)
+    oi_chg,  oi_s, oi_source = _oi_expansion(symbol, df_5m)
     cvd_t,   cvd_s  = _cvd_score(df_5m)
     fund_r,  fund_s = _funding_score(symbol)
     rs_s            = _rs_score(rs_btc_1h, rs_eth_1h)
@@ -296,9 +296,15 @@ def calc_flow_score(
 
     total = oi_s + cvd_s + fund_s + rs_s + vol_s + cmp_s + whl_s
 
+    log.debug(
+        f"{symbol} | OI={oi_source} ({oi_chg:.1f}%) "
+        f"Score={oi_s} Flow={round(total, 1)}"
+    )
+
     return {
         "flow_score":     round(total, 1),
         "oi_change":      oi_chg,
+        "oi_source":      oi_source,
         "cvd_trend":      cvd_t,
         "funding_rate":   fund_r,
         "vol_accel":      vol_a,
@@ -306,6 +312,7 @@ def calc_flow_score(
         "whale_detected": whale,
         "components": {
             "oi":          oi_s,
+            "oi_source":   oi_source,
             "cvd":         cvd_s,
             "funding":     fund_s,
             "rs":          rs_s,
