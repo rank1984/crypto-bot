@@ -1,9 +1,5 @@
 """
 CRYPTO-BOT Elite — Shadow Mode & Trade Tracker
-
-הבוט רץ בשקט, שומר את כל משתני המטבע בנקודת ההחלטה למסד נתונים, 
-ובודק כל 5 דקות מול בינאנס האם העסקאות הגיעו ל-TP1 או ל-SL.
-בסוף, מייצא CSV מסודר לאנליזה.
 """
 import os
 import sqlite3
@@ -47,7 +43,6 @@ def init_shadow_db():
         """)
     log.info("Shadow DB initialized for Trade Tracking")
     
-    # מפעיל אוטומטית עדכון מעקב פוזיציות וייצוא CSV בתחילת כל סריקה!
     try:
         update_open_trades()
         export_shadow_csv()
@@ -55,17 +50,13 @@ def init_shadow_db():
         log.error(f"Shadow Engine Error: {e}")
 
 def save_shadow_signal(coin: dict, signal: str):
-    # פונקציית Legacy למקרה ש-main.py עדיין קורא לה, מונעת קריסה.
     pass
 
 def record_trade(coin: dict, signal):
-    """נקרת ישירות מתוך entry_engine ברגע ההחלטה"""
     if signal.decision not in ["BUY", "WAIT", "NO"]: 
         return
         
     ts = datetime.now(timezone.utc).isoformat()
-    
-    # קביעת סטטוס התחלתי
     initial_status = "Pending ⏳" if signal.decision == "BUY" else "-"
     
     with _conn() as c:
@@ -95,7 +86,6 @@ def record_trade(coin: dict, signal):
 
 def _get_binance_price(symbol: str) -> float:
     try:
-        # פניה חינמית לבינאנס שלא דורשת מפתחות API
         r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=5)
         data = r.json()
         return float(data.get("price", 0.0))
@@ -127,7 +117,7 @@ def update_open_trades():
             updated_count += 1
             
     if updated_count > 0:
-        log.info(f"Shadow Tracker: Updated {updated_count} trades with new outcomes (TP/SL).")
+        log.info(f"Shadow Tracker: Updated {updated_count} trades.")
 
 def export_shadow_csv():
     filepath = "shadow_results.csv"
@@ -147,3 +137,4 @@ def export_shadow_csv():
                 t["oi_change"], t["rs_1h"], t["is_compressed"], 
                 t["status"], t["reason"]
             ])
+    log.info(f"CSV Exported: {os.path.abspath(filepath)}")
