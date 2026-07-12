@@ -237,7 +237,17 @@ def evaluate_entry(
     # 1. מריץ את החישוב
     result = _run_core_logic(coin, df_5m, btc_mom_1h, btc_mom_5m)
     
-    # 2. מתעד את ההחלטה
+    # 2. הוספת הלוג שביקשנו - שקיפות מלאה לטרמינל/לוג כדי להבין חסימות
+    log.info(
+        f"{coin.get('symbol', 'UNK')} | "
+        f"flow={coin.get('flow_score', 0):.1f} | "
+        f"pre={coin.get('pre_score', 0):.1f} | "
+        f"decision={result.decision} | "
+        f"setup={result.setup_type} | "
+        f"reason='{result.reason}'"
+    )
+    
+    # 3. מתעד את ההחלטה ל-CSV (לאיסוף נתונים ולמידת ספים עתידית)
     log_to_csv(
         coin_symbol=coin.get("symbol", "UNKNOWN"),
         decision=result.decision,
@@ -245,6 +255,9 @@ def evaluate_entry(
         reason=result.reason,
         score=coin.get("ai_score", 0)
     )
+    
+    # 4. מחזיר את התוצאה כרגיל
+    return result
     
     # 3. מחזיר את התוצאה כרגיל
     return result
