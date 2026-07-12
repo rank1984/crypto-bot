@@ -20,7 +20,29 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+- name: Run Replay Engine
+        env:
+          # ... המשתנים שלך נשארים אותו דבר ...
+        run: python -m tools.replay_engine
 
+      # === הבלוק שאתה מוסיף כדי למצוא את הקובץ ===
+      - name: 🔍 Debug - Find the Missing CSV
+        run: |
+          echo "=== Files in root directory ==="
+          ls -la
+          echo "=== Files in tools/ directory ==="
+          ls -la tools/ || echo "tools directory not found!"
+          echo "=== Searching for ANY .csv file in the whole project ==="
+          find . -name "*.csv"
+      # ==========================================
+
+      - name: 💾 Save Replay CSV Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: winner-replay-csv-data
+          # אם טריק הפנס יראה לך שהקובץ בתיקייה הראשית, תשנה את השורה למטה פשוט ל- replay_report.csv
+          path: tools/replay_report.csv
+          if-no-files-found: warn
       - name: Run Replay Engine
         env:
           # Secrets
