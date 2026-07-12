@@ -133,7 +133,8 @@ def decide_batch(coins: list[dict]) -> list[dict]:
         entry_dec = c.get("entry_decision", "NO")
         
         # 2. קביעת 4 רמות הפעולה (Decision Levels)
-        if ai_score >= 80 and entry_dec == "BUY":
+        # ירדנו ל-75 - אם יש BUY טכני והמטבע חזק, אנחנו רוצים התראה!
+        if ai_score >= 75 and entry_dec == "BUY":
             c["decision"] = "BUY NOW"
             c["signal"] = "BUY"
         elif ai_score >= 70:
