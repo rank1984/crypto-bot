@@ -6,7 +6,7 @@ on:
 jobs:
   replay:
     runs-on: ubuntu-latest
-    timeout-minutes: 8 # נותן מספיק זמן לסריקה רחבה לאחור
+    timeout-minutes: 15 # הוגדל ל-15 כדי למנוע חיתוך של הסריקה באמצע
 
     steps:
       - name: Checkout code
@@ -20,38 +20,13 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
-- name: Run Replay Engine
-        env:
-          # ... המשתנים שלך נשארים אותו דבר ...
-        run: python -m tools.replay_engine
 
-      # === הבלוק שאתה מוסיף כדי למצוא את הקובץ ===
-      - name: 🔍 Debug - Find the Missing CSV
-        run: |
-          echo "=== Files in root directory ==="
-          ls -la
-          echo "=== Files in tools/ directory ==="
-          ls -la tools/ || echo "tools directory not found!"
-          echo "=== Searching for ANY .csv file in the whole project ==="
-          find . -name "*.csv"
-      # ==========================================
-
-      - name: 💾 Save Replay CSV Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: winner-replay-csv-data
-          # אם טריק הפנס יראה לך שהקובץ בתיקייה הראשית, תשנה את השורה למטה פשוט ל- replay_report.csv
-          path: tools/replay_report.csv
-          if-no-files-found: warn
       - name: Run Replay Engine
         env:
-          # Secrets
           TELEGRAM_TOKEN:      ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
           BINANCE_API_KEY:     ${{ secrets.BINANCE_API_KEY }}
           BINANCE_API_SECRET:  ${{ secrets.BINANCE_API_SECRET }}
-          
-          # Variables עם הגנות מובנות מפני ערכים ריקים (אם המשתנה ריק, ייבחר ערך ברירת המחדל מימין)
           SCAN_INTERVAL_SECONDS: ${{ vars.SCAN_INTERVAL_SECONDS || '300' }}
           MIN_DAILY_VOLUME:      ${{ vars.MIN_DAILY_VOLUME || '1500000' }}
           TOP_N:                 ${{ vars.TOP_N || '5' }}
@@ -59,9 +34,17 @@ jobs:
           MIN_PRICE:             ${{ vars.MIN_PRICE || '0.0001' }}
         run: python -m tools.replay_engine
 
+      - name: 🔍 Debug - Find the Missing CSV
+        run: |
+          echo "=== Searching for ANY .csv file in the whole project ==="
+          find . -name "*.csv"
+
       - name: 💾 Save Replay CSV Report
         uses: actions/upload-artifact@v4
         with:
           name: winner-replay-csv-data
-          path: tools/replay_report.csv
-          if-no-files-found: ignore
+          # מושך כל קובץ CSV שנוצר, לא משנה באיזו תיקייה הוא
+          path: |
+            *.csv
+            **/*.csv
+          if-no-files-found: warn
