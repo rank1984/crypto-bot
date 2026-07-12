@@ -5,32 +5,16 @@ CRYPTO-BOT Elite — Entry Engine v1
     BUY  — עם מחיר כניסה, SL, TP
     WAIT — setup קיים אבל טריגר עוד לא הופעל
     NO   — אין setup או שוק לא מאפשר
-
-4 חלקים:
-    1. Market Filter  — האם מותר לטריידר בכלל?
-    2. Setup Engine   — איזה setup קיים?
-    3. Trigger Engine — הופעל הטריגר?
-    4. Risk Manager   — חישוב Entry / SL / TP
 """
-import csv
 import os
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional
 import pandas as pd
 from utils.logger import get_logger
+from tools.shadow_mode import record_trade
 
 log = get_logger(__name__)
-
-# ─── Data Logger (שומר כל החלטה לטבלת אקסל) ──────────────────────────────────
-def log_to_csv(coin_symbol, decision, setup, reason, score):
-    filepath = "replay_report.csv"
-    file_exists = os.path.isfile(filepath)
-    with open(filepath, mode='a', newline='', encoding='utf-8-sig') as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["Time", "Coin", "Decision", "Setup", "Reason", "Score"])
-        writer.writerow([datetime.now().strftime("%H:%M:%S"), coin_symbol, decision, setup, reason, score])
 
 # ─── Data Classes ─────────────────────────────────────────────────────────────
 
@@ -48,9 +32,9 @@ class EntrySignal:
 # ─── 1. Market Filter ─────────────────────────────────────────────────────────
 
 def market_allows_trade(
-    btc_mom_1h:  float,   # % שינוי BTC ב-1h
-    btc_mom_5m:  float,   # % שינוי BTC ב-5m (לזיהוי dump)
-    rs_1h:       float,   # חוזק יחסי מטבע vs BTC
+    btc_mom_1h:  float,
+    btc_mom_5m:  float,
+    rs_1h:       float,
 ) -> tuple[bool, str]:
     if btc_mom_5m < -1.5:
         return False, f"BTC dumping {btc_mom_5m:.1f}% in 5m"
@@ -84,14 +68,12 @@ def detect_setup(
     price   = float(last["close"])
     vwap_dist_pct = (price - vwap) / vwap * 100 if vwap > 0 else 0
 
-    # ── A. BREAKOUT SETUP ──
     if (0 <= vwap_dist_pct <= 3.0 and rvol >= 1.5 and 55 <= rsi <= 80):
         cons_low, cons_high = _consolidation_range(df_5m, lookback=12)
         cons_range_pct = (cons_high - cons_low) / cons_low * 100 if cons_low > 0 else 99
         if cons_range_pct < 4.0:
             return "BREAKOUT", {"cons_low": cons_low, "cons_high": cons_high, "vwap": vwap, "price": price}
 
-    # ── B. VWAP RECLAIM ──
     prev_price = float(prev["close"])
     was_below  = prev_price < vwap
     now_above  = price > vwap
@@ -100,7 +82,6 @@ def detect_setup(
     if (was_below and now_above and vol_rising and 45 <= rsi <= 70):
         return "VWAP_RECLAIM", {"vwap": vwap, "price": price}
 
-    # ── C. DIP BUY ──
     all_aligned = mom_1h > 0 and mom_15m > 0
     near_vwap   = abs(vwap_dist_pct) <= 1.0
     near_ema20  = ema20 > 0 and abs(price - ema20) / ema20 * 100 <= 1.0
@@ -190,7 +171,7 @@ def calc_risk(
 
     return sl, tp1, tp2
 
-# ─── Main Logic (הלוגיקה המקורית נשארה כאן) ───────────────────────────────────
+# ─── Main Logic ───────────────────────────────────────────────────────────────
 
 def _run_core_logic(
     coin:        dict,
@@ -226,7 +207,7 @@ def _run_core_logic(
     return EntrySignal(decision="BUY", setup_type=setup_type, entry=entry_price, sl=sl, tp1=tp1, tp2=tp2, rr=rr, reason=f"{setup_type} trigger confirmed")
 
 
-# ─── Entry Point (זה מה שהבוט מפעיל עכשיו - והוא אוסף את המידע!) ──────────────
+# ─── Entry Point ──────────────────────────────────────────────────────────────
 
 def evaluate_entry(
     coin:        dict,
@@ -234,10 +215,9 @@ def evaluate_entry(
     btc_mom_1h:  float = 0.0,
     btc_mom_5m:  float = 0.0,
 ) -> EntrySignal:
-    # 1. מריץ את החישוב
+    
     result = _run_core_logic(coin, df_5m, btc_mom_1h, btc_mom_5m)
     
-    # 2. הוספת הלוג שביקשנו - שקיפות מלאה לטרמינל/לוג כדי להבין חסימות
     log.info(
         f"{coin.get('symbol', 'UNK')} | "
         f"flow={coin.get('flow_score', 0):.1f} | "
@@ -247,17 +227,7 @@ def evaluate_entry(
         f"reason='{result.reason}'"
     )
     
-    # 3. מתעד את ההחלטה ל-CSV (לאיסוף נתונים ולמידת ספים עתידית)
-    log_to_csv(
-        coin_symbol=coin.get("symbol", "UNKNOWN"),
-        decision=result.decision,
-        setup=result.setup_type,
-        reason=result.reason,
-        score=coin.get("ai_score", 0)
-    )
+    # שימוש ב-Shadow Tracker החדש ששומר את כל המשתנים למסד הנתונים
+    record_trade(coin, result)
     
-    # 4. מחזיר את התוצאה כרגיל
-    return result
-    
-    # 3. מחזיר את התוצאה כרגיל
     return result
