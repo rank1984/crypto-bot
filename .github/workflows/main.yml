@@ -10,14 +10,28 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          
       - name: Install dependencies
         run: pip install -r requirements.txt
+        
       - name: Run bot
         env:
           TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py --once
+
+      - name: 💾 Save Shadow Mode CSV Logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shadow-mode-csv-${{ github.run_id }} 
+          path: |
+            *.csv
+            **/*.csv
+          if-no-files-found: warn
+          retention-days: 3
