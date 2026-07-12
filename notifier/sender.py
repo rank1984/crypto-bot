@@ -23,10 +23,26 @@ def _build_top_coin_message(c: dict) -> str:
     status_raw = c.get('status', 'EARLY')
     status = "PRE_BREAKOUT" if ai >= 80 else ("BUILDING" if ai >= 70 else "WATCH")
     
-    price = _fmt_price(c.get('price', 0))
-    trigger = _fmt_price(c.get('trigger_price', c.get('price', 0) * 1.005))
-    stop = _fmt_price(c.get('stop_loss', c.get('price', 0) * 0.97))
-    target = _fmt_price(c.get('target_1', c.get('price', 0) * 1.05))
+    price_val = c.get('price', 0.0)
+    trigger_val = c.get('trigger_price', price_val * 1.005)
+    
+    price = _fmt_price(price_val)
+    trigger = _fmt_price(trigger_val)
+    stop = _fmt_price(c.get('stop_loss', price_val * 0.97))
+    target = _fmt_price(c.get('target_1', price_val * 1.05))
+
+    # חישוב מרחק לטריגר
+    if price_val > 0 and trigger_val > 0:
+        dist_pct = ((trigger_val - price_val) / price_val) * 100
+        dist_str = f"{dist_pct:+.2f}%"
+    else:
+        dist_str = "—"
+
+    # נתוני OI
+    oi_change = c.get('oi_change', 0.0)
+    oi_source = c.get('oi_source', 'לא ידוע')
+    oi_sign = "+" if oi_change > 0 else ""
+    oi_str = f"{oi_sign}{oi_change:.1f}% ({oi_source})"
 
     lines = [
         f"🥇 **{sym}**",
@@ -40,23 +56,35 @@ def _build_top_coin_message(c: dict) -> str:
         "",
         f"**מחיר:** {price}",
         f"**טריגר:** {trigger}",
+        f"📏 **מרחק לטריגר:** {dist_str}",
+        f"📊 **OI:** {oi_str}",
         f"**סטופ:** {stop}",
         f"**יעד ראשון:** {target}",
         "",
-        "**למה הוא ראשון?**"
+        "**סטטוס תנאים:**"
     ]
     
-    for pos in c.get('pos_reasons', ['Compression', 'Flow חיובי']):
+    # סיבות חיוביות
+    for pos in c.get('pos_reasons', []):
         lines.append(f"✅ {pos}")
         
-    for neg in c.get('neg_reasons', ['אין Trigger עדין']):
-        lines.append(f"❌ {neg}")
+    # סיבות שליליות / חוסרים (עם סינון סתירות)
+    neg_reasons = c.get('neg_reasons', [])
+    real_negatives = [n for n in neg_reasons if "התקיימו" not in n]
+    
+    if not real_negatives:
+        lines.append("✅ כל התנאים ההכרחיים התקיימו")
+    else:
+        for neg in real_negatives:
+            # מנקה כפילויות של המילה "חסר" אם היא כבר הגיעה מהמנוע
+            clean_neg = neg.replace('חסר:', '').replace('חסר ', '').strip()
+            lines.append(f"❌ חסר: {clean_neg}")
             
     return "\n".join(lines)
 
 def _build_leaderboard(coins: list[dict]) -> str:
     lines = ["📊 **Top AI Ranking**", ""]
-    lines.append("`מטבע      AI   הסתברות  ETA     Rank`")
+    lines.append("`מטבע    AI   הסתברות  ETA     Rank`")
     lines.append("`---------------------------------------`")
     
     for c in coins[:10]:
@@ -81,7 +109,7 @@ def _build_ai_recommendation(top_coin: dict) -> str:
     lines.append("אין פריצה מאושרת (BUY NOW) ברגע זה.")
     lines.append(f"אבל **{sym}** הוא המועמד המוביל והקרוב ביותר.")
     lines.append(f"הסתברות לפריצה בחלון הזמן הקרוב: **{prob}%**")
-    lines.append("מומלץ להוסיף ל-TradingView לעקב אחר טריגר.")
+    lines.append("מומלץ להוסיף ל-TradingView לעקוב אחר טריגר.")
     
     return "\n".join(lines)
 
@@ -106,7 +134,6 @@ def send_telegram(coins: list[dict], portfolio_usd: float = 1000.0, filtered: di
     שולח את דוח ה-v6 לטלגרם. 
     שימוש ב-**kwargs מאפשר לקבל בבטחה ארגומנטים ישנים כמו stats או all_coins מבלי לקרוס.
     """
-    # אם קיבלנו רשימה ריקה, נשתמש בכל המטבעות שהגיעו ב-kwargs לגיבוי
     display_coins = coins if coins else kwargs.get("all_coins", [])
     
     if not display_coins:
