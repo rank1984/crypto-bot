@@ -85,7 +85,6 @@ def detect_setup(
 ) -> tuple[str, dict]:
     """
     מחזיר (setup_type, context_dict).
-    setup_type: "BREAKOUT" / "VWAP_RECLAIM" / "DIP_BUY" / ""
     """
     if df_5m is None or len(df_5m) < 15:
         return "", {}
@@ -95,16 +94,17 @@ def detect_setup(
     price   = float(last["close"])
     vwap_dist_pct = (price - vwap) / vwap * 100 if vwap > 0 else 0
 
-    # ── A. BREAKOUT SETUP ─────────────────────────────────────────────────────
-    # מחיר קרוב ל-VWAP + RVOL גבוה + RSI תקין + קונסולידציה
+    # ── A. BREAKOUT SETUP ──
+    # ירדנו מ-rvol 3.0 ל-1.5, הגיוני הרבה יותר למומנטום
     if (0 <= vwap_dist_pct <= 3.0
-            and rvol >= 3.0
-            and 55 <= rsi <= 75):
+            and rvol >= 1.5
+            and 55 <= rsi <= 80):
 
         cons_low, cons_high = _consolidation_range(df_5m, lookback=12)
         cons_range_pct = (cons_high - cons_low) / cons_low * 100 if cons_low > 0 else 99
-        # קונסולידציה צרה = טווח < 3%
-        if cons_range_pct < 3.0:
+        
+        # הרחבנו מעט את טווח הקונסולידציה ל-4% כדי לא לפספס תנועות במטבעות תנודתיים
+        if cons_range_pct < 4.0:
             return "BREAKOUT", {
                 "cons_low":  cons_low,
                 "cons_high": cons_high,
@@ -112,8 +112,7 @@ def detect_setup(
                 "price":     price,
             }
 
-    # ── B. VWAP RECLAIM ───────────────────────────────────────────────────────
-    # הנר הקודם מתחת ל-VWAP, הנר הנוכחי מעליו
+    # ── B. VWAP RECLAIM ──
     prev_price = float(prev["close"])
     was_below  = prev_price < vwap
     now_above  = price > vwap
@@ -121,17 +120,17 @@ def detect_setup(
 
     if (was_below and now_above
             and vol_rising
-            and 45 <= rsi <= 65):
+            and 45 <= rsi <= 70):
         return "VWAP_RECLAIM", {
             "vwap":  vwap,
             "price": price,
         }
 
-    # ── C. DIP BUY (Trend Continuation) ──────────────────────────────────────
-    # 1H חיובי + 15m + 5m aligned + פולבק ל-VWAP/EMA20
-    all_aligned = mom_1h > 0 and mom_15m > 0 and mom_5m > 0
+    # ── C. DIP BUY ──
+    # הסרנו את התנאי המחמיר של mom_5m > 0 (בדיפ, ה-5 דקות בדרך כלל שלילי או מאופס)
+    all_aligned = mom_1h > 0 and mom_15m > 0
     near_vwap   = abs(vwap_dist_pct) <= 1.0
-    near_ema20  = ema20 > 0 and abs(price - ema20) / ema20 * 100 <= 0.8
+    near_ema20  = ema20 > 0 and abs(price - ema20) / ema20 * 100 <= 1.0
     green_candle = float(last["close"]) > float(last["open"])
 
     if all_aligned and (near_vwap or near_ema20) and green_candle:
@@ -144,8 +143,6 @@ def detect_setup(
     return "", {}
 
 
-# ─── 3. Trigger Engine ────────────────────────────────────────────────────────
-
 def check_trigger(
     setup_type: str,
     ctx:        dict,
@@ -153,16 +150,11 @@ def check_trigger(
 ) -> tuple[bool, float]:
     """
     מחזיר (triggered, entry_price).
-
-    BREAKOUT:     נר סגר מעל cons_high + לא wick rejection
-    VWAP_RECLAIM: נר שני מאשר מעל VWAP
-    DIP_BUY:      נר ירוק ראשון אחרי bounce
     """
     if df_5m is None or len(df_5m) < 3:
         return False, 0.0
 
     last  = df_5m.iloc[-1]
-    prev  = df_5m.iloc[-2]
     close = float(last["close"])
     high  = float(last["high"])
     low   = float(last["low"])
@@ -174,30 +166,26 @@ def check_trigger(
         if cons_high <= 0:
             return False, 0.0
 
-        # נר סגר מעל cons_high
         breakout = close > cons_high
 
-        # wick rejection בדיקה: upper wick לא יותר מ-40% מהנר
+        # הרחבנו טיפה את ה-wick לאזור ה-50% ווליום ל-1.2 במקום 1.5
         candle_range = high - low
         upper_wick   = high - close
-        no_rejection = (upper_wick / candle_range < 0.4) if candle_range > 0 else True
-
-        # volume surge
-        vol_surge = vol > avg_vol * 1.5
+        no_rejection = (upper_wick / candle_range < 0.5) if candle_range > 0 else True
+        vol_surge = vol > avg_vol * 1.2
 
         if breakout and no_rejection and vol_surge:
-            entry = round(cons_high * 1.001, 8)   # +0.1% מעל הפריצה
+            entry = round(cons_high * 1.001, 8)
             return True, entry
 
     elif setup_type == "VWAP_RECLAIM":
         vwap = ctx.get("vwap", 0)
-        # נר שני — גם הוא מעל VWAP
-        prev_close = float(prev["close"])
-        if close > vwap and prev_close > vwap:
+        # פתרון ה-Deadlock: מספיק שהנר הנוכחי נסגר מעל ה-VWAP עם ווליום סביר כדי לאשר!
+        vol_surge = vol > avg_vol * 1.1
+        if close > vwap and vol_surge:
             return True, close
 
     elif setup_type == "DIP_BUY":
-        # נר ירוק אחרי bounce
         green = close > float(last["open"])
         if green:
             return True, close
