@@ -286,8 +286,9 @@ def calc_flow_score(
         }
     }
     """
-    oi_chg,  oi_s, oi_source = _oi_expansion(symbol, df_5m)
-    cvd_t,   cvd_s  = _cvd_score(df_5m)
+    oi_chg, oi_s_raw, oi_source = _oi_expansion(symbol, df_5m)
+    # MISSING = ניטרלי (7 מתוך 20) במקום קנס 0
+    oi_s = oi_s_raw if oi_source != "MISSING" else 7.0    cvd_t,   cvd_s  = _cvd_score(df_5m)
     fund_r,  fund_s = _funding_score(symbol)
     rs_s            = _rs_score(rs_btc_1h, rs_eth_1h)
     vol_a,   vol_s  = _vol_accel_score(df_5m)
