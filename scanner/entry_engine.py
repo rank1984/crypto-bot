@@ -92,11 +92,11 @@ def detect_setup(
 
     return "", {}
 
-def check_trigger(
+    def check_trigger(
     setup_type: str,
     ctx:        dict,
     df_5m:      pd.DataFrame,
-) -> tuple[bool, float]:
+     ) -> tuple[bool, float]:
     if df_5m is None or len(df_5m) < 3:
         return False, 0.0
 
@@ -122,15 +122,14 @@ def check_trigger(
             entry = round(cons_high * 1.001, 8)
             return True, entry
         
-        # ✨ תיקון: אם הפריצה כמעט מושלמת – תן BUY, לא WAIT
+        # תיקון: פריצה כמעט מושלמת - תן BUY
         if breakout and no_rejection:
             entry = round(cons_high * 1.001, 8)
             return True, entry
 
     elif setup_type == "VWAP_RECLAIM":
         vwap = ctx.get("vwap", 0)
-        vol_surge = vol > avg_vol * 1.1
-        # ✨ תיקון: הסר את דרישת הווליום המוגבר – VWAP reclaim חזק מספיק
+        # תיקון: VWAP reclaim - הסר דרישת ווליום
         if close > vwap:
             return True, close
 
@@ -139,7 +138,7 @@ def check_trigger(
         if green:
             return True, close
 
-    return False, 0.0
+        return False, 0.0
 
         breakout = close > cons_high
         candle_range = high - low
