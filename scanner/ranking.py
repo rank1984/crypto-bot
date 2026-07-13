@@ -103,7 +103,8 @@ def scan_coin(symbol: str) -> Optional[dict]:
         ema20=ind["ema20"], ema50=ind["ema50"], price=last_price,
     )
 
-    # Entry Engine — כולל Flow data
+   # 1. בתוך scan_coin - העברת symbol ל-Entry Engine כדי לתקן את ה-UNK (סעיף 4)
+    # Entry Engine — כולל Flow data ו-symbol
     entry_signal = evaluate_entry(
         coin={**mom, **vol, **ind, "rs_1h": rs["rs_1h"], "rs_4h": rs["rs_4h"],
               "vwap": ind["vwap"], "ema20": ind["ema20"], "rsi_14": ind["rsi_14"], "rvol": vol["rvol"],
@@ -113,6 +114,7 @@ def scan_coin(symbol: str) -> Optional[dict]:
               "is_compressed":   flow["is_compressed"],
               "whale_detected":  flow["whale_detected"],
               "oi_source":       flow.get("oi_source", "MISSING"),
+              "symbol":          symbol,  # <--- התיקון ל-UNK
               },
         df_5m=df_5m, btc_mom_5m=0.0,
     )
