@@ -1,16 +1,25 @@
 name: 🚀 CRYPTO-BOT
+
 on:
   workflow_dispatch:
   schedule:
     - cron: "*/5 * * * *"
+
 jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    
+    # מעניק ל-Workflow הרשאת כתיבה כדי לעדכן את קובץ ה-CSV בתוך ה-Repository
+    permissions:
+      contents: write
+      
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+        with:
+          persist-credentials: true
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -25,7 +34,26 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py --once
 
-      - name: 💾 Save Shadow Mode CSV Logs
+      - name: 🚀 Commit and Push Shadow Results
+        run: |
+          # הגדרת פרופיל ה-Git של השרת הווירטואלי
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # משיכת עדכונים אחרונים כדי למנוע התנגשויות (Conflicts) בין ריצות
+          git pull origin main --rebase || echo "No changes to pull"
+          
+          # בדיקה האם הקובץ קיים והאם הוא מכיל מידע חדש
+          if [ -f shadow_results.csv ]; then
+            git add shadow_results.csv
+            # ביצוע Commit רק אם יש שינוי אמיתי בקובץ (מונע שגיאות כשהטבלה ריקה)
+            git diff --staged --quiet || git commit -m "📈 Auto-update shadow results [skip ci]"
+            git push origin main
+          else
+            echo "shadow_results.csv not found, skipping commit."
+          fi
+
+      - name: 💾 Save Shadow Mode CSV Logs (Artifact Backup)
         uses: actions/upload-artifact@v4
         if: always()
         with:
