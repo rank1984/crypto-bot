@@ -103,33 +103,40 @@ def scan_coin(symbol: str) -> Optional[dict]:
         ema20=ind["ema20"], ema50=ind["ema50"], price=last_price,
     )
 
-    # Entry Engine
+    # Entry Engine — כולל Flow data
     entry_signal = evaluate_entry(
         coin={**mom, **vol, **ind, "rs_1h": rs["rs_1h"], "rs_4h": rs["rs_4h"],
-              "vwap": ind["vwap"], "ema20": ind["ema20"], "rsi_14": ind["rsi_14"], "rvol": vol["rvol"]},
+              "vwap": ind["vwap"], "ema20": ind["ema20"], "rsi_14": ind["rsi_14"], "rvol": vol["rvol"],
+              "flow_score":      flow["flow_score"],
+              "pre_score":       pre["pre_score"],
+              "oi_change":       flow["oi_change"],
+              "is_compressed":   flow["is_compressed"],
+              "whale_detected":  flow["whale_detected"],
+              "oi_source":       flow.get("oi_source", "MISSING"),
+              },
         df_5m=df_5m, btc_mom_5m=0.0,
     )
 
     return {
-        "symbol":       symbol,
-        "price":        last_price,
-        "momentum_3m":  mom["momentum_3m"],
-        "momentum_5m":  mom["momentum_5m"],
-        "momentum_15m": mom["momentum_15m"],
-        "momentum_1h":  mom["momentum_1h"],
-        "rvol":         vol["rvol"],
-        "vol_accel":    vol["vol_accel"],
+        "symbol":        symbol,
+        "price":         last_price,
+        "momentum_3m":   mom["momentum_3m"],
+        "momentum_5m":   mom["momentum_5m"],
+        "momentum_15m":  mom["momentum_15m"],
+        "momentum_1h":   mom["momentum_1h"],
+        "rvol":          vol["rvol"],
+        "vol_accel":     vol["vol_accel"],
         "vol_explosion": vol.get("vol_explosion", False),
         "vol_surge_score": vol.get("vol_surge_score", 0.0),
         "dollar_volume": vol["dollar_volume"],
-        "vwap":         ind["vwap"],
-        "vwap_dist":    ind["vwap_dist"],
-        "ema20":        ind["ema20"],
-        "ema50":        ind["ema50"],
-        "rsi_14":       ind["rsi_14"],
-        "atr_14":       ind["atr_14"],
-        "rs_1h":        rs["rs_1h"],
-        "rs_4h":        rs["rs_4h"],
+        "vwap":          ind["vwap"],
+        "vwap_dist":     ind["vwap_dist"],
+        "ema20":         ind["ema20"],
+        "ema50":         ind["ema50"],
+        "rsi_14":        ind["rsi_14"],
+        "atr_14":        ind["atr_14"],
+        "rs_1h":         rs["rs_1h"],
+        "rs_4h":         rs["rs_4h"],
         "freshness_score": fs,
         "momentum_score":  ms,
         "breakout_score":  bs,
@@ -242,10 +249,18 @@ def rank_universe(symbols: list[str]) -> list[dict]:
 
     log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters (rvol_fail={cnt['rvol']} hard_fail={cnt['hard']})")
 
-    results.sort(
-        key=lambda x: x.get("flow_score", 0) * 0.50 + x.get("pre_score", 0) * 0.50,
-        reverse=True
-    )
+    # דירוג מורכב חלופי
+    def _rank_score(x):
+        return (
+            x.get("flow_score",    0) * 0.30 +
+            x.get("pre_score",     0) * 0.25 +
+            x.get("final_score",   0) * 0.20 +
+            x.get("probability",   0) * 0.15 +
+            (20 if x.get("entry_decision") == "BUY"     else 0) +
+            (8  if x.get("signal")         == "PREPARE" else 0)
+        )
+    
+    results.sort(key=_rank_score, reverse=True)
 
     # dedup — מטבע לא יופיע פעמיים
     seen, unique = set(), []
