@@ -1,7 +1,3 @@
-"""
-CRYPTO-BOT Elite — Ranking Engine
-מריץ pipeline מלא על כל מטבע ומחזיר Top N.
-"""
 import pandas as pd
 from typing import Optional
 
@@ -103,7 +99,6 @@ def scan_coin(symbol: str) -> Optional[dict]:
         ema20=ind["ema20"], ema50=ind["ema50"], price=last_price,
     )
 
-   # 1. בתוך scan_coin - העברת symbol ל-Entry Engine כדי לתקן את ה-UNK (סעיף 4)
     # Entry Engine — כולל Flow data ו-symbol
     entry_signal = evaluate_entry(
         coin={**mom, **vol, **ind, "rs_1h": rs["rs_1h"], "rs_4h": rs["rs_4h"],
@@ -272,20 +267,32 @@ def rank_universe(symbols: list[str]) -> list[dict]:
             unique.append(r)
     results = unique
 
-    top = [r for r in results if r["final_score"] >= min_threshold][:TOP_N]
+    top = []
+    # FIX: סעיפים 1+3: לא לסנן BUY, ולהדפיס למה מטבע נפסל
+    for r in results:
+        is_buy = r.get("entry_decision") == "BUY"
+        passes_thresh = r.get("final_score", 0) >= min_threshold
+        
+        if is_buy or passes_thresh:
+            top.append(r)
+        else:
+            # נדפיס סיבת פסילה למטבעות שהיו קרובים (כדי לא להספים את הלוג ב-100 מטבעות זבל)
+            if r.get("flow_score", 0) >= 40 or r.get("pre_score", 0) >= 40:
+                log.info(f"Rejected {r['symbol']}: FLOW={r.get('flow_score',0)} PRE={r.get('pre_score',0)} FINAL={r.get('final_score',0)} Threshold={min_threshold} -> rejected")
+
+    # FIX: סעיף 2: תמיד לשלוח לפחות 5 מועמדים, גם אם אין BUY והם לא עברו רף
+    if len(top) < 5:
+        log.info(f"Only {len(top)} passed threshold/BUY. Forcing top 5...")
+        for r in results:
+            if r not in top:
+                top.append(r)
+            if len(top) >= 5:
+                break
+
+    top = top[:TOP_N]
 
     if not top:
-        # אבחון מפורט
-        if results:
-            scores = [r["final_score"] for r in results[:10]]
-            rvols  = [r.get("rvol",0) for r in results[:5]]
-            log.warning(
-                f"No coins above threshold={min_threshold}. "
-                f"Top scores: {[round(s,1) for s in scores]} | "
-                f"Top RVOLs: {[round(r,2) for r in rvols]}"
-            )
-        else:
-            log.warning("0 coins scored — all filtered by RVOL or hard filters")
+        log.warning("0 coins scored — all filtered by RVOL or hard filters")
 
     for coin in top:
         try:
