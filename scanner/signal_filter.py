@@ -33,11 +33,12 @@ def classify_signal(c: dict) -> str:
     oi_growing  = oi_change > 2.0 or flow_parts.get("oi", 0) >= 10
     rs_positive = rs_1h > 0
 
-    # BUY: טריגר טכני + איכות מינימלית
+    # BUY: טריגר טכני מאושר
     if dec == "BUY":
-        if flow >= 60 and pre >= 50:
-            return "BUY"
-        return "WATCH"  # downgrade
+    # Downgrade רק אם שני הציונים ממש גרועים
+    if flow < 30 and pre < 30:
+        return "WATCH"
+    return "BUY"
 
     # ── PREPARE: 3 מתוך 4 (לא חובה כולם) ──────────────────────────────────
     prepare_factors = [
