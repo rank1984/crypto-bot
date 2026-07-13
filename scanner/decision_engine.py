@@ -14,9 +14,9 @@ log = get_logger(__name__)
 
 _REGIME_THRESHOLDS = {
     "TRENDING_BULL": {"flow": 50, "pre": 35, "rvol": 0.8, "rating_min": "B"},
-    "ALTSEASON":     {"flow": 45, "pre": 30, "rvol": 0.7, "rating_min": "B"},
-    "RANGE":         {"flow": 55, "pre": 40, "rvol": 0.8, "rating_min": "B+"},
-    "RISK_OFF":      {"flow": 65, "pre": 55, "rvol": 1.2, "rating_min": "A"},
+    "ALTSEASON":      {"flow": 45, "pre": 30, "rvol": 0.7, "rating_min": "B"},
+    "RANGE":          {"flow": 55, "pre": 40, "rvol": 0.8, "rating_min": "B+"},
+    "RISK_OFF":       {"flow": 65, "pre": 55, "rvol": 1.2, "rating_min": "A"},
     "TRENDING_BEAR": {"flow": 75, "pre": 65, "rvol": 1.5, "rating_min": "A+"},
 }
 
@@ -73,7 +73,7 @@ def decide(coin: dict) -> dict:
 
     if rs_1h > 1.5:   score += 7
     elif rs_1h > 0:   score += 3
-    if whale:         score += 3
+    if whale:          score += 3
 
     if entry_dec == "BUY": score += 5
     if catalyst:           score += 5
@@ -81,11 +81,11 @@ def decide(coin: dict) -> dict:
     multipliers = {"TRENDING_BULL": 1.0, "ALTSEASON": 1.05, "RANGE": 1.0, "RISK_OFF": 0.85, "TRENDING_BEAR": 0.70}
     score = min(100, int(score * multipliers.get(regime, 1.0)))
 
-    if score >= 90:   rating = "A+"
+    if score >= 90:    rating = "A+"
     elif score >= 75: rating = "A"
     elif score >= 60: rating = "B+"
     elif score >= 45: rating = "B"
-    else:             rating = "C"
+    else:              rating = "C"
 
     positives = []
     if vol_exp:        positives.append("💥 פיצוץ נפח")
@@ -133,8 +133,8 @@ def decide_batch(coins: list[dict]) -> list[dict]:
         entry_dec = c.get("entry_decision", "NO")
         
         # 2. קביעת 4 רמות הפעולה (Decision Levels)
-        # ירדנו ל-75 - אם יש BUY טכני והמטבע חזק, אנחנו רוצים התראה!
-        if ai_score >= 75 and entry_dec == "BUY":
+        # תיקון הבאג: אם המנוע הטכני נתן אישור כניסה מפורש (BUY) - אנחנו מכבדים אותו מיד!
+        if entry_dec == "BUY":
             c["decision"] = "BUY NOW"
             c["signal"] = "BUY"
         elif ai_score >= 70:
