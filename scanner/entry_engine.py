@@ -92,11 +92,13 @@ def detect_setup(
 
     return "", {}
 
-    def check_trigger(
+# ─── 3. Trigger Check ─────────────────────────────────────────────────────────
+
+def check_trigger(
     setup_type: str,
     ctx:        dict,
     df_5m:      pd.DataFrame,
-     ) -> tuple[bool, float]:
+) -> tuple[bool, float]:
     if df_5m is None or len(df_5m) < 3:
         return False, 0.0
 
@@ -131,29 +133,6 @@ def detect_setup(
         vwap = ctx.get("vwap", 0)
         # תיקון: VWAP reclaim - הסר דרישת ווליום
         if close > vwap:
-            return True, close
-
-    elif setup_type == "DIP_BUY":
-        green = close > float(last["open"])
-        if green:
-            return True, close
-
-        return False, 0.0
-
-        breakout = close > cons_high
-        candle_range = high - low
-        upper_wick   = high - close
-        no_rejection = (upper_wick / candle_range < 0.5) if candle_range > 0 else True
-        vol_surge = vol > avg_vol * 1.2
-
-        if breakout and no_rejection and vol_surge:
-            entry = round(cons_high * 1.001, 8)
-            return True, entry
-
-    elif setup_type == "VWAP_RECLAIM":
-        vwap = ctx.get("vwap", 0)
-        vol_surge = vol > avg_vol * 1.1
-        if close > vwap and vol_surge:
             return True, close
 
     elif setup_type == "DIP_BUY":
