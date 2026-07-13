@@ -32,6 +32,13 @@ signal.signal(signal.SIGTERM, _handle_signal)
 def run_scan() -> None:
     log.info("── Scan started ──────────────────────────────────────")
 
+    # ── 0. Init Databases (Shadow DB must load BEFORE the scan) ───────────────
+    try:
+        from tools.shadow_mode import init_shadow_db
+        init_shadow_db()
+    except Exception as e:
+        log.warning(f"Shadow DB init error: {e}")
+
     # ── 1. Universe ───────────────────────────────────────────────────────────
     if USE_DYNAMIC_UNIVERSE:
         log.info("Mode: Dynamic Universe")
@@ -108,8 +115,7 @@ def run_scan() -> None:
 
     # ── 7. Shadow Mode — שמור הכל בשקט ──────────────────────────────────────
     try:
-        from tools.shadow_mode import save_shadow_signal, init_shadow_db, update_forward_returns
-        init_shadow_db()
+        from tools.shadow_mode import save_shadow_signal, update_forward_returns
         for c in top:
             save_shadow_signal(c, c.get("signal", "IGNORE"))
         update_forward_returns()   # מעדכן returns מסריקות קודמות
@@ -125,6 +131,7 @@ def run_scan() -> None:
             save_score(c, c.get("rating", "C"))
     except Exception as e:
         log.debug(f"Score history skipped: {e}")
+        
     for i, c in enumerate(top, 1):
         log.info(
             f"  {i}. {c['symbol']:<12} "
