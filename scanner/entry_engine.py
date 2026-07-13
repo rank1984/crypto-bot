@@ -121,6 +121,35 @@ def check_trigger(
         if breakout and no_rejection and vol_surge:
             entry = round(cons_high * 1.001, 8)
             return True, entry
+        
+        # ✨ תיקון: אם הפריצה כמעט מושלמת – תן BUY, לא WAIT
+        if breakout and no_rejection:
+            entry = round(cons_high * 1.001, 8)
+            return True, entry
+
+    elif setup_type == "VWAP_RECLAIM":
+        vwap = ctx.get("vwap", 0)
+        vol_surge = vol > avg_vol * 1.1
+        # ✨ תיקון: הסר את דרישת הווליום המוגבר – VWAP reclaim חזק מספיק
+        if close > vwap:
+            return True, close
+
+    elif setup_type == "DIP_BUY":
+        green = close > float(last["open"])
+        if green:
+            return True, close
+
+    return False, 0.0
+
+        breakout = close > cons_high
+        candle_range = high - low
+        upper_wick   = high - close
+        no_rejection = (upper_wick / candle_range < 0.5) if candle_range > 0 else True
+        vol_surge = vol > avg_vol * 1.2
+
+        if breakout and no_rejection and vol_surge:
+            entry = round(cons_high * 1.001, 8)
+            return True, entry
 
     elif setup_type == "VWAP_RECLAIM":
         vwap = ctx.get("vwap", 0)
