@@ -8,9 +8,9 @@ CRYPTO-BOT Elite — Signal Filter
     BUY     — פריצה מאושרת
 
 קריטריונים קשיחים:
-    PREPARE דורש compression + flow>60 + OI עולה + RS חיובי
-    בלי כולם — WATCH לכל היותר
-    WATCH חלש (flow<40, אין compression, אין OI) — IGNORE
+    PREPARE דורש לפחות 3 מתוך 4 פקטורי הצטברות (Compression, Flow>55, OI עולה, RS חיובי).
+    בלי כולם — WATCH לכל היותר.
+    WATCH חלש (flow<40, אין compression, אין OI) — IGNORE.
 """
 from utils.logger import get_logger
 log = get_logger(__name__)
@@ -39,8 +39,14 @@ def classify_signal(c: dict) -> str:
             return "BUY"
         return "WATCH"  # downgrade
 
-    # PREPARE: הצטברות אמיתית
-    if compressed and flow >= 55 and oi_growing and rs_positive and pre >= 45:
+    # ── PREPARE: 3 מתוך 4 (לא חובה כולם) ──────────────────────────────────
+    prepare_factors = [
+        compressed,
+        flow >= 55,
+        oi_growing,
+        rs_positive,
+    ]
+    if flow >= 55 and sum(prepare_factors) >= 3:
         return "PREPARE"
 
     # WATCH: יש משהו מינימלי
