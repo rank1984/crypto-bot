@@ -35,10 +35,10 @@ def classify_signal(c: dict) -> str:
 
     # BUY: טריגר טכני מאושר
     if dec == "BUY":
-    # Downgrade רק אם שני הציונים ממש גרועים
-    if flow < 30 and pre < 30:
-        return "WATCH"
-    return "BUY"
+        # Downgrade רק אם שני הציונים ממש גרועים
+        if flow < 30 and pre < 30:
+            return "WATCH"
+        return "BUY"
 
     # ── PREPARE: 3 מתוך 4 (לא חובה כולם) ──────────────────────────────────
     prepare_factors = [
