@@ -325,7 +325,7 @@ def run_scan() -> None:
             quality = getattr(t, 'quality', 0)
             log.info(f"  {t.symbol} | Entry={t.entry_price:.4f} | State={t.state} | "
                      f"SL={t.sl:.4f} | TP1={t.tp1:.4f} | TP2={t.tp2:.4f} | "
-                     f"Health={t.health:.0f} | Quality={quality:.0f}")
+                   f"Health={getattr(t, 'health', 0):.0f} | Quality={quality:.0f}"
 
     # שחזור max_trades
     if original_max is not None:
