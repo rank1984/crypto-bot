@@ -98,11 +98,23 @@ def run_scan() -> None:
         send_telegram([], stats=_diag)
         return
 
-    # ── Market Health & Event Check ─────────────────────────────────────
-    oi_change_total = _diag.get("total_oi_change", 0) if _diag else 0
-    regime = _diag.get("regime", "RANGE") if _diag else "RANGE"
-    funding_rate = _diag.get("avg_funding", 0.0) if _diag else 0.0
-    liquidations = _diag.get("total_liquidations", 0.0) if _diag else 0.0
+       # ── Market Health & Event Check ─────────────────────────────────────
+    if _diag is not None:
+        if hasattr(_diag, 'get'):          # מילון
+            oi_change_total = _diag.get("total_oi_change", 0)
+            regime = _diag.get("regime", "RANGE")
+            funding_rate = _diag.get("avg_funding", 0.0)
+            liquidations = _diag.get("total_liquidations", 0.0)
+        else:                               # אובייקט ScanStats
+            oi_change_total = getattr(_diag, "total_oi_change", 0)
+            regime = getattr(_diag, "regime", "RANGE")
+            funding_rate = getattr(_diag, "avg_funding", 0.0)
+            liquidations = getattr(_diag, "total_liquidations", 0.0)
+    else:
+        oi_change_total = 0
+        regime = "RANGE"
+        funding_rate = 0.0
+        liquidations = 0.0
 
     news_score = get_news_score()
     market_health = get_market_health(
