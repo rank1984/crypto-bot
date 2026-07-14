@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Smart Exit Engine
+CRYPTO-BOT Elite — Smart Exit Engine v2.0
 
 "הכסף הגדול מגיע מהיכולת להחזיק מנצחים, לא רק למצוא אותם."
 
@@ -19,13 +19,14 @@ Exit Score 0–100:
 import pandas as pd
 import numpy as np
 from utils.logger import get_logger
+from typing import Optional, Tuple
 
 log = get_logger(__name__)
 
 
 # ─── A. CVD Reversal ──────────────────────────────────────────────────────────
 
-def _cvd_reversal(df_5m: pd.DataFrame) -> tuple[bool, float]:
+def _cvd_reversal(df_5m: pd.DataFrame) -> Tuple[bool, float]:
     if df_5m is None or len(df_5m) < 15:
         return False, 0.0
 
@@ -49,7 +50,7 @@ def _cvd_reversal(df_5m: pd.DataFrame) -> tuple[bool, float]:
 
 # ─── B. OI Drop ───────────────────────────────────────────────────────────────
 
-def _oi_dropping(oi_change_pct: float) -> tuple[bool, float]:
+def _oi_dropping(oi_change_pct: float) -> Tuple[bool, float]:
     if oi_change_pct < -5.0:
         return True, 20.0
     if oi_change_pct < -2.0:
@@ -61,7 +62,7 @@ def _oi_dropping(oi_change_pct: float) -> tuple[bool, float]:
 
 # ─── C. RS Breakdown ──────────────────────────────────────────────────────────
 
-def _rs_breakdown(rs_1h: float, rs_4h: float) -> tuple[bool, float]:
+def _rs_breakdown(rs_1h: float, rs_4h: float) -> Tuple[bool, float]:
     both_negative = rs_1h < 0 and rs_4h < 0
     one_negative  = rs_1h < -1.0 or rs_4h < -1.0
 
@@ -75,7 +76,7 @@ def _rs_breakdown(rs_1h: float, rs_4h: float) -> tuple[bool, float]:
 
 # ─── D. EMA20 1H Break ────────────────────────────────────────────────────────
 
-def _ema20_break(df_1h: pd.DataFrame) -> tuple[bool, float]:
+def _ema20_break(df_1h: pd.DataFrame) -> Tuple[bool, float]:
     if df_1h is None or len(df_1h) < 22:
         return False, 0.0
 
@@ -101,7 +102,7 @@ def _ema20_break(df_1h: pd.DataFrame) -> tuple[bool, float]:
 
 # ─── E. Volume Exhaustion ─────────────────────────────────────────────────────
 
-def _volume_exhaustion(df_5m: pd.DataFrame) -> tuple[bool, float]:
+def _volume_exhaustion(df_5m: pd.DataFrame) -> Tuple[bool, float]:
     if df_5m is None or len(df_5m) < 20:
         return False, 0.0
 
@@ -122,7 +123,7 @@ def _volume_exhaustion(df_5m: pd.DataFrame) -> tuple[bool, float]:
 
 # ─── F. Whale Distribution ────────────────────────────────────────────────────
 
-def _whale_distribution(df_5m: pd.DataFrame) -> tuple[bool, float]:
+def _whale_distribution(df_5m: pd.DataFrame) -> Tuple[bool, float]:
     if df_5m is None or len(df_5m) < 10:
         return False, 0.0
 
@@ -140,9 +141,35 @@ def _whale_distribution(df_5m: pd.DataFrame) -> tuple[bool, float]:
     return whale_dist, min(10.0, distribution_score)
 
 
+# ─── G. Trailing Stop (ATR-based) ─────────────────────────────────────────────
+
+def update_trailing_stop_atr(df_5m: pd.DataFrame, current_stop: float, atr_mult: float = 2.0) -> Optional[float]:
+    """
+    מעדכן Trailing Stop דינמי לפי ATR.
+    מחזיר סטופ חדש (אם השתפר) או None.
+    """
+    if df_5m is None or len(df_5m) < 15:
+        return None
+
+    # חישוב ATR פשוט (14 נרות)
+    high = df_5m["high"].iloc[-14:]
+    low  = df_5m["low"].iloc[-14:]
+    close_prev = df_5m["close"].shift(1).iloc[-14:]
+    tr = pd.concat([high - low, (high - close_prev).abs(), (low - close_prev).abs()], axis=1).max(axis=1)
+    atr = float(tr.mean())
+
+    # Highest High
+    highest = float(df_5m["high"].iloc[-10:].max())
+    new_stop = highest - atr * atr_mult
+
+    if new_stop > current_stop:
+        return new_stop
+    return None
+
+
 # ─── Exit Decision ────────────────────────────────────────────────────────────
 
-def _exit_decision(score: float) -> tuple[str, str, str]:
+def _exit_decision(score: float) -> Tuple[str, str, str]:
     """מחזיר (signal, emoji, description)"""
     if score >= 61:
         return "EXIT",  "🔴", "צא מהפוזיציה"
@@ -160,6 +187,8 @@ def calc_exit_score(
     rs_4h:          float = 0.0,
     oi_change_pct:  float = 0.0,
     current_gain_pct: float = 0.0,   # % רווח נוכחי מהכניסה
+    flow_score:     float = 50.0,    # current flow score
+    market_health:  float = 70.0,    # Market Health 0-100
 ) -> dict:
     """
     מחשב Exit Score ומחזיר החלטת יציאה.
@@ -173,17 +202,27 @@ def calc_exit_score(
 
     total = cvd_s + oi_s + rs_s + ema_s + vol_s + whl_s
 
-    # אם ברווח גדול — להחמיר קצת (לא להחזיר רווחים)
+    # Flow weak → תוספת
+    if flow_score < 40:
+        total += 10
+    if flow_score < 25:
+        total += 15
+
+    # Market Health רע → תוספת
+    if market_health < 50:
+        total += 10
+    if market_health < 30:
+        total += 20  # Emergency Exit
+
+    # רווח גדול → החמרה
     if current_gain_pct >= 30 and total >= 25:
-        total += 10   # ביותר רווח → יותר זהירים
+        total += 10
     if current_gain_pct >= 50 and total >= 20:
         total += 15
 
     total = round(min(100.0, total), 1)
 
     signal, emoji, desc = _exit_decision(total)
-
-    # confidence = ההיפך של exit score (כמה בטוחים שצריך לצאת)
     confidence = round(min(100.0, total * 1.2), 1)
 
     reasons = []
@@ -193,6 +232,8 @@ def calc_exit_score(
     if ema_break: reasons.append("EMA20 1H נשבר — שינוי מבנה")
     if vol_exh:   reasons.append("Volume מתייבש")
     if whale_dist: reasons.append("Whale Distribution מזוהה")
+    if flow_score < 40: reasons.append("Flow נחלש")
+    if market_health < 50: reasons.append("Market Health ירוד")
 
     return {
         "exit_signal":   signal,
