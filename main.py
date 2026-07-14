@@ -1,10 +1,5 @@
 """
 CRYPTO-BOT Elite — Main Loop (v2.0 with Trade Lifecycle)
-
-Environment variables:
-    TELEGRAM_TOKEN        — bot token
-    TELEGRAM_CHAT_ID      — chat/channel ID
-    USE_DYNAMIC_UNIVERSE  — true/false (default: true)
 """
 import time, signal, sys, argparse
 
@@ -35,10 +30,38 @@ from scanner.trade_manager import TradeManager
 trade_mgr = TradeManager(portfolio_capital=500.0, max_trades=2)
 
 
+def _trade_open_message(trade) -> str:
+    """צור הודעת פתיחת עסקה לטלגרם."""
+    return (
+        f"🟢 BUY {trade.symbol}\n"
+        f"Entry: {trade.entry_price:.4f}\n"
+        f"SL: {trade.sl:.4f}\n"
+        f"TP1: {trade.tp1:.4f}\n"
+        f"TP2: {trade.tp2:.4f}\n"
+        f"Size: {trade.position_size:.4f} ({trade.initial_capital:.2f}$)"
+    )
+
+def _trade_close_message(trade, action: dict) -> str:
+    """צור הודעת סגירת עסקה."""
+    return (
+        f"🔴 EXIT {trade.symbol} @ {action['price']:.4f}\n"
+        f"Reason: {action['reason']}\n"
+        f"PnL: {action['pnl']:.2f}$ ({action['pnl_pct']:.2f}%)"
+    )
+
+def _trade_partial_message(trade, action: dict) -> str:
+    """צור הודעת מימוש חלקי."""
+    return (
+        f"🟡 TP {action.get('tp','PARTIAL')} {trade.symbol}\n"
+        f"Price: {action['price']:.4f}\n"
+        f"Sold: {action['ratio']*100:.0f}%"
+    )
+
+
 def run_scan() -> None:
     log.info("── Scan started ──────────────────────────────────────")
 
-    # ── 0. Init Databases (Shadow DB must load BEFORE the scan) ───────────────
+    # ── 0. Init Databases ─────────────────────────────────────────────────────
     try:
         from tools.shadow_mode import init_shadow_db
         init_shadow_db()
@@ -70,19 +93,19 @@ def run_scan() -> None:
         send_telegram([], stats=_diag)
         return
 
-    # ── 3. Decision Engine — החלטה אחת מרכזית ──────────────────────────────
+    # ── 3. Decision Engine ────────────────────────────────────────────────────
     from scanner.decision_engine import decide_batch
     top = decide_batch(top)
 
-    # ── 4. Quality Gate (legacy - מנוטרל) ───────────────────────────────────
+    # ── 4. Quality Gate (legacy) ──────────────────────────────────────────────
     from scanner.quality_gate import apply_quality_gate_all
     top = apply_quality_gate_all(top)
 
-    # ── 5. Signal Filter ─────────────────────────────────────────────────────
+    # ── 5. Signal Filter ──────────────────────────────────────────────────────
     from scanner.signal_filter import filter_coins
     filtered = filter_coins(top)
 
-    # debug — מה יש לפני הסינון
+    # debug
     log.info(f"TOP COINS BEFORE FILTER = {len(top)}")
     for c in top[:10]:
         log.info(
@@ -103,51 +126,59 @@ def run_scan() -> None:
     )
 
     # ── 6. Trade Management ───────────────────────────────────────────────────
-    # 6a. פתיחת עסקאות חדשות
+    # 6a. Open new trades
     for c in filtered["buy"]:
-        # מנוע כניסה השיג BUY, ננסה לפתוח עסקה
         if trade_mgr.can_open_trade():
-            # נשתמש במחיר נוכחי של המטבע (מ-c)
+            # extract entry data from coin dict (filled by entry_engine)
+            entry_price = c.get("entry_price", 0)
+            sl = c.get("sl", 0)
+            tp1 = c.get("tp1", 0)
+            tp2 = c.get("tp2", 0)
             current_price = c.get("last_price", 0)
-            if current_price == 0:
-                # fallback – fetch candle
+
+            # fallback: if missing, get from candle
+            if entry_price == 0 or current_price == 0:
                 df_5m = get_candles(c["symbol"], "5m", limit=5)
                 if df_5m is not None and len(df_5m) > 0:
                     current_price = float(df_5m["close"].iloc[-1])
-            # signal dict עבור open_trade
+                    if entry_price == 0:
+                        entry_price = current_price
+            if sl == 0:
+                sl = round(entry_price * 0.98, 8)
+            if tp1 == 0:
+                tp1 = round(entry_price * 1.04, 8)
+            if tp2 == 0:
+                tp2 = round(entry_price * 1.10, 8)
+
             signal = {
                 "symbol": c["symbol"],
-                "entry": c.get("entry_price", current_price),
-                "sl": c.get("sl", current_price * 0.98),
-                "tp1": c.get("tp1", current_price * 1.04),
-                "tp2": c.get("tp2", current_price * 1.10),
+                "entry": entry_price,
+                "sl": sl,
+                "tp1": tp1,
+                "tp2": tp2,
                 "setup_type": c.get("setup_type", "UNKNOWN"),
             }
-            trade = trade_mgr.open_trade(signal, current_price)
-            # שליחת הודעה
-            from notifier.sender import send_trade_open
-            send_trade_open(trade)
+            trade = trade_mgr.open_trade(signal, entry_price)
+            if trade:
+                # send notification via existing sender (message string)
+                msg = _trade_open_message(trade)
+                send_telegram([{"msg": msg}])  # use a simple wrapper
         else:
             log.info(f"Max trades reached, {c['symbol']} put on WATCH (no open slot)")
 
-    # 6b. עדכון עסקאות קיימות
+    # 6b. Update existing trades
     active_trades = trade_mgr.get_active_trades()
     for trade in active_trades:
         symbol = trade.symbol
-        # fetch latest data
         df_5m = get_candles(symbol, "5m", limit=30)
         df_1h = get_candles(symbol, "1hour", limit=30)
         if df_5m is None or len(df_5m) == 0:
             continue
         current_price = float(df_5m["close"].iloc[-1])
 
-        # coin_data for exit engine
-        # need: rs_1h, rs_4h, oi_change, vwap, ema20, etc.
-        # we can get from the ranking dict (if we kept it) or recompute
-        # For now simplified: fetch from precomputed 'top' list if still there
+        # coin_data: try to get from top list, else minimal
         coin_data = next((x for x in top if x["symbol"] == symbol), None)
         if not coin_data:
-            # fallback – minimal data from candles
             coin_data = {
                 "symbol": symbol,
                 "rs_1h": 0.0,
@@ -155,24 +186,23 @@ def run_scan() -> None:
                 "oi_change": 0.0,
             }
 
-        # update trade
         action = trade_mgr.update(
             symbol=symbol,
             current_price=current_price,
             coin_data=coin_data,
             df_5m=df_5m,
             df_1h=df_1h,
-            btc_momentum_5m=0.0  # can compute from BTC candle
+            btc_momentum_5m=0.0
         )
         if action:
             if action["action"] == "SELL_PARTIAL":
-                from notifier.sender import send_trade_partial
-                send_trade_partial(trade, action)
+                msg = _trade_partial_message(trade, action)
+                send_telegram([{"msg": msg}])
             elif action["action"] == "SELL_ALL":
-                from notifier.sender import send_trade_close
-                send_trade_close(trade, action)
+                msg = _trade_close_message(trade, action)
+                send_telegram([{"msg": msg}])
 
-    # ── 7. Send Telegram summary ─────────────────────────────────────────────
+    # ── 7. Telegram summary ───────────────────────────────────────────────────
     if filtered["has_quality"]:
         send_telegram(top, filtered=filtered, stats=_diag, all_coins=top)
     else:
@@ -214,7 +244,6 @@ def run_scan() -> None:
             f"entry={c.get('entry_decision','NO')}"
         )
 
-    # print active trades
     active_now = trade_mgr.get_active_trades()
     if active_now:
         log.info("── Active Trades ──────────────────────────────────────────")
