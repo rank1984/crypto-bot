@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Main Loop (v3.0 with Circuit Breaker, Trade Quality, Trade Replay)
+CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, READY State, Circuit Breaker)
 """
 import time, signal, sys, argparse
 
@@ -19,6 +19,9 @@ from scanner.event_engine     import trading_disabled, get_event_warning
 from portfolio.circuit_breaker import CircuitBreaker
 from scanner.trade_quality     import calc_trade_quality
 from storage.trade_replay      import init_replay_db, save_snapshot
+
+# ── Live Monitor ──────────────────────────────────────────────────────────────
+from monitor.live_monitor     import LiveMonitor
 
 log = get_logger("main")
 
@@ -43,6 +46,17 @@ circuit_breaker = CircuitBreaker()
 
 # ── Init Trade Replay DB ──────────────────────────────────────────────────────
 init_replay_db()
+
+# ── Live Monitor ──────────────────────────────────────────────────────────────
+def _send_telegram_safe(msg: str):
+    """שליחת הודעה לטלגרם בצורה בטוחה."""
+    try:
+        send_telegram([{"msg": msg}])
+    except Exception as e:
+        log.error(f"Telegram send failed: {e}")
+
+live_monitor = LiveMonitor(trade_mgr, _send_telegram_safe)
+live_monitor.start()
 
 
 def _trade_open_message(trade) -> str:
@@ -73,6 +87,21 @@ def _trade_partial_message(trade, action: dict) -> str:
         f"🟡 TP {action.get('tp','PARTIAL')} {trade.symbol}\n"
         f"Price: {action['price']:.4f}\n"
         f"Sold: {action['ratio']*100:.0f}%"
+    )
+
+def _ready_alert_message(coin: dict) -> str:
+    """צור הודעת READY."""
+    trigger = coin.get("trigger_price", coin.get("entry_price", 0))
+    prob = coin.get("probability", 0)
+    flow = coin.get("flow_score", 0)
+    mh = coin.get("market_health", 70)
+    dist = coin.get("trigger_distance_pct", 0)
+    return (
+        f"🟢 READY {coin['symbol']}\n"
+        f"Trigger: {trigger:.5f} ({(1+dist/100)*trigger if trigger else 0:.5f})\n"
+        f"Distance: {dist:.2f}%\n"
+        f"Probability: {prob:.1f}%\n"
+        f"Flow: {flow:.0f} | Market Health: {mh:.0f}"
     )
 
 
@@ -140,6 +169,10 @@ def run_scan() -> None:
         regime=regime
     )
     
+    # הוספת market_health לכל מטבע לשימוש ב-Ready
+    for c in top:
+        c["market_health"] = market_health
+    
     health_msg = f"Market Health: {market_health:.0f}/100 | News Score: {news_score} | Regime: {regime} | Circuit Breaker: {circuit_breaker.status()}"
     send_telegram([{"msg": health_msg}])
     
@@ -159,7 +192,7 @@ def run_scan() -> None:
     from scanner.quality_gate import apply_quality_gate_all
     top = apply_quality_gate_all(top)
 
-    # ── 5. Signal Filter ──────────────────────────────────────────────────────
+    # ── 5. Signal Filter (כולל READY) ────────────────────────────────────────
     from scanner.signal_filter import filter_coins
     filtered = filter_coins(top)
 
@@ -179,8 +212,23 @@ def run_scan() -> None:
         f"FILTER RESULT → "
         f"BUY={len(filtered['buy'])} "
         f"PREPARE={len(filtered['prepare'])} "
+        f"READY={len(filtered['ready'])} "
         f"WATCH={len(filtered['watch'])}"
     )
+
+    # ── Live Monitor: הוסף READY למעקב צמוד ──────────────────────────────────
+    for c in filtered.get("ready", []):
+        # וודא שיש trigger_price
+        if "trigger_price" not in c:
+            entry = c.get("entry_price", c.get("last_price", 0))
+            if entry > 0:
+                c["trigger_price"] = entry * 1.001  # BREAKOUT
+            else:
+                c["trigger_price"] = 0
+        live_monitor.add_to_watchlist(c)
+        # שלח התראת READY
+        msg = _ready_alert_message(c)
+        _send_telegram_safe(msg)
 
     # ── 6. Trade Management ───────────────────────────────────────────────────
     # 6a. Open new trades (רק אם Circuit Breaker מאפשר)
@@ -220,10 +268,9 @@ def run_scan() -> None:
                 }
                 trade = trade_mgr.open_trade(signal_data, entry_price)
                 if trade:
-                    # שמור Quality על הטרייד
                     trade.quality = quality
                     msg = _trade_open_message(trade)
-                    send_telegram([{"msg": msg}])
+                    _send_telegram_safe(msg)
             else:
                 log.info(f"Max trades reached, {c['symbol']} put on WATCH (no open slot)")
     else:
@@ -269,10 +316,10 @@ def run_scan() -> None:
         if action:
             if action["action"] == "SELL_PARTIAL":
                 msg = _trade_partial_message(trade, action)
-                send_telegram([{"msg": msg}])
+                _send_telegram_safe(msg)
             elif action["action"] == "SELL_ALL":
                 msg = _trade_close_message(trade, action)
-                send_telegram([{"msg": msg}])
+                _send_telegram_safe(msg)
                 # ── Circuit Breaker Update ────────────────────────────────────
                 circuit_breaker.update_on_close(action["pnl"], market_health)
 
@@ -360,6 +407,7 @@ def main() -> None:
             if not _running: break
             time.sleep(1)
 
+    live_monitor.stop()
     log.info("CRYPTO-BOT Elite stopped.")
     sys.exit(0)
 
