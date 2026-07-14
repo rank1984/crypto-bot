@@ -1,0 +1,9 @@
+    trigger_conf = min(100, prob * 0.6 + flow * 0.4)  # פשוט
+    return (
+        f"🟢 READY {coin['symbol']}\n"
+        f"Trigger: {trigger:.5f}\n"
+        f"Distance: {dist:.2f}%\n"
+        f"Probability: {prob:.1f}%\n"
+        f"Trigger Confidence: {trigger_conf:.0f}%\n"
+        f"Flow: {flow:.0f} | Market Health: {mh:.0f}"
+    )
