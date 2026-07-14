@@ -25,6 +25,7 @@ def classify_signal(c: dict) -> str:
 
     oi_growing  = oi_change > 2.0
     rs_positive = rs_1h > 0
+    oi_strong   = oi_change > 30.0   # OI חריג חיובי
 
     # BUY: טריגר טכני מאושר
     if dec == "BUY":
@@ -32,11 +33,11 @@ def classify_signal(c: dict) -> str:
             return "WATCH"
         return "BUY"
 
-       # READY: קרוב לטריגר, איכות גבוהה
+    # READY: קרוב לטריגר, איכות גבוהה
     ready_conditions = [
-        prob >= 40 if prob > 0 else True,   # הורדנו ל-40
+        prob >= 25 if prob > 0 else True,   # הורדנו ל-25
         dist_pct <= 0.5,
-        compressed or flow >= 45 or (oi_change > 1000),  # OI חריג = READY
+        compressed or flow >= 45 or oi_strong,  # OI חזק = READY גם בלי Compression
         market_health >= 60,
     ]
     if sum(ready_conditions) >= 3 and dist_pct <= 0.7:
@@ -53,7 +54,7 @@ def classify_signal(c: dict) -> str:
         return "PREPARE"
 
     # WATCH: מינימלי
-    if flow >= 45 or pre >= 45 or (prob >= 40 and dist_pct < 2.0):
+    if flow >= 45 or pre >= 45 or (prob >= 25 and dist_pct < 2.0):
         return "WATCH"
 
     return "IGNORE"
