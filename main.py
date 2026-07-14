@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Main Loop (v2.0 with Trade Lifecycle)
+CRYPTO-BOT Elite — Main Loop (v3.0 with Circuit Breaker, Trade Quality, Trade Replay)
 """
 import time, signal, sys, argparse
 
@@ -11,9 +11,14 @@ from notifier.sender          import send_telegram
 from utils.config             import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
 from utils.logger             import get_logger
 
-# ── הוספת ייבוא של News & Event Engines ──────────────────────────────────────
+# ── News & Event Engines ──────────────────────────────────────────────────────
 from scanner.news_engine      import get_market_health, get_news_score
 from scanner.event_engine     import trading_disabled, get_event_warning
+
+# ── Circuit Breaker, Trade Quality, Trade Replay ──────────────────────────────
+from portfolio.circuit_breaker import CircuitBreaker
+from scanner.trade_quality     import calc_trade_quality
+from storage.trade_replay      import init_replay_db, save_snapshot
 
 log = get_logger("main")
 
@@ -33,16 +38,24 @@ from scanner.trade_manager import TradeManager
 
 trade_mgr = TradeManager(portfolio_capital=500.0, max_trades=2)
 
+# ── Circuit Breaker ───────────────────────────────────────────────────────────
+circuit_breaker = CircuitBreaker()
+
+# ── Init Trade Replay DB ──────────────────────────────────────────────────────
+init_replay_db()
+
 
 def _trade_open_message(trade) -> str:
     """צור הודעת פתיחת עסקה לטלגרם."""
+    quality = getattr(trade, 'quality', 0)
     return (
         f"🟢 BUY {trade.symbol}\n"
         f"Entry: {trade.entry_price:.4f}\n"
         f"SL: {trade.sl:.4f}\n"
         f"TP1: {trade.tp1:.4f}\n"
         f"TP2: {trade.tp2:.4f}\n"
-        f"Size: {trade.position_size:.4f} ({trade.initial_capital:.2f}$)"
+        f"Size: {trade.position_size:.4f} ({trade.initial_capital:.2f}$)\n"
+        f"Quality: {quality:.0f}/100"
     )
 
 def _trade_close_message(trade, action: dict) -> str:
@@ -50,7 +63,8 @@ def _trade_close_message(trade, action: dict) -> str:
     return (
         f"🔴 EXIT {trade.symbol} @ {action['price']:.4f}\n"
         f"Reason: {action['reason']}\n"
-        f"PnL: {action['pnl']:.2f}$ ({action['pnl_pct']:.2f}%)"
+        f"PnL: {action['pnl']:.2f}$ ({action['pnl_pct']:.2f}%)\n"
+        f"Circuit Breaker: {circuit_breaker.status()}"
     )
 
 def _trade_partial_message(trade, action: dict) -> str:
@@ -73,7 +87,7 @@ def run_scan() -> None:
         log.warning(f"Shadow DB init error: {e}")
 
     # ── 1. Universe ───────────────────────────────────────────────────────────
-    btc_1h_mov = 0.0  # אתחול לטובת Market Health במידה ואנחנו על Static Universe
+    btc_1h_mov = 0.0
     
     if USE_DYNAMIC_UNIVERSE:
         log.info("Mode: Dynamic Universe")
@@ -98,14 +112,14 @@ def run_scan() -> None:
         send_telegram([], stats=_diag)
         return
 
-       # ── Market Health & Event Check ─────────────────────────────────────
+    # ── Market Health & Event Check ───────────────────────────────────────────
     if _diag is not None:
-        if hasattr(_diag, 'get'):          # מילון
+        if hasattr(_diag, 'get'):
             oi_change_total = _diag.get("total_oi_change", 0)
             regime = _diag.get("regime", "RANGE")
             funding_rate = _diag.get("avg_funding", 0.0)
             liquidations = _diag.get("total_liquidations", 0.0)
-        else:                               # אובייקט ScanStats
+        else:
             oi_change_total = getattr(_diag, "total_oi_change", 0)
             regime = getattr(_diag, "regime", "RANGE")
             funding_rate = getattr(_diag, "avg_funding", 0.0)
@@ -126,20 +140,16 @@ def run_scan() -> None:
         regime=regime
     )
     
-    health_msg = f"Market Health: {market_health:.0f}/100 | News Score: {news_score} | Regime: {regime}"
+    health_msg = f"Market Health: {market_health:.0f}/100 | News Score: {news_score} | Regime: {regime} | Circuit Breaker: {circuit_breaker.status()}"
     send_telegram([{"msg": health_msg}])
     
     # בדיקת אירועים קרובים
+    original_max = None
     if trading_disabled():
         log.warning("Trading disabled due to high impact event")
-        # שולח התראה ועוצר פתיחת עסקאות חדשות
         send_telegram([{"msg": get_event_warning()}])
-        
-        # ממשיך לנהל עסקאות קיימות (ללא פתיחת חדשות) ע"י מניעת פתיחה זמנית
         original_max = trade_mgr.max_trades
         trade_mgr.max_trades = 0
-    else:
-        original_max = None
 
     # ── 3. Decision Engine ────────────────────────────────────────────────────
     from scanner.decision_engine import decide_batch
@@ -153,7 +163,6 @@ def run_scan() -> None:
     from scanner.signal_filter import filter_coins
     filtered = filter_coins(top)
 
-    # debug
     log.info(f"TOP COINS BEFORE FILTER = {len(top)}")
     for c in top[:10]:
         log.info(
@@ -174,45 +183,51 @@ def run_scan() -> None:
     )
 
     # ── 6. Trade Management ───────────────────────────────────────────────────
-    # 6a. Open new trades
-    for c in filtered["buy"]:
-        if trade_mgr.can_open_trade():
-            # extract entry data from coin dict (filled by entry_engine)
-            entry_price = c.get("entry_price", 0)
-            sl = c.get("sl", 0)
-            tp1 = c.get("tp1", 0)
-            tp2 = c.get("tp2", 0)
-            current_price = c.get("last_price", 0)
+    # 6a. Open new trades (רק אם Circuit Breaker מאפשר)
+    if circuit_breaker.can_trade():
+        for c in filtered["buy"]:
+            if trade_mgr.can_open_trade():
+                entry_price = c.get("entry_price", 0)
+                sl = c.get("sl", 0)
+                tp1 = c.get("tp1", 0)
+                tp2 = c.get("tp2", 0)
+                current_price = c.get("last_price", 0)
 
-            # fallback: if missing, get from candle
-            if entry_price == 0 or current_price == 0:
-                df_5m = get_candles(c["symbol"], "5m", limit=5)
-                if df_5m is not None and len(df_5m) > 0:
-                    current_price = float(df_5m["close"].iloc[-1])
-                    if entry_price == 0:
-                        entry_price = current_price
-            if sl == 0:
-                sl = round(entry_price * 0.98, 8)
-            if tp1 == 0:
-                tp1 = round(entry_price * 1.04, 8)
-            if tp2 == 0:
-                tp2 = round(entry_price * 1.10, 8)
+                if entry_price == 0 or current_price == 0:
+                    df_5m = get_candles(c["symbol"], "5m", limit=5)
+                    if df_5m is not None and len(df_5m) > 0:
+                        current_price = float(df_5m["close"].iloc[-1])
+                        if entry_price == 0:
+                            entry_price = current_price
+                if sl == 0:
+                    sl = round(entry_price * 0.98, 8)
+                if tp1 == 0:
+                    tp1 = round(entry_price * 1.04, 8)
+                if tp2 == 0:
+                    tp2 = round(entry_price * 1.10, 8)
 
-            signal_data = {
-                "symbol": c["symbol"],
-                "entry": entry_price,
-                "sl": sl,
-                "tp1": tp1,
-                "tp2": tp2,
-                "setup_type": c.get("setup_type", "UNKNOWN"),
-            }
-            trade = trade_mgr.open_trade(signal_data, entry_price)
-            if trade:
-                # send notification via existing sender (message string)
-                msg = _trade_open_message(trade)
-                send_telegram([{"msg": msg}])  # use a simple wrapper
-        else:
-            log.info(f"Max trades reached, {c['symbol']} put on WATCH (no open slot)")
+                # חישוב Trade Quality Score
+                quality = calc_trade_quality(c, news_score)
+                c["trade_quality"] = quality
+
+                signal_data = {
+                    "symbol": c["symbol"],
+                    "entry": entry_price,
+                    "sl": sl,
+                    "tp1": tp1,
+                    "tp2": tp2,
+                    "setup_type": c.get("setup_type", "UNKNOWN"),
+                }
+                trade = trade_mgr.open_trade(signal_data, entry_price)
+                if trade:
+                    # שמור Quality על הטרייד
+                    trade.quality = quality
+                    msg = _trade_open_message(trade)
+                    send_telegram([{"msg": msg}])
+            else:
+                log.info(f"Max trades reached, {c['symbol']} put on WATCH (no open slot)")
+    else:
+        log.warning(f"Circuit Breaker active: {circuit_breaker.status()} — no new trades")
 
     # 6b. Update existing trades
     active_trades = trade_mgr.get_active_trades()
@@ -224,7 +239,6 @@ def run_scan() -> None:
             continue
         current_price = float(df_5m["close"].iloc[-1])
 
-        # coin_data: try to get from top list, else minimal
         coin_data = next((x for x in top if x["symbol"] == symbol), None)
         if not coin_data:
             coin_data = {
@@ -232,7 +246,16 @@ def run_scan() -> None:
                 "rs_1h": 0.0,
                 "rs_4h": 0.0,
                 "oi_change": 0.0,
+                "last_price": current_price,
             }
+        else:
+            coin_data["last_price"] = current_price
+
+        # ── Trade Replay Snapshot ─────────────────────────────────────────────
+        try:
+            save_snapshot(trade, coin_data, market_health, news_score, regime)
+        except Exception as e:
+            log.debug(f"Trade replay save error: {e}")
 
         action = trade_mgr.update(
             symbol=symbol,
@@ -250,6 +273,8 @@ def run_scan() -> None:
             elif action["action"] == "SELL_ALL":
                 msg = _trade_close_message(trade, action)
                 send_telegram([{"msg": msg}])
+                # ── Circuit Breaker Update ────────────────────────────────────
+                circuit_breaker.update_on_close(action["pnl"], market_health)
 
     # ── 7. Telegram summary ───────────────────────────────────────────────────
     if filtered["has_quality"]:
@@ -297,10 +322,12 @@ def run_scan() -> None:
     if active_now:
         log.info("── Active Trades ──────────────────────────────────────────")
         for t in active_now:
+            quality = getattr(t, 'quality', 0)
             log.info(f"  {t.symbol} | Entry={t.entry_price:.4f} | State={t.state} | "
-                     f"SL={t.sl:.4f} | TP1={t.tp1:.4f} | TP2={t.tp2:.4f}")
+                     f"SL={t.sl:.4f} | TP1={t.tp1:.4f} | TP2={t.tp2:.4f} | "
+                     f"Health={t.health:.0f} | Quality={quality:.0f}")
 
-    # בתום הסריקה, שחזור max_trades במידה ושונה בגלל אירוע
+    # שחזור max_trades
     if original_max is not None:
         trade_mgr.max_trades = original_max
 
