@@ -1,24 +1,15 @@
 """
 CRYPTO-BOT Elite — Signal Filter
 
-4 מצבים בלבד:
-    IGNORE  — לא מעניין, לא לשלוח
-    WATCH   — יש משהו, מוקדם מדי
-    PREPARE — הצטברות אמיתית, להתכונן
+5 מצבים:
+    IGNORE  — לא מעניין
+    WATCH   — יש פוטנציאל, מוקדם מדי
+    READY   — קרוב מאוד לטריגר, איכותי
+    PREPARE — הצטברות אמיתית
     BUY     — פריצה מאושרת
-
-קריטריונים קשיחים:
-    PREPARE דורש לפחות 3 מתוך 4 פקטורי הצטברות (Compression, Flow>55, OI עולה, RS חיובי).
-    בלי כולם — WATCH לכל היותר.
-    WATCH חלש (flow<40, אין compression, אין OI) — IGNORE.
 """
 from utils.logger import get_logger
 log = get_logger(__name__)
-
-
-def _big_move_score(c: dict) -> float:
-    """מיון לפי פוטנציאל מהלך גדול."""
-    return c.get("flow_score", 0) * 0.50 + c.get("pre_score", 0) * 0.50
 
 
 def classify_signal(c: dict) -> str:
@@ -28,19 +19,30 @@ def classify_signal(c: dict) -> str:
     compressed = c.get("is_compressed", False)
     oi_change  = c.get("oi_change", 0)
     rs_1h      = c.get("rs_1h", 0)
-    flow_parts = c.get("flow_components", {})
+    prob       = c.get("probability", 0)  # AI Probability
+    dist_pct   = c.get("trigger_distance_pct", 999)  # % from trigger
+    market_health = c.get("market_health", 70)
 
-    oi_growing  = oi_change > 2.0 or flow_parts.get("oi", 0) >= 10
+    oi_growing  = oi_change > 2.0
     rs_positive = rs_1h > 0
 
     # BUY: טריגר טכני מאושר
     if dec == "BUY":
-        # Downgrade רק אם שני הציונים ממש גרועים
         if flow < 30 and pre < 30:
             return "WATCH"
         return "BUY"
 
-    # ── PREPARE: 3 מתוך 4 (לא חובה כולם) ──────────────────────────────────
+    # READY: קרוב לטריגר, איכות גבוהה
+    ready_conditions = [
+        prob >= 55 if prob > 0 else True,  # if no probability yet, ignore
+        dist_pct <= 0.5,
+        compressed or flow >= 45,
+        market_health >= 60,
+    ]
+    if sum(ready_conditions) >= 3 and dist_pct <= 0.7:
+        return "READY"
+
+    # PREPARE: 3 מתוך 4 פקטורי הצטברות
     prepare_factors = [
         compressed,
         flow >= 55,
@@ -50,40 +52,33 @@ def classify_signal(c: dict) -> str:
     if flow >= 55 and sum(prepare_factors) >= 3:
         return "PREPARE"
 
-    # WATCH: יש משהו מינימלי
-    if flow >= 45 or pre >= 45:
+    # WATCH: מינימלי
+    if flow >= 45 or pre >= 45 or (prob >= 40 and dist_pct < 2.0):
         return "WATCH"
 
     return "IGNORE"
 
 
 def filter_coins(coins: list[dict]) -> dict:
-    """
-    מקבל רשימת מטבעות, מחלק ל-4 קבוצות, מסנן רעש.
-
-    Returns
-    -------
-    {
-        "buy":     [coin, ...],
-        "prepare": [coin, ...],
-        "watch":   [coin, ...],    # מקסימום 3
-        "has_quality": bool,
-    }
-    """
-    buy, prepare, watch = [], [], []
+    buy, prepare, ready, watch = [], [], [], []
 
     for c in coins:
         sig = classify_signal(c)
         c["signal"] = sig
         if   sig == "BUY":     buy.append(c)
         elif sig == "PREPARE": prepare.append(c)
+        elif sig == "READY":   ready.append(c)
         elif sig == "WATCH":   watch.append(c)
-        # IGNORE — לא נכנס לשום רשימה
 
-    # WATCH — מקסימום 3, רק הטובים ביותר
     watch = sorted(watch, key=lambda x: x.get("flow_score",0)+x.get("pre_score",0), reverse=True)[:3]
 
-    has_quality = bool(buy or prepare)
+    has_quality = bool(buy or prepare or ready)
 
-    log.info(f"Signal filter: BUY={len(buy)} PREPARE={len(prepare)} WATCH={len(watch)}")
-    return {"buy": buy, "prepare": prepare, "watch": watch, "has_quality": has_quality}
+    log.info(f"Signal filter: BUY={len(buy)} PREPARE={len(prepare)} READY={len(ready)} WATCH={len(watch)}")
+    return {
+        "buy": buy,
+        "prepare": prepare,
+        "ready": ready,
+        "watch": watch,
+        "has_quality": has_quality,
+    }
