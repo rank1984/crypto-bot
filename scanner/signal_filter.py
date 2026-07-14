@@ -32,11 +32,11 @@ def classify_signal(c: dict) -> str:
             return "WATCH"
         return "BUY"
 
-    # READY: קרוב לטריגר, איכות גבוהה
+       # READY: קרוב לטריגר, איכות גבוהה
     ready_conditions = [
-        prob >= 55 if prob > 0 else True,  # if no probability yet, ignore
+        prob >= 40 if prob > 0 else True,   # הורדנו ל-40
         dist_pct <= 0.5,
-        compressed or flow >= 45,
+        compressed or flow >= 45 or (oi_change > 1000),  # OI חריג = READY
         market_health >= 60,
     ]
     if sum(ready_conditions) >= 3 and dist_pct <= 0.7:
