@@ -11,6 +11,10 @@ from notifier.sender          import send_telegram
 from utils.config             import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
 from utils.logger             import get_logger
 
+# ── הוספת ייבוא של News & Event Engines ──────────────────────────────────────
+from scanner.news_engine      import get_market_health, get_news_score
+from scanner.event_engine     import trading_disabled, get_event_warning
+
 log = get_logger("main")
 
 _running = True
@@ -69,10 +73,11 @@ def run_scan() -> None:
         log.warning(f"Shadow DB init error: {e}")
 
     # ── 1. Universe ───────────────────────────────────────────────────────────
+    btc_1h_mov = 0.0  # אתחול לטובת Market Health במידה ואנחנו על Static Universe
+    
     if USE_DYNAMIC_UNIVERSE:
         log.info("Mode: Dynamic Universe")
         btc_df     = get_candles("BTCUSDT", "1hour", limit=3)
-        btc_1h_mov = 0.0
         if btc_df is not None and len(btc_df) >= 2:
             btc_1h_mov = (float(btc_df["close"].iloc[-1]) - float(btc_df["close"].iloc[-2])) \
                          / float(btc_df["close"].iloc[-2]) * 100
@@ -92,6 +97,37 @@ def run_scan() -> None:
         log.warning("No coins passed scoring — sending 'no signal' message")
         send_telegram([], stats=_diag)
         return
+
+    # ── Market Health & Event Check ─────────────────────────────────────
+    oi_change_total = _diag.get("total_oi_change", 0) if _diag else 0
+    regime = _diag.get("regime", "RANGE") if _diag else "RANGE"
+    funding_rate = _diag.get("avg_funding", 0.0) if _diag else 0.0
+    liquidations = _diag.get("total_liquidations", 0.0) if _diag else 0.0
+
+    news_score = get_news_score()
+    market_health = get_market_health(
+        btc_change_1h=btc_1h_mov,
+        oi_change_pct=oi_change_total,
+        funding_rate=funding_rate,
+        liquidations=liquidations,
+        news_score=news_score,
+        regime=regime
+    )
+    
+    health_msg = f"Market Health: {market_health:.0f}/100 | News Score: {news_score} | Regime: {regime}"
+    send_telegram([{"msg": health_msg}])
+    
+    # בדיקת אירועים קרובים
+    if trading_disabled():
+        log.warning("Trading disabled due to high impact event")
+        # שולח התראה ועוצר פתיחת עסקאות חדשות
+        send_telegram([{"msg": get_event_warning()}])
+        
+        # ממשיך לנהל עסקאות קיימות (ללא פתיחת חדשות) ע"י מניעת פתיחה זמנית
+        original_max = trade_mgr.max_trades
+        trade_mgr.max_trades = 0
+    else:
+        original_max = None
 
     # ── 3. Decision Engine ────────────────────────────────────────────────────
     from scanner.decision_engine import decide_batch
@@ -150,7 +186,7 @@ def run_scan() -> None:
             if tp2 == 0:
                 tp2 = round(entry_price * 1.10, 8)
 
-            signal = {
+            signal_data = {
                 "symbol": c["symbol"],
                 "entry": entry_price,
                 "sl": sl,
@@ -158,7 +194,7 @@ def run_scan() -> None:
                 "tp2": tp2,
                 "setup_type": c.get("setup_type", "UNKNOWN"),
             }
-            trade = trade_mgr.open_trade(signal, entry_price)
+            trade = trade_mgr.open_trade(signal_data, entry_price)
             if trade:
                 # send notification via existing sender (message string)
                 msg = _trade_open_message(trade)
@@ -192,7 +228,8 @@ def run_scan() -> None:
             coin_data=coin_data,
             df_5m=df_5m,
             df_1h=df_1h,
-            btc_momentum_5m=0.0
+            market_health=market_health,
+            btc_regime=regime
         )
         if action:
             if action["action"] == "SELL_PARTIAL":
@@ -250,6 +287,10 @@ def run_scan() -> None:
         for t in active_now:
             log.info(f"  {t.symbol} | Entry={t.entry_price:.4f} | State={t.state} | "
                      f"SL={t.sl:.4f} | TP1={t.tp1:.4f} | TP2={t.tp2:.4f}")
+
+    # בתום הסריקה, שחזור max_trades במידה ושונה בגלל אירוע
+    if original_max is not None:
+        trade_mgr.max_trades = original_max
 
 
 def main() -> None:
