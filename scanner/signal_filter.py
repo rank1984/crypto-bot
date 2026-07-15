@@ -26,6 +26,7 @@ def classify_signal(c: dict) -> str:
     oi_growing  = oi_change > 2.0
     rs_positive = rs_1h > 0
     oi_strong   = oi_change > 30.0
+    at_trigger  = (0.0 <= dist_pct <= 0.05)  # ממש על הטריגר
 
     # BUY – טריגר מאושר
     if dec == "BUY":
@@ -33,13 +34,16 @@ def classify_signal(c: dict) -> str:
             return "WATCH"
         return "BUY"
 
-    # ARM – מרחק ≤1%, איכות גבוהה – ניטור 10 שניות
+    # ARM – מרחק ≤1%, איכות גבוהה, או ממש על הטריגר
     arm_conditions = [
         prob >= 25 if prob > 0 else True,
         dist_pct <= 1.0,
         compressed or flow >= 45 or oi_strong,
-        market_health >= 60,
+        market_health >= 50,   # הורדנו מ-60
     ]
+    # אם ממש על הטריגר – ARM גם בלי כל התנאים (רק איכות בסיסית)
+    if at_trigger and (compressed or flow >= 40 or oi_strong):
+        return "ARM"
     if sum(arm_conditions) >= 3 and dist_pct <= 1.0:
         return "ARM"
 
@@ -56,7 +60,7 @@ def classify_signal(c: dict) -> str:
 
 
 def filter_coins(coins: list[dict]) -> dict:
-    buy, prepare, arm, watch = [], [], [], []
+    buy, prepare, arm, watch, ignored = [], [], [], [], []
 
     for c in coins:
         sig = classify_signal(c)
@@ -65,7 +69,21 @@ def filter_coins(coins: list[dict]) -> dict:
         elif sig == "PREPARE": prepare.append(c)
         elif sig == "ARM":     arm.append(c)
         elif sig == "WATCH":   watch.append(c)
+        else:                  ignored.append(c)
 
+    # ── הבטח לפחות 5 מטבעות (ללמידה) ──────────────────────────────────
+    total_quality = len(buy) + len(prepare) + len(arm) + len(watch)
+    if total_quality < 5:
+        # מיון ignored לפי ציון
+        ignored.sort(key=lambda x: x.get("flow_score",0)+x.get("pre_score",0), reverse=True)
+        needed = 5 - total_quality
+        # הפוך את הטובים ביותר ל-WATCH
+        for c in ignored[:needed]:
+            c["signal"] = "WATCH"
+            watch.append(c)
+            log.info(f"Promoted {c['symbol']} from IGNORE to WATCH (data boosting)")
+
+    # WATCH – מקסימום 3, רק הטובים ביותר
     watch = sorted(watch, key=lambda x: x.get("flow_score",0)+x.get("pre_score",0), reverse=True)[:3]
 
     has_quality = bool(buy or prepare or arm)
