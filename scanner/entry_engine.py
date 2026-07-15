@@ -243,6 +243,10 @@ def evaluate_entry(
         f"reason='{result.reason}'"
     )
     
+    # הבטחת שדות חסרים כדי שה-Shadow Tracker יוכל לקרוא אותם כראוי
+    coin["final_score"] = coin.get("final_score", coin.get("score", 0))
+    coin["probability"] = coin.get("probability", 0)
+
     # שימוש ב-Shadow Tracker החדש ששומר את כל המשתנים למסד הנתונים
     record_trade(coin, result)
     
