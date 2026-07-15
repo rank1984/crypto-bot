@@ -43,9 +43,37 @@ def init_shadow_db():
                 funding REAL,
                 exit_reason TEXT,
                 pnl REAL,
-                duration_minutes INTEGER
+                pnl_pct REAL DEFAULT 0,
+                duration_minutes INTEGER,
+                max_profit_pct REAL DEFAULT 0,
+                max_drawdown_pct REAL DEFAULT 0,
+                trade_state TEXT DEFAULT 'ACTIVE',
+                exit_price REAL DEFAULT 0
             )
         ''')
+        
+        # הוסף עמודות אם הן חסרות (לבסיסי נתונים קיימים)
+        try:
+            c.execute("ALTER TABLE shadow_trades ADD COLUMN pnl_pct REAL DEFAULT 0")
+        except:
+            pass
+        try:
+            c.execute("ALTER TABLE shadow_trades ADD COLUMN max_profit_pct REAL DEFAULT 0")
+        except:
+            pass
+        try:
+            c.execute("ALTER TABLE shadow_trades ADD COLUMN max_drawdown_pct REAL DEFAULT 0")
+        except:
+            pass
+        try:
+            c.execute("ALTER TABLE shadow_trades ADD COLUMN trade_state TEXT DEFAULT 'ACTIVE'")
+        except:
+            pass
+        try:
+            c.execute("ALTER TABLE shadow_trades ADD COLUMN exit_price REAL DEFAULT 0")
+        except:
+            pass
+
     log.info("Shadow DB initialized for Trade Tracking")
     
     try:
@@ -67,8 +95,8 @@ def record_trade(coin: dict, signal):
                 INSERT INTO shadow_trades (
                     ts, symbol, decision, setup, entry_price, tp1, tp2, sl,
                     ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
-                    probability, market_health, news_score, btc_regime, funding
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    probability, market_health, news_score, btc_regime, funding, trade_state
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts,
                 coin.get("symbol", "UNKNOWN"),
@@ -90,24 +118,35 @@ def record_trade(coin: dict, signal):
                 coin.get("market_health", 50),
                 coin.get("news_score", 50),
                 coin.get("btc_regime", ""),
-                coin.get("funding", 0)
+                coin.get("funding", 0),
+                'ACTIVE'
             ))
         log.info(f"Recorded shadow trade for {coin.get('symbol', 'UNKNOWN')} ({signal.decision})")
-        
-        # Export CSV immediately after every new trade
         export_shadow_csv()
     except Exception as e:
         log.error(f"Failed to record shadow trade: {e}")
 
-def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minutes: int):
+def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minutes: int,
+                       pnl_pct: float = 0.0, max_profit_pct: float = 0.0,
+                       max_drawdown_pct: float = 0.0, trade_state: str = 'CLOSED',
+                       exit_price: float = 0.0):
     """Called from trade_manager to update exit metrics"""
     try:
         with _conn() as c:
             c.execute('''
                 UPDATE shadow_trades 
-                SET status = 'CLOSED 🏁', exit_reason = ?, pnl = ?, duration_minutes = ?
+                SET status = 'CLOSED 🏁', 
+                    exit_reason = ?, 
+                    pnl = ?, 
+                    pnl_pct = ?,
+                    duration_minutes = ?,
+                    max_profit_pct = ?,
+                    max_drawdown_pct = ?,
+                    trade_state = ?,
+                    exit_price = ?
                 WHERE symbol = ? AND status != 'CLOSED 🏁'
-            ''', (exit_reason, pnl, duration_minutes, symbol))
+            ''', (exit_reason, pnl, pnl_pct, duration_minutes, max_profit_pct,
+                  max_drawdown_pct, trade_state, exit_price, symbol))
         export_shadow_csv()
     except Exception as e:
         log.error(f"Failed to update shadow exit for {symbol}: {e}")
@@ -166,7 +205,8 @@ def export_shadow_csv():
                 "Time", "Coin", "Decision", "Setup", "Entry", "TP1", "TP2", "SL", 
                 "Final Score", "Probability", "Flow", "Pre", "OI", "Funding", "RS", 
                 "Compression", "Market Health", "News Score", "BTC Regime", 
-                "Status", "Reason", "Exit Reason", "PnL", "Duration (m)"
+                "Status", "Reason", "Exit Reason", "PnL", "PnL%", "Max Profit%",
+                "Max DD%", "Trade State", "Exit Price", "Duration (m)"
             ])
             
             for t in trades:
@@ -177,7 +217,9 @@ def export_shadow_csv():
                     t["ai_score"], t["probability"], t["flow_score"], t["pre_score"], 
                     t["oi_change"], t["funding"], t["rs_1h"], t["is_compressed"], 
                     t["market_health"], t["news_score"], t["btc_regime"],
-                    t["status"], t["reason"], t["exit_reason"], t["pnl"], t["duration_minutes"]
+                    t["status"], t["reason"], t["exit_reason"], t["pnl"], t["pnl_pct"],
+                    t["max_profit_pct"], t["max_drawdown_pct"], t["trade_state"],
+                    t["exit_price"], t["duration_minutes"]
                 ])
         log.info(f"CSV Exported: {os.path.abspath(filepath)}")
     except Exception as e:
