@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from utils.logger import get_logger
 from scanner.exit_engine import calc_exit_score
+from tools.shadow_mode import update_shadow_exit
 
 log = get_logger(__name__)
 
@@ -31,6 +32,7 @@ class Trade:
     initial_capital: float        # כמה כסף הושקע
     state: str = "ACTIVE"         # ACTIVE, TP1_HIT, RUNNER, CLOSED
     highest_high: float = 0.0
+    lowest_low: float = 0.0       # למעקב אחר drawdown
     tp1_done: bool = False
     exit_reason: str = ""
     exit_time: Optional[datetime] = None
@@ -91,6 +93,7 @@ class TradeManager:
             position_size=position_size,
             initial_capital=capital_to_allocate,
             highest_high=entry,
+            lowest_low=entry,  # התחלה ממחיר כניסה
         )
 
         self.trades[symbol] = trade
@@ -111,6 +114,10 @@ class TradeManager:
         # עדכון Highest High
         if current_price > trade.highest_high:
             trade.highest_high = current_price
+
+        # עדכון Lowest Low
+        if trade.lowest_low == 0 or current_price < trade.lowest_low:
+            trade.lowest_low = current_price
 
         # 1. Stop Loss
         if current_price <= trade.sl:
@@ -180,6 +187,11 @@ class TradeManager:
         # חישוב PnL
         pnl = (exit_price - trade.entry_price) * trade.position_size
         pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * 100
+        
+        # חישוב Max Profit / Max Drawdown
+        max_profit_pct = ((trade.highest_high - trade.entry_price) / trade.entry_price) * 100 if trade.highest_high > 0 else 0
+        max_drawdown_pct = ((trade.lowest_low - trade.entry_price) / trade.entry_price) * 100 if trade.lowest_low > 0 else 0
+        
         # עדכון
         trade.pnl = pnl
         trade.pnl_pct = pnl_pct
@@ -187,6 +199,23 @@ class TradeManager:
         trade.exit_time = datetime.now()
         trade.exit_reason = reason
         trade.log.append({"time": trade.exit_time, "event": "CLOSE", "price": exit_price, "reason": reason, "pnl": pnl})
+
+        # ── תיעוד יציאה ב-Shadow DB ────────────────────────────────
+        try:
+            duration_minutes = int((trade.exit_time - trade.entry_time).total_seconds() / 60)
+            update_shadow_exit(
+                symbol=trade.symbol,
+                exit_reason=reason,
+                pnl=pnl,
+                duration_minutes=duration_minutes,
+                pnl_pct=pnl_pct,
+                max_profit_pct=max_profit_pct,
+                max_drawdown_pct=max_drawdown_pct,
+                trade_state=trade.state,
+                exit_price=exit_price
+            )
+        except Exception as e:
+            log.error(f"Shadow Exits update failed: {e}")
 
         log.info(f"Trade closed: {trade.symbol} | Exit={exit_price:.4f} | PnL={pnl:.2f}$ ({pnl_pct:.2f}%) | Reason: {reason}")
         self.closed_trades.append(trade)
