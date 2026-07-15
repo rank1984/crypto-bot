@@ -239,6 +239,24 @@ def evaluate_entry(
     )
     
     # שימוש ב-Shadow Tracker החדש ששומר את כל המשתנים למסד הנתונים
+    def evaluate_entry(
+    coin:        dict,
+    df_5m:       pd.DataFrame,
+    btc_mom_1h:  float = 0.0,
+    btc_mom_5m:  float = 0.0,
+) -> EntrySignal:
+    
+    result = _run_core_logic(coin, df_5m, btc_mom_1h, btc_mom_5m)
+    
+    # הוספת משתני שוק גלובליים למילון
+    coin["market_health"] = GLOBAL_MARKET_HEALTH
+    coin["news_score"] = GLOBAL_NEWS_SCORE
+    coin["btc_regime"] = GLOBAL_BTC_REGIME
+    
+    log.info(...)
+    
     record_trade(coin, result)
+    
+    return result
     
     return result
