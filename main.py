@@ -179,21 +179,21 @@ def run_scan() -> None:
     from scanner.quality_gate import apply_quality_gate_all
     top = apply_quality_gate_all(top)
 
-    # ── Compute trigger distance for ARM classification ───────────────────────
-        for c in top:
+        # ── Compute trigger distance for ARM classification ───────────────────────
+    for c in top:
         last_price = c.get("last_price", c.get("close", 0))
         trigger_price = c.get("trigger_price", c.get("entry_price", 0))
         
         if last_price > 0 and trigger_price > 0:
             c["trigger_distance_pct"] = ((trigger_price - last_price) / last_price) * 100
         elif trigger_price > 0:
-            # fallback: estimate distance from trigger if price missing
             c["trigger_distance_pct"] = 0.5
         else:
             c["trigger_distance_pct"] = 999
             
         if "trigger_price" not in c and trigger_price > 0:
             c["trigger_price"] = trigger_price
+    # ──────────────────────────────────────────────────────────────────────────
         # וודא ש-trigger_price שמור (למקרה שלא קיים)
         if "trigger_price" not in c and trigger_price > 0:
             c["trigger_price"] = trigger_price
