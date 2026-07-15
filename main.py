@@ -106,7 +106,7 @@ def run_scan() -> None:
         if btc_df is not None and len(btc_df) >= 2:
             btc_1h_mov = (float(btc_df["close"].iloc[-1]) - float(btc_df["close"].iloc[-2])) \
                          / float(btc_df["close"].iloc[-2]) * 100
-        symbols = build_dynamic_universe(btc_1h_move=btc_1h_mov)
+            symbols = build_dynamic_universe(btc_1h_move=btc_1h_mov)
     else:
         log.info("Mode: Static Universe")
         symbols = build_universe()
@@ -377,7 +377,7 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Learning recorder skipped: {e}")
 
-        try:
+    try:
         from tools.shadow_mode import save_shadow_signal, update_forward_returns
         for c in top:
             save_shadow_signal(c, c.get("signal", "IGNORE"))
