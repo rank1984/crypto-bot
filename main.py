@@ -3,13 +3,13 @@ CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, READY State, Circuit Bre
 """
 import time, signal, sys, argparse
 
-from scanner.universe         import build_universe
-from scanner.dynamic_universe import build_dynamic_universe
-from scanner.market_data      import get_candles
-from scanner.ranking          import rank_universe
-from notifier.sender          import send_telegram
-from utils.config             import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
-from utils.logger             import get_logger
+from scanner.universe           import build_universe
+from scanner.dynamic_universe   import build_dynamic_universe
+from scanner.market_data        import get_candles
+from scanner.ranking            import rank_universe
+from notifier.sender            import send_telegram
+from utils.config               import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
+from utils.logger               import get_logger
 
 # ── News & Event Engines ──────────────────────────────────────────────────────
 from scanner.news_engine      import get_market_health, get_news_score
@@ -21,7 +21,7 @@ from scanner.trade_quality     import calc_trade_quality
 from storage.trade_replay      import init_replay_db, save_snapshot
 
 # ── Live Monitor ──────────────────────────────────────────────────────────────
-from monitor.live_monitor     import LiveMonitor
+from monitor.live_monitor      import LiveMonitor
 
 log = get_logger("main")
 
@@ -191,6 +191,19 @@ def run_scan() -> None:
     # ── 4. Quality Gate (legacy) ──────────────────────────────────────────────
     from scanner.quality_gate import apply_quality_gate_all
     top = apply_quality_gate_all(top)
+
+    # ── Compute trigger distance for READY classification ─────────────────────
+    for c in top:
+        last_price = c.get("last_price", 0)
+        trigger_price = c.get("trigger_price", c.get("entry_price", 0))
+        if last_price > 0 and trigger_price > 0:
+            c["trigger_distance_pct"] = ((trigger_price - last_price) / last_price) * 100
+        else:
+            c["trigger_distance_pct"] = 999
+        # וודא ש-trigger_price שמור (למקרה שלא קיים)
+        if "trigger_price" not in c and trigger_price > 0:
+            c["trigger_price"] = trigger_price
+    # ──────────────────────────────────────────────────────────────────────────
 
     # ── 5. Signal Filter (כולל READY) ────────────────────────────────────────
     from scanner.signal_filter import filter_coins
