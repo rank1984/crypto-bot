@@ -162,6 +162,12 @@ def run_scan() -> None:
     
     health_msg = f"Market Health: {market_health:.0f}/100 | News Score: {news_score} | Regime: {regime} | Circuit Breaker: {circuit_breaker.status()}"
     send_telegram([{"msg": health_msg}])
+
+    # ── עדכון market_health גלובלי לשימוש ב-entry_engine ──────────────────
+    import scanner.entry_engine as entry_engine
+    entry_engine.MARKET_HEALTH = market_health
+    entry_engine.NEWS_SCORE = news_score
+    entry_engine.BTC_REGIME = regime
     
     # בדיקת אירועים קרובים
     original_max = None
