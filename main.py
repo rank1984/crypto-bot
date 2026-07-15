@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, READY State, Circuit Breaker)
+CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, ARM State, Circuit Breaker)
 """
 import time, signal, sys, argparse
 
@@ -89,21 +89,6 @@ def _trade_partial_message(trade, action: dict) -> str:
         f"Sold: {action['ratio']*100:.0f}%"
     )
 
-def _ready_alert_message(coin: dict) -> str:
-    """צור הודעת READY."""
-    trigger = coin.get("trigger_price", coin.get("entry_price", 0))
-    prob = coin.get("probability", 0)
-    flow = coin.get("flow_score", 0)
-    mh = coin.get("market_health", 70)
-    dist = coin.get("trigger_distance_pct", 0)
-    return (
-        f"🟢 READY {coin['symbol']}\n"
-        f"Trigger: {trigger:.5f} ({(1+dist/100)*trigger if trigger else 0:.5f})\n"
-        f"Distance: {dist:.2f}%\n"
-        f"Probability: {prob:.1f}%\n"
-        f"Flow: {flow:.0f} | Market Health: {mh:.0f}"
-    )
-
 
 def run_scan() -> None:
     log.info("── Scan started ──────────────────────────────────────")
@@ -169,7 +154,7 @@ def run_scan() -> None:
         regime=regime
     )
     
-    # הוספת market_health לכל מטבע לשימוש ב-Ready
+    # הוספת market_health לכל מטבע לשימוש ב-ARM
     for c in top:
         c["market_health"] = market_health
     
@@ -192,7 +177,7 @@ def run_scan() -> None:
     from scanner.quality_gate import apply_quality_gate_all
     top = apply_quality_gate_all(top)
 
-    # ── Compute trigger distance for READY classification ─────────────────────
+    # ── Compute trigger distance for ARM classification ───────────────────────
     for c in top:
         last_price = c.get("last_price", 0)
         trigger_price = c.get("trigger_price", c.get("entry_price", 0))
@@ -205,7 +190,7 @@ def run_scan() -> None:
             c["trigger_price"] = trigger_price
     # ──────────────────────────────────────────────────────────────────────────
 
-    # ── 5. Signal Filter (כולל READY) ────────────────────────────────────────
+    # ── 5. Signal Filter (כולל ARM) ──────────────────────────────────────────
     from scanner.signal_filter import filter_coins
     filtered = filter_coins(top)
 
@@ -221,32 +206,42 @@ def run_scan() -> None:
             f"rs={c.get('rs_1h',0):.2f} "
             f"decision={c.get('entry_decision','NO')}"
         )
+    
     log.info(
         f"FILTER RESULT → "
-        f"BUY={len(filtered['buy'])} "
-        f"PREPARE={len(filtered['prepare'])} "
-        f"READY={len(filtered['ready'])} "
-        f"WATCH={len(filtered['watch'])}"
+        f"BUY={len(filtered.get('buy', []))} "
+        f"PREPARE={len(filtered.get('prepare', []))} "
+        f"ARM={len(filtered.get('arm', []))} "
+        f"WATCH={len(filtered.get('watch', []))}"
     )
 
-    # ── Live Monitor: הוסף READY למעקב צמוד ──────────────────────────────────
-    for c in filtered.get("ready", []):
-        # וודא שיש trigger_price
+    # ── Live Monitor: Priority Queue (Top 5 ARM) ─────────────────────────────
+    arm_candidates = filtered.get("arm", [])
+    # מיין לפי ציון משולב (Probability + Flow + OI)
+    arm_candidates.sort(key=lambda x: (x.get("probability", 0)*0.5 + x.get("flow_score", 0)*0.3 + x.get("oi_change", 0)/10), reverse=True)
+    top_arm = arm_candidates[:5]  # max 5
+    
+    live_monitor.clear_watchlist()  # נקה לפני הוספה
+    
+    for c in top_arm:
         if "trigger_price" not in c:
             entry = c.get("entry_price", c.get("last_price", 0))
             if entry > 0:
-                c["trigger_price"] = entry * 1.001  # BREAKOUT
+                c["trigger_price"] = entry * 1.001
             else:
                 c["trigger_price"] = 0
         live_monitor.add_to_watchlist(c)
-        # שלח התראת READY
-        msg = _ready_alert_message(c)
+        msg = (f"🟠 ARM {c['symbol']}\n"
+               f"Trigger: {c['trigger_price']:.5f}\n"
+               f"Distance: {c.get('trigger_distance_pct', 0):.2f}%\n"
+               f"Probability: {c.get('probability', 0):.1f}%\n"
+               f"Flow: {c.get('flow_score', 0):.0f} | OI: {c.get('oi_change', 0):.1f}%")
         _send_telegram_safe(msg)
 
     # ── 6. Trade Management ───────────────────────────────────────────────────
     # 6a. Open new trades (רק אם Circuit Breaker מאפשר)
     if circuit_breaker.can_trade():
-        for c in filtered["buy"]:
+        for c in filtered.get("buy", []):
             if trade_mgr.can_open_trade():
                 entry_price = c.get("entry_price", 0)
                 sl = c.get("sl", 0)
@@ -337,7 +332,7 @@ def run_scan() -> None:
                 circuit_breaker.update_on_close(action["pnl"], market_health)
 
     # ── 7. Telegram summary ───────────────────────────────────────────────────
-    if filtered["has_quality"]:
+    if filtered.get("has_quality", False):
         send_telegram(top, filtered=filtered, stats=_diag, all_coins=top)
     else:
         log.info("No quality signals — sending diagnostic")
