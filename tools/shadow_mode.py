@@ -35,7 +35,15 @@ def init_shadow_db():
                 rs_1h REAL,
                 is_compressed TEXT,
                 status TEXT,
-                reason TEXT
+                reason TEXT,
+                probability REAL,
+                market_health REAL,
+                news_score REAL,
+                btc_regime TEXT,
+                funding REAL,
+                exit_reason TEXT,
+                pnl REAL,
+                duration_minutes INTEGER
             )
         ''')
     log.info("Shadow DB initialized for Trade Tracking")
@@ -46,11 +54,7 @@ def init_shadow_db():
     except Exception as e:
         log.error(f"Shadow Engine Error: {e}")
 
-def save_shadow_signal(coin: dict, signal: str):
-    pass
-
 def record_trade(coin: dict, signal):
-    # FIX: Make sure signal is valid and handle object attributes safely
     if not signal or signal.decision not in ["BUY", "PREPARE"]: 
         return
         
@@ -62,8 +66,9 @@ def record_trade(coin: dict, signal):
             c.execute('''
                 INSERT INTO shadow_trades (
                     ts, symbol, decision, setup, entry_price, tp1, tp2, sl,
-                    ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
+                    probability, market_health, news_score, btc_regime, funding
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts,
                 coin.get("symbol", "UNKNOWN"),
@@ -73,18 +78,39 @@ def record_trade(coin: dict, signal):
                 getattr(signal, "tp1", 0.0),
                 getattr(signal, "tp2", 0.0),
                 getattr(signal, "sl", 0.0),
-                coin.get("final_score", 0),  # Replacing ai_score with final_score
+                coin.get("final_score", 0),
                 coin.get("flow_score", 0),
                 coin.get("pre_score", 0),
                 coin.get("oi_change", 0),
                 coin.get("rs_1h", 0),
                 str(coin.get("is_compressed", False)),
                 initial_status,
-                getattr(signal, "reason", "")
+                getattr(signal, "reason", ""),
+                coin.get("probability", 0),
+                coin.get("market_health", 50),
+                coin.get("news_score", 50),
+                coin.get("btc_regime", ""),
+                coin.get("funding", 0)
             ))
         log.info(f"Recorded shadow trade for {coin.get('symbol', 'UNKNOWN')} ({signal.decision})")
+        
+        # Export CSV immediately after every new trade
+        export_shadow_csv()
     except Exception as e:
         log.error(f"Failed to record shadow trade: {e}")
+
+def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minutes: int):
+    """Called from trade_manager to update exit metrics"""
+    try:
+        with _conn() as c:
+            c.execute('''
+                UPDATE shadow_trades 
+                SET status = 'CLOSED 🏁', exit_reason = ?, pnl = ?, duration_minutes = ?
+                WHERE symbol = ? AND status != 'CLOSED 🏁'
+            ''', (exit_reason, pnl, duration_minutes, symbol))
+        export_shadow_csv()
+    except Exception as e:
+        log.error(f"Failed to update shadow exit for {symbol}: {e}")
 
 def _get_binance_price(symbol: str) -> float:
     try:
@@ -105,8 +131,6 @@ def update_open_trades():
             if current_price <= 0: continue
             
             new_status = "Pending ⏳"
-            
-            # FIX: Ensure proper float casting for safety
             tp1 = float(trade["tp1"]) if trade["tp1"] else 0.0
             sl = float(trade["sl"]) if trade["sl"] else 0.0
             
@@ -138,16 +162,22 @@ def export_shadow_csv():
             
         with open(filepath, mode='w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
-            writer.writerow(["Time", "Coin", "Decision", "Setup", "Entry", "TP1", "SL", "AI", "Flow", "Pre", "OI", "RS", "Compression", "Status", "Reason"])
+            writer.writerow([
+                "Time", "Coin", "Decision", "Setup", "Entry", "TP1", "TP2", "SL", 
+                "Final Score", "Probability", "Flow", "Pre", "OI", "Funding", "RS", 
+                "Compression", "Market Health", "News Score", "BTC Regime", 
+                "Status", "Reason", "Exit Reason", "PnL", "Duration (m)"
+            ])
             
             for t in trades:
                 dt_str = datetime.fromisoformat(t["ts"]).strftime("%H:%M:%S") if t["ts"] else ""
                 writer.writerow([
                     dt_str, t["symbol"], t["decision"], t["setup"], 
-                    t["entry_price"], t["tp1"], t["sl"],
-                    t["ai_score"], t["flow_score"], t["pre_score"], 
-                    t["oi_change"], t["rs_1h"], t["is_compressed"], 
-                    t["status"], t["reason"]
+                    t["entry_price"], t["tp1"], t["tp2"], t["sl"],
+                    t["ai_score"], t["probability"], t["flow_score"], t["pre_score"], 
+                    t["oi_change"], t["funding"], t["rs_1h"], t["is_compressed"], 
+                    t["market_health"], t["news_score"], t["btc_regime"],
+                    t["status"], t["reason"], t["exit_reason"], t["pnl"], t["duration_minutes"]
                 ])
         log.info(f"CSV Exported: {os.path.abspath(filepath)}")
     except Exception as e:
