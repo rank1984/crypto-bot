@@ -1,6 +1,8 @@
 """
 CRYPTO-BOT Elite — Entry Engine v1
-
+MARKET_HEALTH = 50
+NEWS_SCORE = 50
+BTC_REGIME = ""
 מפסיק "לדרג מטבעות" ומתחיל להגיד:
     BUY  — עם מחיר כניסה, SL, TP
     WAIT — setup קיים אבל טריגר עוד לא הופעל
