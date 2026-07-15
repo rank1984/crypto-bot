@@ -1,5 +1,3 @@
 ﻿Time,Coin,Decision,Setup,Entry,TP1,TP2,SL,Final Score,Probability,Flow,Pre,OI,Funding,RS,Compression,Market Health,News Score,BTC Regime,Status,Reason,Exit Reason,PnL,Duration (m)
-07:17:54,KAITOUSDT,BUY,DIP_BUY,0.77878,0.817719,0.895597,0.77240855,0.0,0.0,36.1,36.9,332.85,0.0,0.174,False,50.0,50.0,,Pending ⏳,DIP_BUY trigger confirmed,,,
-07:17:52,XPLUSDT,BUY,DIP_BUY,0.094,0.0987,0.1081,0.092933,0.0,0.0,24.6,12.6,-67.13,0.0,0.007,False,50.0,50.0,,Pending ⏳,DIP_BUY trigger confirmed,,,
-07:17:46,TOWNSUSDT,BUY,VWAP_RECLAIM,0.002045,0.00211657,0.0022086,0.00201946,0.0,0.0,26.0,34.2,87.53,0.0,0.59,False,50.0,50.0,,Pending ⏳,VWAP_RECLAIM trigger confirmed,,,
-07:17:40,USDCXUSDT,BUY,DIP_BUY,0.9998,1.04979,1.14977,0.99455822,0.0,0.0,8.0,9.0,0.0,0.0,-0.096,False,50.0,50.0,,Pending ⏳,DIP_BUY trigger confirmed,,,
+07:34:15,GALAUSDT,BUY,DIP_BUY,0.00203715,0.00213901,0.00234272,0.00202303,0.0,0.0,40.0,22.8,0.0,0.0,0.601,False,50.0,50.0,,Pending ⏳,DIP_BUY trigger confirmed,,,
+07:33:37,FFUSDT,BUY,DIP_BUY,0.06615,0.0694575,0.0760725,0.06554065,0.0,0.0,43.6,37.6,247.0,0.0,1.463,False,50.0,50.0,,Pending ⏳,DIP_BUY trigger confirmed,,,
