@@ -119,6 +119,32 @@ def run_scan() -> None:
         return
 
     # ── 2. Score & Rank ───────────────────────────────────────────────────────
+        # ── Market Health (לפני ranking) ──────────────────────────────────────────
+    btc_1h_mov = 0.0
+    if USE_DYNAMIC_UNIVERSE:
+        btc_df = get_candles("BTCUSDT", "1hour", limit=3)
+        if btc_df is not None and len(btc_df) >= 2:
+            btc_1h_mov = (float(btc_df["close"].iloc[-1]) - float(btc_df["close"].iloc[-2])) \
+                         / float(btc_df["close"].iloc[-2]) * 100
+
+    # חישוב Market Health (לפני rank_universe)
+    news_score = get_news_score()
+    market_health = get_market_health(
+        btc_change_1h=btc_1h_mov,
+        oi_change_pct=0,  # יוחלף אחרי ranking
+        funding_rate=0.0,
+        liquidations=0.0,
+        news_score=news_score,
+        regime="RANGE"  # יוחלף אחרי ranking
+    )
+    
+    # עדכון גלובלי
+    import scanner.entry_engine as entry_engine
+    entry_engine.GLOBAL_MARKET_HEALTH = market_health
+    entry_engine.GLOBAL_NEWS_SCORE = news_score
+    entry_engine.GLOBAL_BTC_REGIME = "RANGE"
+
+    # ── 2. Score & Rank ───────────────────────────────────────────────────────
     result = rank_universe(symbols)
     top, _diag = result if isinstance(result, tuple) else (result, None)
     if not top:
