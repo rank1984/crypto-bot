@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 from utils.logger import get_logger
 from scanner.exit_engine import calc_exit_score, update_trailing_stop_atr
+from tools.shadow_mode import update_shadow_exit
 
 log = get_logger(__name__)
 
@@ -264,8 +265,6 @@ class TradeManager:
                 old_sl = trade.sl
                 trade.sl = new_sl
                 log.info(f"{symbol} SL moved: {old_sl:.4f} → {new_sl:.4f} (ATR x{trade.atr_multiplier})")
-                # Telegram notification (placeholder)
-                # send_sl_update(trade, old_sl, new_sl)
 
         # Force Exit if health too low
         if trade.health < 35:
@@ -300,6 +299,14 @@ class TradeManager:
         trade.exit_reason = reason
         trade.set_state("EXIT")
         trade.set_state("CLOSED")
+
+        # ── תיעוד יציאה ב-Shadow DB ────────────────────────────────
+        try:
+            duration_minutes = int((trade.exit_time - trade.entry_time).total_seconds() / 60)
+            update_shadow_exit(trade.symbol, reason, pnl, duration_minutes)
+        except Exception as e:
+            log.error(f"Shadow Exits update failed: {e}")
+
         log.info(f"Trade closed: {trade.symbol} | Exit={exit_price:.4f} | PnL={pnl:.2f}$ ({pnl_pct:.2f}%) | Reason: {reason}")
         self.closed_trades.append(trade)
         if trade.symbol in self.trades:
