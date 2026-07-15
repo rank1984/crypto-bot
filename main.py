@@ -193,7 +193,12 @@ def run_scan() -> None:
                     fallback_price = float(df_tmp["close"].iloc[-1])
             c["last_price"] = fallback_price
     # ──────────────────────────────────────────────────────────────────────────
-
+    # עדכון משתנים גלובליים ב-entry_engine
+    import scanner.entry_engine as entry_engine
+    entry_engine.GLOBAL_MARKET_HEALTH = market_health
+    entry_engine.GLOBAL_NEWS_SCORE = news_score
+    entry_engine.GLOBAL_BTC_REGIME = regime
+    
     # ── 4. Quality Gate (legacy) ──────────────────────────────────────────────
     from scanner.quality_gate import apply_quality_gate_all
     top = apply_quality_gate_all(top)
