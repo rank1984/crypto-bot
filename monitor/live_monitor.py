@@ -1,7 +1,7 @@
 """
 CRYPTO-BOT Elite — Live Monitor
 
-עוקב אחרי מטבעות READY/ARMED בתדירות גבוהה (15s).
+עוקב אחרי מטבעות ARM כל 10 שניות.
 מזהה פריצת טריגר ומייצר BUY מיידי.
 """
 import time
@@ -16,13 +16,16 @@ class LiveMonitor(threading.Thread):
     def __init__(self, trade_manager, send_callback):
         super().__init__(daemon=True)
         self.trade_mgr = trade_manager
-        self.send = send_callback  # פונקציית שליחה לטלגרם
-        self.watchlist = []        # רשימת מטבעות במעקב צמוד
+        self.send = send_callback
+        self.watchlist = []
         self.running = True
-        self.interval = 15         # שניות
+        self.interval = 10   # 10 שניות
+
+    def clear_watchlist(self):
+        """נקה את הרשימה (תקרא כל סריקה ראשית)"""
+        self.watchlist = []
 
     def add_to_watchlist(self, coin: dict):
-        """הוסף מטבע למעקב צמוד (READY/ARMED)"""
         symbol = coin["symbol"]
         if not any(c["symbol"] == symbol for c in self.watchlist):
             self.watchlist.append({
@@ -35,53 +38,35 @@ class LiveMonitor(threading.Thread):
                 "setup_type": coin.get("setup_type", "BREAKOUT"),
                 "added": datetime.now(),
             })
-            log.info(f"Live Monitor: added {symbol} (trigger={coin.get('trigger_price', 0):.5f})")
-
-    def remove_from_watchlist(self, symbol: str):
-        self.watchlist = [c for c in self.watchlist if c["symbol"] != symbol]
+            log.info(f"Live Monitor: ARM {symbol} (trigger={coin.get('trigger_price', 0):.5f})")
 
     def run(self):
         while self.running:
-            for item in self.watchlist[:]:  # copy for safe removal
+            for item in self.watchlist[:]:
                 try:
-                    df = get_candles(item["symbol"], "1m", limit=2)
+                    df = get_candles(item["symbol"], "1m", limit=3)
                     if df is None or len(df) < 2:
                         continue
                     last_close = float(df["close"].iloc[-1])
-                    prev_close = float(df["close"].iloc[-2])
-                    rvol = float(df["volume"].iloc[-1]) / float(df["volume"].iloc[-10:-1].mean()) if len(df) >= 10 else 0
+                    rvol = float(df["volume"].iloc[-1]) / float(df["volume"].iloc[-10:-1].mean()) if len(df) >= 10 else 1.0
 
-                    trigger = item["trigger"]
-
-                    # בדיקת פריצת טריגר עם Volume
-                    if last_close >= trigger and rvol > 1.2:
-                        log.info(f"LIVE TRIGGER: {item['symbol']} @ {last_close:.5f} (RVOL={rvol:.1f})")
-                        # Order Validation
-                        if self._validate_order(item, last_close, rvol):
-                            # פתח עסקה
-                            signal = {
-                                "symbol": item["symbol"],
-                                "entry": last_close,
-                                "sl": item["sl"],
-                                "tp1": item["tp1"],
-                                "tp2": item["tp2"],
-                                "setup_type": item["setup_type"],
-                            }
-                            trade = self.trade_mgr.open_trade(signal, last_close)
-                            if trade:
-                                self.send(f"🟢 LIVE BUY {item['symbol']} @ {last_close:.5f}")
-                            self.remove_from_watchlist(item["symbol"])
+                    if last_close >= item["trigger"] and rvol > 1.2:
+                        log.info(f"ARM TRIGGER: {item['symbol']} @ {last_close:.5f}")
+                        signal = {
+                            "symbol": item["symbol"],
+                            "entry": last_close,
+                            "sl": item["sl"],
+                            "tp1": item["tp1"],
+                            "tp2": item["tp2"],
+                            "setup_type": item["setup_type"],
+                        }
+                        trade = self.trade_mgr.open_trade(signal, last_close)
+                        if trade:
+                            self.send(f"🟢 ARM→BUY {item['symbol']} @ {last_close:.5f}")
+                        self.watchlist.remove(item)
                 except Exception as e:
-                    log.error(f"Live Monitor error for {item['symbol']}: {e}")
-
+                    log.error(f"Live Monitor error {item['symbol']}: {e}")
             time.sleep(self.interval)
-
-    def _validate_order(self, item: dict, price: float, rvol: float) -> bool:
-        """בדיקה אחרונה לפני כניסה"""
-        if rvol < 1.2:
-            return False
-        # אפשר להוסיף Market Health, News, Spread checks
-        return True
 
     def stop(self):
         self.running = False
