@@ -377,7 +377,7 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Learning recorder skipped: {e}")
 
-    try:
+        try:
         from tools.shadow_mode import save_shadow_signal, update_forward_returns
         for c in top:
             save_shadow_signal(c, c.get("signal", "IGNORE"))
