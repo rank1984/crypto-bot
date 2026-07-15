@@ -175,6 +175,19 @@ def run_scan() -> None:
     from scanner.decision_engine import decide_batch
     top = decide_batch(top)
 
+    # ── ודא שלכל מטבע יש last_price ───────────────────────────────────────
+    for c in top:
+        if "last_price" not in c or c.get("last_price", 0) == 0:
+            # fallback: נסה close, price, או שלוף מנרות
+            fallback_price = c.get("close", c.get("price", 0))
+            if fallback_price == 0:
+                # שלוף נר אחרון
+                df_tmp = get_candles(c["symbol"], "5m", limit=1)
+                if df_tmp is not None and len(df_tmp) > 0:
+                    fallback_price = float(df_tmp["close"].iloc[-1])
+            c["last_price"] = fallback_price
+    # ──────────────────────────────────────────────────────────────────────────
+
     # ── 4. Quality Gate (legacy) ──────────────────────────────────────────────
     from scanner.quality_gate import apply_quality_gate_all
     top = apply_quality_gate_all(top)
