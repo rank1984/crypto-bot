@@ -109,7 +109,9 @@ def scan_coin(symbol: str) -> Optional[dict]:
               "is_compressed":   flow["is_compressed"],
               "whale_detected":  flow["whale_detected"],
               "oi_source":       flow.get("oi_source", "MISSING"),
-              "symbol":          symbol,  # <--- התיקון ל-UNK
+              "symbol":          symbol,
+              "final_score":     score,      # ← הוסף
+              "probability":     0,          # ← הוסף (0 זמני, יתעדכן כשיהיה AI)
               },
         df_5m=df_5m, btc_mom_5m=0.0,
     )
