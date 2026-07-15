@@ -1,8 +1,6 @@
 """
 CRYPTO-BOT Elite — Entry Engine v1
-MARKET_HEALTH = 50
-NEWS_SCORE = 50
-BTC_REGIME = ""
+
 מפסיק "לדרג מטבעות" ומתחיל להגיד:
     BUY  — עם מחיר כניסה, SL, TP
     WAIT — setup קיים אבל טריגר עוד לא הופעל
@@ -15,6 +13,10 @@ from typing import Optional
 import pandas as pd
 from utils.logger import get_logger
 from tools.shadow_mode import record_trade
+
+MARKET_HEALTH = 50
+NEWS_SCORE = 50
+BTC_REGIME = ""
 
 log = get_logger(__name__)
 
