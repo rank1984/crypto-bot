@@ -60,7 +60,6 @@ live_monitor.start()
 
 
 def _trade_open_message(trade) -> str:
-    """צור הודעת פתיחת עסקה לטלגרם."""
     quality = getattr(trade, 'quality', 0)
     return (
         f"🟢 BUY {trade.symbol}\n"
@@ -73,7 +72,6 @@ def _trade_open_message(trade) -> str:
     )
 
 def _trade_close_message(trade, action: dict) -> str:
-    """צור הודעת סגירת עסקה."""
     return (
         f"🔴 EXIT {trade.symbol} @ {action['price']:.4f}\n"
         f"Reason: {action['reason']}\n"
@@ -82,7 +80,6 @@ def _trade_close_message(trade, action: dict) -> str:
     )
 
 def _trade_partial_message(trade, action: dict) -> str:
-    """צור הודעת מימוש חלקי."""
     return (
         f"🟡 TP {action.get('tp','PARTIAL')} {trade.symbol}\n"
         f"Price: {action['price']:.4f}\n"
@@ -102,10 +99,10 @@ def run_scan() -> None:
 
     # ── 1. Universe ───────────────────────────────────────────────────────────
     btc_1h_mov = 0.0
-    
+
     if USE_DYNAMIC_UNIVERSE:
         log.info("Mode: Dynamic Universe")
-        btc_df     = get_candles("BTCUSDT", "1hour", limit=3)
+        btc_df = get_candles("BTCUSDT", "1hour", limit=3)
         if btc_df is not None and len(btc_df) >= 2:
             btc_1h_mov = (float(btc_df["close"].iloc[-1]) - float(btc_df["close"].iloc[-2])) \
                          / float(btc_df["close"].iloc[-2]) * 100
@@ -118,27 +115,18 @@ def run_scan() -> None:
         log.error("Empty universe — skipping scan")
         return
 
-    # ── 2. Score & Rank ───────────────────────────────────────────────────────
-        # ── Market Health (לפני ranking) ──────────────────────────────────────────
-    btc_1h_mov = 0.0
-    if USE_DYNAMIC_UNIVERSE:
-        btc_df = get_candles("BTCUSDT", "1hour", limit=3)
-        if btc_df is not None and len(btc_df) >= 2:
-            btc_1h_mov = (float(btc_df["close"].iloc[-1]) - float(btc_df["close"].iloc[-2])) \
-                         / float(btc_df["close"].iloc[-2]) * 100
-
-    # חישוב Market Health (לפני rank_universe)
+    # ── Market Health (לפני rank_universe – מחשבים עם ערכי default) ──────────
     news_score = get_news_score()
     market_health = get_market_health(
         btc_change_1h=btc_1h_mov,
-        oi_change_pct=0,  # יוחלף אחרי ranking
+        oi_change_pct=0,
         funding_rate=0.0,
         liquidations=0.0,
         news_score=news_score,
-        regime="RANGE"  # יוחלף אחרי ranking
+        regime="RANGE"
     )
-    
-    # עדכון גלובלי
+
+    # עדכון גלובלי ב-entry_engine (לפני rank_universe)
     import scanner.entry_engine as entry_engine
     entry_engine.GLOBAL_MARKET_HEALTH = market_health
     entry_engine.GLOBAL_NEWS_SCORE = news_score
@@ -152,7 +140,7 @@ def run_scan() -> None:
         send_telegram([], stats=_diag)
         return
 
-    # ── Market Health & Event Check ───────────────────────────────────────────
+    # ── חישוב Market Health מחדש עם נתוני ranking ────────────────────────────
     if _diag is not None:
         if hasattr(_diag, 'get'):
             oi_change_total = _diag.get("total_oi_change", 0)
@@ -179,22 +167,21 @@ def run_scan() -> None:
         news_score=news_score,
         regime=regime
     )
-    
-    # הוספת market_health לכל מטבע לשימוש ב-ARM
+
+    # עדכון גלובלי סופי
+    entry_engine.GLOBAL_MARKET_HEALTH = market_health
+    entry_engine.GLOBAL_NEWS_SCORE = news_score
+    entry_engine.GLOBAL_BTC_REGIME = regime
+
+    # הוספת market_health לכל מטבע
     for c in top:
         c["market_health"] = market_health
         c["news_score"] = news_score
         c["btc_regime"] = regime
-    
+
     health_msg = f"Market Health: {market_health:.0f}/100 | News Score: {news_score} | Regime: {regime} | Circuit Breaker: {circuit_breaker.status()}"
     send_telegram([{"msg": health_msg}])
 
-    # ── עדכון market_health גלובלי לשימוש ב-entry_engine ──────────────────
-    import scanner.entry_engine as entry_engine
-    entry_engine.MARKET_HEALTH = market_health
-    entry_engine.NEWS_SCORE = news_score
-    entry_engine.BTC_REGIME = regime
-    
     # בדיקת אירועים קרובים
     original_max = None
     if trading_disabled():
@@ -207,47 +194,33 @@ def run_scan() -> None:
     from scanner.decision_engine import decide_batch
     top = decide_batch(top)
 
-    # ── ודא שלכל מטבע יש last_price ───────────────────────────────────────
-    for c in top:
-        if "last_price" not in c or c.get("last_price", 0) == 0:
-            # fallback: נסה close, price, או שלוף מנרות
-            fallback_price = c.get("close", c.get("price", 0))
-            if fallback_price == 0:
-                # שלוף נר אחרון
-                df_tmp = get_candles(c["symbol"], "5m", limit=1)
-                if df_tmp is not None and len(df_tmp) > 0:
-                    fallback_price = float(df_tmp["close"].iloc[-1])
-            c["last_price"] = fallback_price
-    # ──────────────────────────────────────────────────────────────────────────
-    # עדכון משתנים גלובליים ב-entry_engine
-    import scanner.entry_engine as entry_engine
-    entry_engine.GLOBAL_MARKET_HEALTH = market_health
-    entry_engine.GLOBAL_NEWS_SCORE = news_score
-    entry_engine.GLOBAL_BTC_REGIME = regime
-    
     # ── 4. Quality Gate (legacy) ──────────────────────────────────────────────
     from scanner.quality_gate import apply_quality_gate_all
     top = apply_quality_gate_all(top)
 
-        # ── Compute trigger distance for ARM classification ───────────────────────
+    # ── ודא last_price + trigger_distance_pct ────────────────────────────────
     for c in top:
-        last_price = c.get("last_price", c.get("close", 0))
+        # last_price fallback
+        if "last_price" not in c or c.get("last_price", 0) == 0:
+            fallback = c.get("close", c.get("price", 0))
+            if fallback == 0:
+                df_tmp = get_candles(c["symbol"], "5m", limit=1)
+                if df_tmp is not None and len(df_tmp) > 0:
+                    fallback = float(df_tmp["close"].iloc[-1])
+            c["last_price"] = fallback
+
+        # trigger distance
+        last_price = c.get("last_price", 0)
         trigger_price = c.get("trigger_price", c.get("entry_price", 0))
-        
         if last_price > 0 and trigger_price > 0:
             c["trigger_distance_pct"] = ((trigger_price - last_price) / last_price) * 100
         elif trigger_price > 0:
             c["trigger_distance_pct"] = 0.5
         else:
             c["trigger_distance_pct"] = 999
-            
+
         if "trigger_price" not in c and trigger_price > 0:
             c["trigger_price"] = trigger_price
-    # ──────────────────────────────────────────────────────────────────────────
-        # וודא ש-trigger_price שמור (למקרה שלא קיים)
-        if "trigger_price" not in c and trigger_price > 0:
-            c["trigger_price"] = trigger_price
-    # ──────────────────────────────────────────────────────────────────────────
 
     # ── 5. Signal Filter (כולל ARM) ──────────────────────────────────────────
     from scanner.signal_filter import filter_coins
@@ -265,7 +238,7 @@ def run_scan() -> None:
             f"rs={c.get('rs_1h',0):.2f} "
             f"decision={c.get('entry_decision','NO')}"
         )
-    
+
     log.info(
         f"FILTER RESULT → "
         f"BUY={len(filtered.get('buy', []))} "
@@ -276,12 +249,11 @@ def run_scan() -> None:
 
     # ── Live Monitor: Priority Queue (Top 5 ARM) ─────────────────────────────
     arm_candidates = filtered.get("arm", [])
-    # מיין לפי ציון משולב (Probability + Flow + OI)
     arm_candidates.sort(key=lambda x: (x.get("probability", 0)*0.5 + x.get("flow_score", 0)*0.3 + x.get("oi_change", 0)/10), reverse=True)
-    top_arm = arm_candidates[:5]  # max 5
-    
-    live_monitor.clear_watchlist()  # נקה לפני הוספה
-    
+    top_arm = arm_candidates[:5]
+
+    live_monitor.clear_watchlist()
+
     for c in top_arm:
         if "trigger_price" not in c:
             entry = c.get("entry_price", c.get("last_price", 0))
@@ -298,7 +270,7 @@ def run_scan() -> None:
         _send_telegram_safe(msg)
 
     # ── 6. Trade Management ───────────────────────────────────────────────────
-    # 6a. Open new trades (רק אם Circuit Breaker מאפשר)
+    # 6a. Open new trades
     if circuit_breaker.can_trade():
         for c in filtered.get("buy", []):
             if trade_mgr.can_open_trade():
@@ -321,7 +293,6 @@ def run_scan() -> None:
                 if tp2 == 0:
                     tp2 = round(entry_price * 1.10, 8)
 
-                # חישוב Trade Quality Score
                 quality = calc_trade_quality(c, news_score)
                 c["trade_quality"] = quality
 
@@ -365,12 +336,10 @@ def run_scan() -> None:
         else:
             coin_data["last_price"] = current_price
 
-        # ── הוספת משתני שוק ל-coin_data ──────────────────────────────────────
         coin_data["market_health"] = market_health
         coin_data["news_score"] = news_score
         coin_data["btc_regime"] = regime
 
-        # ── Trade Replay Snapshot ─────────────────────────────────────────────
         try:
             save_snapshot(trade, coin_data, market_health, news_score, regime)
         except Exception as e:
@@ -392,7 +361,6 @@ def run_scan() -> None:
             elif action["action"] == "SELL_ALL":
                 msg = _trade_close_message(trade, action)
                 _send_telegram_safe(msg)
-                # ── Circuit Breaker Update ────────────────────────────────────
                 circuit_breaker.update_on_close(action["pnl"], market_health)
 
     # ── 7. Telegram summary ───────────────────────────────────────────────────
@@ -446,7 +414,6 @@ def run_scan() -> None:
                      f"SL={t.sl:.4f} | TP1={t.tp1:.4f} | TP2={t.tp2:.4f} | "
                      f"Health={getattr(t, 'health', 0):.0f} | Quality={quality:.0f}")
 
-    # שחזור max_trades
     if original_max is not None:
         trade_mgr.max_trades = original_max
 
