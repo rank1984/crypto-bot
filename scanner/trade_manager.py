@@ -107,7 +107,6 @@ class TradeManager:
             highest_high=entry,
             lowest_low=entry,
         )
-        trade.set_state("NEW")
         trade.set_state("ACTIVE")
 
         self.trades[symbol] = trade
