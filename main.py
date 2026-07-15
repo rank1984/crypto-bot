@@ -157,6 +157,8 @@ def run_scan() -> None:
     # הוספת market_health לכל מטבע לשימוש ב-ARM
     for c in top:
         c["market_health"] = market_health
+        c["news_score"] = news_score
+        c["btc_regime"] = regime
     
     health_msg = f"Market Health: {market_health:.0f}/100 | News Score: {news_score} | Regime: {regime} | Circuit Breaker: {circuit_breaker.status()}"
     send_telegram([{"msg": health_msg}])
@@ -305,6 +307,11 @@ def run_scan() -> None:
             }
         else:
             coin_data["last_price"] = current_price
+
+        # ── הוספת משתני שוק ל-coin_data ──────────────────────────────────────
+        coin_data["market_health"] = market_health
+        coin_data["news_score"] = news_score
+        coin_data["btc_regime"] = regime
 
         # ── Trade Replay Snapshot ─────────────────────────────────────────────
         try:
