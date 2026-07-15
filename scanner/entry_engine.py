@@ -14,9 +14,9 @@ import pandas as pd
 from utils.logger import get_logger
 from tools.shadow_mode import record_trade
 
-MARKET_HEALTH = 50
-NEWS_SCORE = 50
-BTC_REGIME = ""
+GLOBAL_MARKET_HEALTH = 50.0
+GLOBAL_NEWS_SCORE = 50.0
+GLOBAL_BTC_REGIME = ""
 
 log = get_logger(__name__)
 
@@ -229,6 +229,11 @@ def evaluate_entry(
     
     result = _run_core_logic(coin, df_5m, btc_mom_1h, btc_mom_5m)
     
+    # הוספת משתני שוק גלובליים למילון
+    coin["market_health"] = GLOBAL_MARKET_HEALTH
+    coin["news_score"] = GLOBAL_NEWS_SCORE
+    coin["btc_regime"] = GLOBAL_BTC_REGIME
+    
     log.info(
         f"{coin.get('symbol', 'UNK')} | "
         f"flow={coin.get('flow_score', 0):.1f} | "
@@ -239,24 +244,6 @@ def evaluate_entry(
     )
     
     # שימוש ב-Shadow Tracker החדש ששומר את כל המשתנים למסד הנתונים
-    def evaluate_entry(
-    coin:        dict,
-    df_5m:       pd.DataFrame,
-    btc_mom_1h:  float = 0.0,
-    btc_mom_5m:  float = 0.0,
-) -> EntrySignal:
-    
-    result = _run_core_logic(coin, df_5m, btc_mom_1h, btc_mom_5m)
-    
-    # הוספת משתני שוק גלובליים למילון
-    coin["market_health"] = GLOBAL_MARKET_HEALTH
-    coin["news_score"] = GLOBAL_NEWS_SCORE
-    coin["btc_regime"] = GLOBAL_BTC_REGIME
-    
-    log.info(...)
-    
     record_trade(coin, result)
-    
-    return result
     
     return result
