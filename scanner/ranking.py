@@ -240,7 +240,7 @@ def rank_universe(symbols: list[str]) -> list[dict]:
                 if _stats and "flow_score" in r:
                     _stats.record_flow(r["flow_score"])
 
-                s_bonus = sympathy_bonus(sym, sympathy_plays)
+                s_bonus = sympathy_bonus(r, sympathy_plays)  # r הוא המילון, sym היא מחרוזת
                 if s_bonus > 0:
                     r["final_score"] = round(min(r["final_score"] + s_bonus, 100.0), 1)
                     r["is_sympathy"] = True
