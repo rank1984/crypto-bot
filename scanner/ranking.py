@@ -15,7 +15,7 @@ from scanner.flow_engine       import calc_flow_score
 from scanner.pre_breakout      import calc_pre_breakout_score
 from scanner.regime            import detect_regime, get_min_threshold
 from scanner.entry_engine      import evaluate_entry, EntrySignal
-from scanner.probability_engine import enrich_with_probability  # ← הוסף
+from scanner.probability_engine import enrich_with_probability
 from storage.sqlite_db         import init_db, save_signal
 from utils.config import TOP_N
 try:
@@ -100,24 +100,7 @@ def scan_coin(symbol: str) -> Optional[dict]:
         ema20=ind["ema20"], ema50=ind["ema50"], price=last_price,
     )
 
-    # Entry Engine — כולל Flow data ו-symbol
-    entry_signal = evaluate_entry(
-        coin={**mom, **vol, **ind, "rs_1h": rs["rs_1h"], "rs_4h": rs["rs_4h"],
-              "vwap": ind["vwap"], "ema20": ind["ema20"], "rsi_14": ind["rsi_14"], "rvol": vol["rvol"],
-              "flow_score":      flow["flow_score"],
-              "pre_score":       pre["pre_score"],
-              "oi_change":       flow["oi_change"],
-              "is_compressed":   flow["is_compressed"],
-              "whale_detected":  flow["whale_detected"],
-              "oi_source":       flow.get("oi_source", "MISSING"),
-              "symbol":          symbol,
-              "final_score":     score,
-              "probability":     round(score * 0.88, 1),  # ← הוחלף מ-0 כדי לתת בסיס לפני העשרה מלאה
-              },
-        df_5m=df_5m, btc_mom_5m=0.0,
-    )
-
-    return {
+    coin = {
         "symbol":        symbol,
         "price":         last_price,
         "momentum_3m":   mom["momentum_3m"],
@@ -141,7 +124,8 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "momentum_score":  ms,
         "breakout_score":  bs,
         "final_score":     score,
-        "probability":     round(score * 0.88, 1), # ← ערך בסיסי זמני במילון
+        "probability":     round(score * 0.88, 1),
+        
         # flow
         "flow_score":       flow["flow_score"],
         "flow_components":  flow["components"],
@@ -150,12 +134,29 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "cvd_trend":        flow["cvd_trend"],
         "oi_change":        flow["oi_change"],
         "funding_rate":     flow["funding_rate"],
+        
         # pre-breakout
         "pre_score":        pre["pre_score"],
         "phase":            pre["phase"],
         "phase_label":      pre["phase_label"],
         "pre_components":   pre["components"],
-        # entry
+        
+        "is_sympathy":     False,
+        "leader":          "",
+        "regime":          "",
+    }
+
+    # ── Probability Engine ─────────────────────────────────────────────
+    coin = enrich_with_probability(coin)
+
+    # ── Entry Engine ───────────────────────────────────────────────────
+    entry_signal = evaluate_entry(
+        coin=coin,
+        df_5m=df_5m,
+        btc_mom_5m=0.0,
+    )
+
+    coin.update({
         "entry_decision":  entry_signal.decision,
         "entry_setup":     entry_signal.setup_type,
         "entry_price":     entry_signal.entry,
@@ -164,10 +165,9 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "entry_tp2":       entry_signal.tp2,
         "entry_rr":        entry_signal.rr,
         "entry_reason":    entry_signal.reason,
-        "is_sympathy":     False,
-        "leader":          "",
-        "regime":          "",
-    }
+    })
+
+    return coin
 
 
 def rank_universe(symbols: list[str]) -> list[dict]:
@@ -235,8 +235,6 @@ def rank_universe(symbols: list[str]) -> list[dict]:
             r = scan_coin(sym)
             
             if r is not None:
-                r = enrich_with_probability(r)  # ← הוסף את העשרת ההסתברות כאן
-                
                 cnt["ok"] += 1
                 if _stats and "flow_score" in r:
                     _stats.record_flow(r["flow_score"])
@@ -249,14 +247,14 @@ def rank_universe(symbols: list[str]) -> list[dict]:
                     r["leader"] = info.get("leader", "")
 
                 r["regime"] = regime
-                results.append(r)  # ← הוספה מתבצעת פעם אחת בלבד
+                results.append(r)
 
         except Exception as e:
             log.warning(f"{sym}: {e}")
 
     log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters (rvol_fail={cnt['rvol']} hard_fail={cnt['hard']})")
 
-    # דירוג מורכב חלופי מתוקן
+    # דירוג מורכב חלופי
     def _rank_score(x):
         score = (
             x.get("flow_score", 0) * 0.30 +
@@ -286,7 +284,6 @@ def rank_universe(symbols: list[str]) -> list[dict]:
     results = unique
 
     top = []
-    # FIX: סעיפים 1+3: לא לסנן BUY, ולהדפיס למה מטבע נפסל
     for r in results:
         is_buy = r.get("entry_decision") == "BUY"
         passes_thresh = r.get("final_score", 0) >= min_threshold
@@ -294,11 +291,9 @@ def rank_universe(symbols: list[str]) -> list[dict]:
         if is_buy or passes_thresh:
             top.append(r)
         else:
-            # נדפיס סיבת פסילה למטבעות שהיו קרובים (כדי לא להספים את הלוג ב-100 מטבעות זבל)
             if r.get("flow_score", 0) >= 40 or r.get("pre_score", 0) >= 40:
                 log.info(f"Rejected {r['symbol']}: FLOW={r.get('flow_score',0)} PRE={r.get('pre_score',0)} FINAL={r.get('final_score',0)} Threshold={min_threshold} -> rejected")
 
-    # FIX: סעיף 2: תמיד לשלוח לפחות 5 מועמדים, גם אם אין BUY והם לא עברו רף
     if len(top) < 5:
         log.info(f"Only {len(top)} passed threshold/BUY. Forcing top 5...")
         for r in results:
