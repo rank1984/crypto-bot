@@ -128,6 +128,9 @@ def record_trade(coin: dict, signal):
 
     try:
         with _conn() as c:
+            count = c.execute("SELECT COUNT(*) FROM shadow_trades").fetchone()[0]
+            log.info(f"Shadow DB rows BEFORE insert: {count}")
+
             c.execute('''
                 INSERT INTO shadow_trades (
                     ts, symbol, decision, setup, entry_price, tp1, tp2, sl,
@@ -158,6 +161,10 @@ def record_trade(coin: dict, signal):
                 coin.get("funding", 0),
                 'ACTIVE'
             ))
+
+            count = c.execute("SELECT COUNT(*) FROM shadow_trades").fetchone()[0]
+            log.info(f"Shadow DB rows AFTER insert: {count}")
+
         log.info(f"Recorded shadow trade for {coin.get('symbol', 'UNKNOWN')} ({signal.decision})")
         export_shadow_csv()
     except Exception as e:
@@ -255,6 +262,7 @@ def export_shadow_csv():
                 "Max DD%", "Trade State", "Exit Price", "Duration (m)"
             ])
 
+            log.info(f"Exporting {len(trades)} shadow trades")
             for t in trades:
                 dt_str = datetime.fromisoformat(t["ts"]).strftime("%H:%M:%S") if t["ts"] else ""
                 writer.writerow([
