@@ -15,6 +15,7 @@ from scanner.flow_engine       import calc_flow_score
 from scanner.pre_breakout      import calc_pre_breakout_score
 from scanner.regime            import detect_regime, get_min_threshold
 from scanner.entry_engine      import evaluate_entry, EntrySignal
+from scanner.probability_engine import enrich_with_probability  # ← הוסף
 from storage.sqlite_db         import init_db, save_signal
 from utils.config import TOP_N
 try:
@@ -110,8 +111,8 @@ def scan_coin(symbol: str) -> Optional[dict]:
               "whale_detected":  flow["whale_detected"],
               "oi_source":       flow.get("oi_source", "MISSING"),
               "symbol":          symbol,
-              "final_score":     score,      # ← הוסף
-              "probability":     0,          # ← הוסף (0 זמני, יתעדכן כשיהיה AI)
+              "final_score":     score,
+              "probability":     round(score * 0.88, 1),  # ← הוחלף מ-0 כדי לתת בסיס לפני העשרה מלאה
               },
         df_5m=df_5m, btc_mom_5m=0.0,
     )
@@ -140,6 +141,7 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "momentum_score":  ms,
         "breakout_score":  bs,
         "final_score":     score,
+        "probability":     round(score * 0.88, 1), # ← ערך בסיסי זמני במילון
         # flow
         "flow_score":       flow["flow_score"],
         "flow_components":  flow["components"],
@@ -229,35 +231,49 @@ def rank_universe(symbols: list[str]) -> list[dict]:
                 cnt["hard"] += 1
                 if _stats: _stats.hard_fail += 1; _stats.hard_reasons[reason] = _stats.hard_reasons.get(reason,0)+1
                 continue
+            
             r = scan_coin(sym)
-            if r is None:
-                continue
-            cnt["ok"] += 1
-            if _stats and 'flow_score' in (r or {}): _stats.record_flow(r['flow_score'])
-            results.append(r)
-            s_bonus = sympathy_bonus(sym, sympathy_plays)
-            if s_bonus > 0:
-                r["final_score"] = round(min(r["final_score"] + s_bonus, 100.0), 1)
-                r["is_sympathy"] = True
-                info = next((p for p in sympathy_plays if p["symbol"] == sym), {})
-                r["leader"] = info.get("leader","")
-            r["regime"] = regime
-            results.append(r)
+            
+            if r is not None:
+                r = enrich_with_probability(r)  # ← הוסף את העשרת ההסתברות כאן
+                
+                cnt["ok"] += 1
+                if _stats and "flow_score" in r:
+                    _stats.record_flow(r["flow_score"])
+
+                s_bonus = sympathy_bonus(sym, sympathy_plays)
+                if s_bonus > 0:
+                    r["final_score"] = round(min(r["final_score"] + s_bonus, 100.0), 1)
+                    r["is_sympathy"] = True
+                    info = next((p for p in sympathy_plays if p["symbol"] == sym), {})
+                    r["leader"] = info.get("leader", "")
+
+                r["regime"] = regime
+                results.append(r)  # ← הוספה מתבצעת פעם אחת בלבד
+
         except Exception as e:
             log.warning(f"{sym}: {e}")
 
     log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters (rvol_fail={cnt['rvol']} hard_fail={cnt['hard']})")
 
-    # דירוג מורכב חלופי
+    # דירוג מורכב חלופי מתוקן
     def _rank_score(x):
-        return (
-            x.get("flow_score",    0) * 0.30 +
-            x.get("pre_score",     0) * 0.25 +
-            x.get("final_score",   0) * 0.20 +
-            x.get("probability",   0) * 0.15 +
-            (20 if x.get("entry_decision") == "BUY"     else 0) +
-            (8  if x.get("signal")         == "PREPARE" else 0)
+        score = (
+            x.get("flow_score", 0) * 0.30 +
+            x.get("pre_score", 0) * 0.25 +
+            x.get("final_score", 0) * 0.20 +
+            x.get("probability", 0) * 0.15
         )
+
+        if x.get("entry_decision") == "BUY":
+            score += 20
+        elif x.get("entry_decision") == "WAIT":
+            score += 10
+
+        if x.get("signal") == "PREPARE":
+            score += 8
+
+        return score
     
     results.sort(key=_rank_score, reverse=True)
 
