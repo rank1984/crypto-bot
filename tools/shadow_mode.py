@@ -112,7 +112,8 @@ def save_shadow_signal(coin: dict, signal: str):
                 coin.get("btc_regime", ""),
                 coin.get("funding", 0),
             ))
-        # CSV export will be called once after all saves (from main.py)
+                # CSV export will be called once after all saves (from main.py)
+        export_shadow_csv()  # ← הוסף
     except Exception as e:
         log.error(f"save_shadow_signal failed: {e}")
 
