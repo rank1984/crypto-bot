@@ -1,3 +1,2 @@
 ﻿Time,Coin,Decision,Setup,Entry,TP1,TP2,SL,Final Score,Probability,Flow,Pre,OI,Funding,RS,Compression,Market Health,News Score,BTC Regime,Status,Reason,Exit Reason,PnL,PnL%,Max Profit%,Max DD%,Trade State,Exit Price,Duration (m)
-06:25:14,ORDIUSDT,BUY,DIP_BUY,3.663,3.84615,4.21245,3.626775,45.2,0.0,49.4,44.9,517.46,0.0,0.445,True,46.0,35.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,
-06:24:25,DODOUSDT,BUY,DIP_BUY,0.0267,0.028035,0.030705,0.02633765,61.1,0.0,26.8,36.6,116.49,0.0,0.266,False,46.0,35.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,
+06:39:41,BASEDUSDT,BUY,DIP_BUY,0.08813,0.0925365,0.1013495,0.08601775,85.9,75.6,25.0,33.2,-9.11,0.0,2.351,False,46.0,35.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,
