@@ -146,8 +146,9 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "regime":          "",
     }
 
-    # ── Probability Engine ─────────────────────────────────────────────
-    coin = enrich_with_probability(coin)
+        # ── Probability Engine ─────────────────────────────────────────────
+    # enrich_with_probability מצפה לרשימה – עטוף את coin ברשימה
+    coin = enrich_with_probability([coin])[0]
 
     # ── Entry Engine ───────────────────────────────────────────────────
     entry_signal = evaluate_entry(
