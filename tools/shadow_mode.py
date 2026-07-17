@@ -69,6 +69,7 @@ def init_shadow_db():
             ("trade_state", "TEXT DEFAULT 'ACTIVE'"),
             ("exit_price", "REAL DEFAULT 0"),
             ("trigger_price", "REAL DEFAULT 0"),
+            ("duration_minutes", "INTEGER DEFAULT 0"),
             ("outcome_trigger_hit", "INTEGER DEFAULT 0"),
             ("outcome_tp1_hit", "INTEGER DEFAULT 0"),
             ("outcome_tp2_hit", "INTEGER DEFAULT 0"),
@@ -282,33 +283,52 @@ def export_shadow_csv():
                 "Compression", "Market Health", "News Score", "BTC Regime",
                 "Status", "Reason", "Exit Reason", "PnL", "PnL%", "Max Profit%",
                 "Max DD%", "Trade State", "Exit Price", "Duration (m)",
-                # ── כותרות ה-CSV החדשות עבור נתוני ה-Outcomes ──────────────────
-                "Out Trigger Hit", "Out TP1 Hit", "Out TP2 Hit", "Out SL Hit", 
-                "Out Max Up%", "Out Max Down%", "Out Checked",
-                "Out Trigger (min)", "Out TP1 (min)", "Out TP2 (min)", "Out SL (min)",
-                "Out High Price", "Out Low Price"
+                "Trigger Hit", "TP1 Hit", "TP2 Hit", "SL Hit",
+                "Max Up%", "Max Down%", "Outcome Checked"
             ])
 
             log.info(f"Exporting {len(trades)} shadow trades")
             for t in trades:
+                t = dict(t)   # ← המרה קריטית שמנקה שגיאות טיפוס
                 dt_str = datetime.fromisoformat(t["ts"]).strftime("%H:%M:%S") if t["ts"] else ""
                 writer.writerow([
-                    dt_str, t["symbol"], t["decision"], t["setup"],
-                    t["entry_price"], t.get("trigger_price", 0), t["tp1"], t["tp2"], t["sl"],
-                    t["ai_score"], t["probability"], t["flow_score"], t["pre_score"],
-                    t["oi_change"], t["funding"], t["rs_1h"], t["is_compressed"],
-                    t["market_health"], t["news_score"], t["btc_regime"],
-                    t["status"], t["reason"], t["exit_reason"], t["pnl"], t["pnl_pct"],
-                    t["max_profit_pct"], t["max_drawdown_pct"], t["trade_state"],
-                    t["exit_price"], t["duration_minutes"],
-                    # ── כתיבת הנתונים החדשים לשורת ה-CSV ───────────────────────
-                    t.get("outcome_trigger_hit", 0), t.get("outcome_tp1_hit", 0),
-                    t.get("outcome_tp2_hit", 0), t.get("outcome_sl_hit", 0),
-                    t.get("outcome_max_up_pct", 0), t.get("outcome_max_down_pct", 0),
-                    t.get("outcome_checked", 0),
-                    t.get("outcome_trigger_min", 0), t.get("outcome_tp1_min", 0),
-                    t.get("outcome_tp2_min", 0), t.get("outcome_sl_min", 0),
-                    t.get("outcome_highest_price", 0), t.get("outcome_lowest_price", 0)
+                    dt_str, 
+                    t.get("symbol", ""), 
+                    t.get("decision", ""), 
+                    t.get("setup", ""),
+                    t.get("entry_price", 0), 
+                    t.get("trigger_price", 0), 
+                    t.get("tp1", 0), 
+                    t.get("tp2", 0), 
+                    t.get("sl", 0),
+                    t.get("ai_score", 0), 
+                    t.get("probability", 0), 
+                    t.get("flow_score", 0), 
+                    t.get("pre_score", 0),
+                    t.get("oi_change", 0), 
+                    t.get("funding", 0), 
+                    t.get("rs_1h", 0), 
+                    t.get("is_compressed", ""),
+                    t.get("market_health", 50), 
+                    t.get("news_score", 50), 
+                    t.get("btc_regime", ""),
+                    t.get("status", ""), 
+                    t.get("reason", ""), 
+                    t.get("exit_reason", ""), 
+                    t.get("pnl", 0), 
+                    t.get("pnl_pct", 0),
+                    t.get("max_profit_pct", 0), 
+                    t.get("max_drawdown_pct", 0), 
+                    t.get("trade_state", ""),
+                    t.get("exit_price", 0), 
+                    t.get("duration_minutes", 0),
+                    t.get("outcome_trigger_hit", 0), 
+                    t.get("outcome_tp1_hit", 0), 
+                    t.get("outcome_tp2_hit", 0),
+                    t.get("outcome_sl_hit", 0), 
+                    t.get("outcome_max_up_pct", 0), 
+                    t.get("outcome_max_down_pct", 0),
+                    t.get("outcome_checked", 0)
                 ])
         log.info(f"CSV Exported: {os.path.abspath(filepath)}")
     except Exception as e:
