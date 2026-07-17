@@ -15,15 +15,16 @@ def _conn():
     c.row_factory = sqlite3.Row
     return c
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 1. Init
-# ═══════════════════════════════════════════════════════════════════════════════
 def _add_column_if_not_exists(cursor, table, column, col_type):
     """מוסיף עמודה לטבלה אם היא עדיין לא קיימת."""
     try:
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
     except sqlite3.OperationalError:
         pass  # העמודה כבר קיימת
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. Init
+# ═══════════════════════════════════════════════════════════════════════════════
 def init_shadow_db():
     with _conn() as c:
         c.execute('''
@@ -53,7 +54,6 @@ def init_shadow_db():
                 exit_reason TEXT,
                 pnl REAL,
                 pnl_pct REAL DEFAULT 0,
-                duration_minutes INTEGER,
                 max_profit_pct REAL DEFAULT 0,
                 max_drawdown_pct REAL DEFAULT 0,
                 trade_state TEXT DEFAULT 'ACTIVE',
@@ -61,27 +61,25 @@ def init_shadow_db():
             )
         ''')
 
-        # ── ensure new columns ────────────────────────────────────────────────
-        for col, typ in [
+        # ── הרצה דינמית ובטוחה של כל העמודות החדשות ───────────────────────────
+        new_columns = [
             ("pnl_pct", "REAL DEFAULT 0"),
             ("max_profit_pct", "REAL DEFAULT 0"),
             ("max_drawdown_pct", "REAL DEFAULT 0"),
             ("trade_state", "TEXT DEFAULT 'ACTIVE'"),
             ("exit_price", "REAL DEFAULT 0"),
-                    # ── Outcome tracking columns ─────────────────────────────────────────
-        _add_column_if_not_exists(c, "shadow_trades", "trigger_price", "REAL DEFAULT 0")
-        _add_column_if_not_exists(c, "shadow_trades", "outcome_trigger_hit", "INTEGER DEFAULT 0")
-        _add_column_if_not_exists(c, "shadow_trades", "outcome_tp1_hit", "INTEGER DEFAULT 0")
-        _add_column_if_not_exists(c, "shadow_trades", "outcome_tp2_hit", "INTEGER DEFAULT 0")
-        _add_column_if_not_exists(c, "shadow_trades", "outcome_sl_hit", "INTEGER DEFAULT 0")
-        _add_column_if_not_exists(c, "shadow_trades", "outcome_max_up_pct", "REAL DEFAULT 0")
-        _add_column_if_not_exists(c, "shadow_trades", "outcome_max_down_pct", "REAL DEFAULT 0")
-        _add_column_if_not_exists(c, "shadow_trades", "outcome_checked", "INTEGER DEFAULT 0")
-        ]:
-            try:
-                c.execute(f"ALTER TABLE shadow_trades ADD COLUMN {col} {typ}")
-            except:
-                pass
+            ("trigger_price", "REAL DEFAULT 0"),
+            ("outcome_trigger_hit", "INTEGER DEFAULT 0"),
+            ("outcome_tp1_hit", "INTEGER DEFAULT 0"),
+            ("outcome_tp2_hit", "INTEGER DEFAULT 0"),
+            ("outcome_sl_hit", "INTEGER DEFAULT 0"),
+            ("outcome_max_up_pct", "REAL DEFAULT 0"),
+            ("outcome_max_down_pct", "REAL DEFAULT 0"),
+            ("outcome_checked", "INTEGER DEFAULT 0")
+        ]
+
+        for col, typ in new_columns:
+            _add_column_if_not_exists(c, "shadow_trades", col, typ)
 
     log.info("Shadow DB initialized for Trade Tracking")
     try:
@@ -100,10 +98,10 @@ def save_shadow_signal(coin: dict, signal: str):
         with _conn() as c:
             c.execute('''
                 INSERT INTO shadow_trades (
-                    ts, symbol, decision, setup, entry_price, tp1, tp2, sl,
+                    ts, symbol, decision, setup, entry_price, trigger_price, tp1, tp2, sl,
                     ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
                     probability, market_health, news_score, btc_regime, funding
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts,
                 coin.get("symbol", "UNKNOWN"),
@@ -128,8 +126,7 @@ def save_shadow_signal(coin: dict, signal: str):
                 coin.get("btc_regime", ""),
                 coin.get("funding", 0),
             ))
-                # CSV export will be called once after all saves (from main.py)
-        export_shadow_csv()  # ← הוסף
+        export_shadow_csv()
     except Exception as e:
         log.error(f"save_shadow_signal failed: {e}")
 
@@ -150,16 +147,17 @@ def record_trade(coin: dict, signal):
 
             c.execute('''
                 INSERT INTO shadow_trades (
-                    ts, symbol, decision, setup, entry_price, tp1, tp2, sl,
+                    ts, symbol, decision, setup, entry_price, trigger_price, tp1, tp2, sl,
                     ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
                     probability, market_health, news_score, btc_regime, funding, trade_state
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts,
                 coin.get("symbol", "UNKNOWN"),
                 signal.decision,
                 getattr(signal, "setup_type", ""),
                 getattr(signal, "entry", 0.0),
+                coin.get("trigger_price", 0.0),
                 getattr(signal, "tp1", 0.0),
                 getattr(signal, "tp2", 0.0),
                 getattr(signal, "sl", 0.0),
@@ -272,7 +270,7 @@ def export_shadow_csv():
         with open(filepath, mode='w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
             writer.writerow([
-                "Time", "Coin", "Decision", "Setup", "Entry", "TP1", "TP2", "SL",
+                "Time", "Coin", "Decision", "Setup", "Entry", "Trigger Price", "TP1", "TP2", "SL",
                 "Final Score", "Probability", "Flow", "Pre", "OI", "Funding", "RS",
                 "Compression", "Market Health", "News Score", "BTC Regime",
                 "Status", "Reason", "Exit Reason", "PnL", "PnL%", "Max Profit%",
@@ -284,7 +282,7 @@ def export_shadow_csv():
                 dt_str = datetime.fromisoformat(t["ts"]).strftime("%H:%M:%S") if t["ts"] else ""
                 writer.writerow([
                     dt_str, t["symbol"], t["decision"], t["setup"],
-                    t["entry_price"], t["tp1"], t["tp2"], t["sl"],
+                    t["entry_price"], t.get("trigger_price", 0), t["tp1"], t["tp2"], t["sl"],
                     t["ai_score"], t["probability"], t["flow_score"], t["pre_score"],
                     t["oi_change"], t["funding"], t["rs_1h"], t["is_compressed"],
                     t["market_health"], t["news_score"], t["btc_regime"],
