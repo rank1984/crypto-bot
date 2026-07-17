@@ -89,11 +89,6 @@ def _trade_partial_message(trade, action: dict) -> str:
 
 
 def run_scan() -> None:
-        try:
-        from tools.outcome_tracker import update_outcomes
-        update_outcomes()
-    except Exception as e:
-        log.debug(f"Outcome tracker error: {e}")
     log.info("── Scan started ──────────────────────────────────────")
 
     # ── 0. Init Databases ─────────────────────────────────────────────────────
