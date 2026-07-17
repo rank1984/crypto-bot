@@ -25,14 +25,14 @@ def update_outcomes():
     cur = conn.cursor()
 
     # בחר שורות עם entry_price>0, outcome_checked=0, ועברו מספיק זמן (12h)
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)).isoformat()
+    # מעבדים את כל השורות שלא נבדקו (ללא תלות בזמן)
     rows = cur.execute("""
-        SELECT * FROM shadow_trades
-        WHERE outcome_checked = 0
-          AND entry_price > 0
-          AND ts <= ?
-        ORDER BY id
-    """, (cutoff,)).fetchall()
+    SELECT * FROM shadow_trades
+    WHERE outcome_checked = 0
+      AND entry_price > 0
+    ORDER BY id
+    LIMIT 50
+    """).fetchall()
 
     updated = 0
     for row in rows:
