@@ -3,13 +3,13 @@ CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, ARM State, Circuit Break
 """
 import time, signal, sys, argparse
 
-from scanner.universe           import build_universe
-from scanner.dynamic_universe   import build_dynamic_universe
-from scanner.market_data        import get_candles
-from scanner.ranking            import rank_universe
-from notifier.sender            import send_telegram
-from utils.config               import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
-from utils.logger               import get_logger
+from scanner.universe            import build_universe
+from scanner.dynamic_universe    import build_dynamic_universe
+from scanner.market_data         import get_candles
+from scanner.ranking             import rank_universe
+from notifier.sender             import send_telegram
+from utils.config                import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
+from utils.logger                import get_logger
 
 # ── News & Event Engines ──────────────────────────────────────────────────────
 from scanner.news_engine      import get_market_health, get_news_score
@@ -386,7 +386,7 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Shadow Mode skipped: {e}")
 
-    # ── Outcome Tracking ──────────────────────────────────────────────────────
+    # ── Outcome Tracking (רץ בבלוק עצמאי כדי לא להיחסם משאר ה-try-except) ─────────
     try:
         from tools.outcome_tracker import update_outcomes
         update_outcomes()
