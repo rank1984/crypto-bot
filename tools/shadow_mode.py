@@ -68,6 +68,15 @@ def init_shadow_db():
             ("max_drawdown_pct", "REAL DEFAULT 0"),
             ("trade_state", "TEXT DEFAULT 'ACTIVE'"),
             ("exit_price", "REAL DEFAULT 0"),
+                    # ── Outcome tracking columns ─────────────────────────────────────────
+        _add_column_if_not_exists(c, "shadow_trades", "trigger_price", "REAL DEFAULT 0")
+        _add_column_if_not_exists(c, "shadow_trades", "outcome_trigger_hit", "INTEGER DEFAULT 0")
+        _add_column_if_not_exists(c, "shadow_trades", "outcome_tp1_hit", "INTEGER DEFAULT 0")
+        _add_column_if_not_exists(c, "shadow_trades", "outcome_tp2_hit", "INTEGER DEFAULT 0")
+        _add_column_if_not_exists(c, "shadow_trades", "outcome_sl_hit", "INTEGER DEFAULT 0")
+        _add_column_if_not_exists(c, "shadow_trades", "outcome_max_up_pct", "REAL DEFAULT 0")
+        _add_column_if_not_exists(c, "shadow_trades", "outcome_max_down_pct", "REAL DEFAULT 0")
+        _add_column_if_not_exists(c, "shadow_trades", "outcome_checked", "INTEGER DEFAULT 0")
         ]:
             try:
                 c.execute(f"ALTER TABLE shadow_trades ADD COLUMN {col} {typ}")
@@ -101,6 +110,7 @@ def save_shadow_signal(coin: dict, signal: str):
                 signal,
                 coin.get("entry_setup", ""),
                 coin.get("entry_price", coin.get("price", 0)),
+                coin.get("trigger_price", 0),
                 coin.get("entry_tp1", 0),
                 coin.get("entry_tp2", 0),
                 coin.get("entry_sl", 0),
