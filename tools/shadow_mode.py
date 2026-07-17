@@ -290,9 +290,11 @@ def export_shadow_csv():
             ])
 
             log.info(f"Exporting {len(trades)} shadow trades")
-            for t in trades:
-                dt_str = datetime.fromisoformat(t["ts"]).strftime("%H:%M:%S") if t["ts"] else ""
-                writer.writerow([
+                    for t in trades:
+            t = dict(t)                    # ← הפוך את Row ל‑dict
+            dt_str = datetime.fromisoformat(t["ts"]).strftime("%H:%M:%S") if t["ts"] else ""
+            writer.writerow([
+                    dt_str, t["symbol"], t["decision"], t["setup"],
                     dt_str, t["symbol"], t["decision"], t["setup"],
                     t["entry_price"], t.get("trigger_price", 0), t["tp1"], t["tp2"], t["sl"],
                     t["ai_score"], t["probability"], t["flow_score"], t["pre_score"],
