@@ -75,7 +75,14 @@ def init_shadow_db():
             ("outcome_sl_hit", "INTEGER DEFAULT 0"),
             ("outcome_max_up_pct", "REAL DEFAULT 0"),
             ("outcome_max_down_pct", "REAL DEFAULT 0"),
-            ("outcome_checked", "INTEGER DEFAULT 0")
+            ("outcome_checked", "INTEGER DEFAULT 0"),
+            # ── עמודות ה-Ground Truth החדשות לחישוב זמנים ומחירי קצה ─────────
+            ("outcome_trigger_min", "REAL DEFAULT 0"),
+            ("outcome_tp1_min", "REAL DEFAULT 0"),
+            ("outcome_tp2_min", "REAL DEFAULT 0"),
+            ("outcome_sl_min", "REAL DEFAULT 0"),
+            ("outcome_highest_price", "REAL DEFAULT 0"),
+            ("outcome_lowest_price", "REAL DEFAULT 0")
         ]
 
         for col, typ in new_columns:
@@ -274,7 +281,12 @@ def export_shadow_csv():
                 "Final Score", "Probability", "Flow", "Pre", "OI", "Funding", "RS",
                 "Compression", "Market Health", "News Score", "BTC Regime",
                 "Status", "Reason", "Exit Reason", "PnL", "PnL%", "Max Profit%",
-                "Max DD%", "Trade State", "Exit Price", "Duration (m)"
+                "Max DD%", "Trade State", "Exit Price", "Duration (m)",
+                # ── כותרות ה-CSV החדשות עבור נתוני ה-Outcomes ──────────────────
+                "Out Trigger Hit", "Out TP1 Hit", "Out TP2 Hit", "Out SL Hit", 
+                "Out Max Up%", "Out Max Down%", "Out Checked",
+                "Out Trigger (min)", "Out TP1 (min)", "Out TP2 (min)", "Out SL (min)",
+                "Out High Price", "Out Low Price"
             ])
 
             log.info(f"Exporting {len(trades)} shadow trades")
@@ -288,7 +300,15 @@ def export_shadow_csv():
                     t["market_health"], t["news_score"], t["btc_regime"],
                     t["status"], t["reason"], t["exit_reason"], t["pnl"], t["pnl_pct"],
                     t["max_profit_pct"], t["max_drawdown_pct"], t["trade_state"],
-                    t["exit_price"], t["duration_minutes"]
+                    t["exit_price"], t["duration_minutes"],
+                    # ── כתיבת הנתונים החדשים לשורת ה-CSV ───────────────────────
+                    t.get("outcome_trigger_hit", 0), t.get("outcome_tp1_hit", 0),
+                    t.get("outcome_tp2_hit", 0), t.get("outcome_sl_hit", 0),
+                    t.get("outcome_max_up_pct", 0), t.get("outcome_max_down_pct", 0),
+                    t.get("outcome_checked", 0),
+                    t.get("outcome_trigger_min", 0), t.get("outcome_tp1_min", 0),
+                    t.get("outcome_tp2_min", 0), t.get("outcome_sl_min", 0),
+                    t.get("outcome_highest_price", 0), t.get("outcome_lowest_price", 0)
                 ])
         log.info(f"CSV Exported: {os.path.abspath(filepath)}")
     except Exception as e:
