@@ -18,6 +18,12 @@ def _conn():
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. Init
 # ═══════════════════════════════════════════════════════════════════════════════
+def _add_column_if_not_exists(cursor, table, column, col_type):
+    """מוסיף עמודה לטבלה אם היא עדיין לא קיימת."""
+    try:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+    except sqlite3.OperationalError:
+        pass  # העמודה כבר קיימת
 def init_shadow_db():
     with _conn() as c:
         c.execute('''
