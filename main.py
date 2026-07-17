@@ -19,7 +19,6 @@ from scanner.event_engine     import trading_disabled, get_event_warning
 from portfolio.circuit_breaker import CircuitBreaker
 from scanner.trade_quality     import calc_trade_quality
 from storage.trade_replay      import init_replay_db, save_snapshot
-from tools.outcome_tracker     import update_outcomes
 
 # ── Live Monitor ──────────────────────────────────────────────────────────────
 from monitor.live_monitor      import LiveMonitor
@@ -389,6 +388,7 @@ def run_scan() -> None:
 
     # ── Outcome Tracking ──────────────────────────────────────────────────────
     try:
+        from tools.outcome_tracker import update_outcomes
         update_outcomes()
     except Exception as e:
         log.debug(f"Outcome tracker error: {e}")
