@@ -194,8 +194,43 @@ def record_trade(coin: dict, signal):
         log.error(f"Failed to record shadow trade: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4. Update exit
+# 4. Update exit (called from Trade Manager)
 # ═══════════════════════════════════════════════════════════════════════════════
+def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minutes: int,
+                       pnl_pct: float = 0.0, max_profit_pct: float = 0.0,
+                       max_drawdown_pct: float = 0.0, trade_state: str = 'CLOSED',
+                       exit_price: float = 0.0):
+    try:
+        with _conn() as c:
+            c.execute('''
+                UPDATE shadow_trades
+                SET status = 'CLOSED 🏁',
+                    exit_reason = ?,
+                    pnl = ?,
+                    pnl_pct = ?,
+                    duration_minutes = ?,
+                    max_profit_pct = ?,
+                    max_drawdown_pct = ?,
+                    trade_state = ?,
+                    exit_price = ?
+                WHERE symbol = ? AND status != 'CLOSED 🏁'
+            ''', (exit_reason, pnl, pnl_pct, duration_minutes, max_profit_pct,
+                  max_drawdown_pct, trade_state, exit_price, symbol))
+        export_shadow_csv()
+    except Exception as e:
+        log.error(f"Failed to update shadow exit for {symbol}: {e}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. Open trades status (real-time PnL, TP/SL detection)
+# ═══════════════════════════════════════════════════════════════════════════════
+def _get_binance_price(symbol: str) -> float:
+    try:
+        r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=5)
+        data = r.json()
+        return float(data.get("price", 0.0))
+    except:
+        return 0.0
+
 def update_open_trades():
     try:
         with _conn() as c:
@@ -258,6 +293,7 @@ def update_open_trades():
             export_shadow_csv()
     except Exception as e:
         log.error(f"Error in update_open_trades: {e}")
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 6. CSV export
 # ═══════════════════════════════════════════════════════════════════════════════
