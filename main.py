@@ -288,10 +288,10 @@ def run_scan() -> None:
                     "tp2": tp2,
                     "setup_type": c.get("setup_type", "UNKNOWN"),
                 }
-                trade = trade_mgr.open_trade(signal_data, entry_price)
+               trade = trade_mgr.open_trade(signal_data, entry_price)
                 if trade:
                     trade.quality = quality
-                    send_simple_message(_trade_open_message(trade))
+                    # ההודעה תישלח בהודעה המאוחדת בסוף הסריקה
             else:
                 log.info(f"Max trades reached, {c['symbol']} put on WATCH (no open slot)")
     else:
@@ -337,7 +337,7 @@ def run_scan() -> None:
             market_health=market_health,
             btc_regime=regime
         )
-        if action:
+                if action:
             if action["action"] == "SELL_PARTIAL":
                 send_simple_message(_trade_partial_message(trade, action))
             elif action["action"] == "SELL_ALL":
