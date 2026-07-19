@@ -163,7 +163,6 @@ def record_trade(coin: dict, signal):
 
     ts = datetime.now(timezone.utc).isoformat()
     initial_status = "Pending ⏳" if signal.decision == "BUY" else "-"
-    # ... המשך הפונקציה (INSERT) ...
 
     try:
         with _conn() as c:
@@ -238,7 +237,7 @@ def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minut
         log.error(f"Failed to update shadow exit for {symbol}: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 5. Open trades status (real-time PnL, TP/SL detection)
+# 5. Open trades status (real-time PnL, TP/SL detection, OHLCV outcome)
 # ═══════════════════════════════════════════════════════════════════════════════
 def _get_binance_price(symbol: str) -> float:
     try:
@@ -248,6 +247,36 @@ def _get_binance_price(symbol: str) -> float:
     except:
         return 0.0
 
+def _get_klines_since(symbol: str, start_time_ms: int, limit=144):
+    """מחזיר DataFrame של נרות 5m מבינאנס מתאריך התחלה."""
+    try:
+        url = "https://api.binance.com/api/v3/klines"
+        params = {
+            "symbol": symbol,
+            "interval": "5m",
+            "startTime": start_time_ms,
+            "limit": limit
+        }
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
+        if not isinstance(data, list):
+            return None
+
+        df = pd.DataFrame(data, columns=[
+            "time", "open", "high", "low", "close", "volume",
+            "close_time", "quote_vol", "trades", "taker_buy_base",
+            "taker_buy_quote", "ignore"
+        ])
+        df["high"] = df["high"].astype(float)
+        df["low"] = df["low"].astype(float)
+        df["close"] = df["close"].astype(float)
+        df["time"] = pd.to_datetime(df["time"], unit="ms")
+        return df
+    except Exception as e:
+        log.warning(f"Klines fetch failed for {symbol}: {e}")
+        return None
+
+
 def update_open_trades():
     try:
         with _conn() as c:
@@ -255,20 +284,22 @@ def update_open_trades():
 
         updated_count = 0
         for trade in open_trades:
-            current_price = _get_binance_price(trade["symbol"])
+            symbol = trade["symbol"]
+            entry = float(trade["entry_price"])
+            tp1 = float(trade["tp1"]) if trade["tp1"] else 0.0
+            tp2 = float(trade["tp2"]) if trade["tp2"] else 0.0
+            sl = float(trade["sl"]) if trade["sl"] else 0.0
+            trigger = float(trade["trigger_price"] or (entry * 1.001))
+
+            # ── 1. מחיר נוכחי (לצורך PnL% שוטף) ──────────────────────
+            current_price = _get_binance_price(symbol)
             if current_price <= 0:
                 continue
 
-            entry = float(trade["entry_price"])
-            tp1 = float(trade["tp1"]) if trade["tp1"] else 0.0
-            sl = float(trade["sl"]) if trade["sl"] else 0.0
-
-            # ── עדכון ביצועים בזמן אמת ──────────────────────────────
             pnl_pct = ((current_price - entry) / entry) * 100
             max_profit = max(float(trade["max_profit_pct"] or 0), pnl_pct)
             max_dd = min(float(trade["max_drawdown_pct"] or 0), pnl_pct)
 
-            # שמירה שוטפת
             with _conn() as c:
                 c.execute("""
                     UPDATE shadow_trades
@@ -278,20 +309,80 @@ def update_open_trades():
                     WHERE id = ?
                 """, (round(pnl_pct, 2), round(max_profit, 2), round(max_dd, 2), trade["id"]))
 
-            # ── בדיקת סגירה לפי TP1 / SL / Timeout ─────────────────
+            # ── 2. בדיקת Outcome על סמך נרות מאז הכניסה ──────────────
+            try:
+                trade_time = datetime.fromisoformat(trade["ts"])
+                start_ms = int(trade_time.replace(tzinfo=timezone.utc).timestamp() * 1000)
+                df = _get_klines_since(symbol, start_ms)
+                if df is not None and not df.empty:
+                    max_high = df["high"].max()
+                    min_low = df["low"].min()
+                    max_up = round((max_high - entry) / entry * 100, 2)
+                    max_down = round((min_low - entry) / entry * 100, 2)
+
+                    trigger_hit = 1 if max_high >= trigger else 0
+                    tp1_hit = 1 if tp1 > 0 and max_high >= tp1 else 0
+                    tp2_hit = 1 if tp2 > 0 and max_high >= tp2 else 0
+                    sl_hit = 1 if sl > 0 and min_low <= sl else 0
+
+                    # חישוב זמני חצייה (דקות)
+                    trigger_min = None
+                    tp1_min = None
+                    tp2_min = None
+                    sl_min = None
+                    if trigger_hit:
+                        first = df[df["high"] >= trigger]
+                        trigger_min = round((first["time"].iloc[0] - trade_time).total_seconds() / 60, 1)
+                    if tp1_hit:
+                        first = df[df["high"] >= tp1]
+                        tp1_min = round((first["time"].iloc[0] - trade_time).total_seconds() / 60, 1)
+                    if tp2_hit:
+                        first = df[df["high"] >= tp2]
+                        tp2_min = round((first["time"].iloc[0] - trade_time).total_seconds() / 60, 1)
+                    if sl_hit:
+                        first = df[df["low"] <= sl]
+                        sl_min = round((first["time"].iloc[0] - trade_time).total_seconds() / 60, 1)
+
+                    with _conn() as c:
+                        c.execute("""
+                            UPDATE shadow_trades
+                            SET outcome_trigger_hit = ?,
+                                outcome_tp1_hit = ?,
+                                outcome_tp2_hit = ?,
+                                outcome_sl_hit = ?,
+                                outcome_max_up_pct = ?,
+                                outcome_max_down_pct = ?,
+                                outcome_checked = 1,
+                                outcome_trigger_min = ?,
+                                outcome_tp1_min = ?,
+                                outcome_tp2_min = ?,
+                                outcome_sl_min = ?,
+                                outcome_highest_price = ?,
+                                outcome_lowest_price = ?
+                            WHERE id = ?
+                        """, (
+                            trigger_hit, tp1_hit, tp2_hit, sl_hit,
+                            max_up, max_down,
+                            trigger_min, tp1_min, tp2_min, sl_min,
+                            float(max_high), float(min_low),
+                            trade["id"]
+                        ))
+            except Exception as e:
+                log.warning(f"Outcome calculation failed for {symbol}: {e}")
+
+            # ── 3. סגירה לפי TP1 / SL / Timeout (מבוסס על מחיר נוכחי) ─
             new_status = "Pending ⏳"
             if tp1 > 0 and current_price >= tp1:
                 new_status = "TP1 Hit 🎯"
             elif sl > 0 and current_price <= sl:
                 new_status = "SL Hit 🛑"
             else:
-                trade_time = datetime.fromisoformat(trade["ts"])
                 if datetime.now(timezone.utc) - trade_time > timedelta(hours=24):
                     new_status = "Timeout ⏱️"
 
             if new_status != "Pending ⏳":
                 duration_min = int((datetime.now(timezone.utc) -
-                                    datetime.fromisoformat(trade["ts"])).total_seconds() / 60)
+                                    trade_time).total_seconds() / 60)
                 with _conn() as c:
                     c.execute("""
                         UPDATE shadow_trades
