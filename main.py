@@ -183,7 +183,6 @@ def run_scan() -> None:
         c["btc_regime"] = regime
 
     health_msg = f"Market Health: {market_health:.0f}/100 | News Score: {news_score} | Regime: {regime} | Circuit Breaker: {circuit_breaker.status()}"
-    send_telegram([{"msg": health_msg}])
 
     # בדיקת אירועים קרובים
     original_max = None
