@@ -280,7 +280,7 @@ def run_scan() -> None:
                 quality = calc_trade_quality(c, news_score)
                 c["trade_quality"] = quality
 
-                signal_data = {
+                                signal_data = {
                     "symbol": c["symbol"],
                     "entry": entry_price,
                     "sl": sl,
@@ -288,7 +288,7 @@ def run_scan() -> None:
                     "tp2": tp2,
                     "setup_type": c.get("setup_type", "UNKNOWN"),
                 }
-               trade = trade_mgr.open_trade(signal_data, entry_price)
+                trade = trade_mgr.open_trade(signal_data, entry_price)
                 if trade:
                     trade.quality = quality
                     # ההודעה תישלח בהודעה המאוחדת בסוף הסריקה
