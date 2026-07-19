@@ -344,22 +344,11 @@ def run_scan() -> None:
                 send_simple_message(_trade_close_message(trade, action))
                 circuit_breaker.update_on_close(action["pnl"], market_health)
 
-        # ── 7. הודעה מאוחדת בעברית ──────────────────────────────────────────────
+            # ── 7. הודעה מאוחדת בעברית ──────────────────────────────────────────────
     lines = []
     lines.append(f"📊 מצב שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
     lines.append(f"🛡 מפסק: {circuit_breaker.status()}")
     lines.append("")
-
-    # ARM
-    arm_list = filtered.get("arm", [])
-    if arm_list:
-        lines.append("🟠 במעקב צמוד (ARM):")
-        for c in arm_list[:3]:
-            lines.append(
-                f"  {c['symbol']}  בינה:{c.get('ai_score', 0):.0f}  הסתברות:{c.get('probability', 0):.0f}%  "
-                f"מרחק:{c.get('trigger_distance_pct', 0):.2f}%"
-            )
-        lines.append("")
 
     # BUY
     buy_list = filtered.get("buy", [])
@@ -383,8 +372,19 @@ def run_scan() -> None:
             )
         lines.append("")
 
+    # ARM
+    arm_list = filtered.get("arm", [])
+    if arm_list:
+        lines.append("🟠 במעקב צמוד (ARM):")
+        for c in arm_list[:3]:
+            lines.append(
+                f"  {c['symbol']}  בינה:{c.get('ai_score', 0):.0f}  הסתברות:{c.get('probability', 0):.0f}%  "
+                f"מרחק:{c.get('trigger_distance_pct', 0):.2f}%"
+            )
+        lines.append("")
+
     if not (buy_list or arm_list):
-        lines.append("ℹ️ אין הזדמנויות כרגע.")
+        lines.append("ℹ️ אין כרגע קניות. ממתין לטריגר.")
 
     send_simple_message("\n".join(lines))
 
