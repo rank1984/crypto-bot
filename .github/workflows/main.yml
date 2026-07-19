@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     
-    # מעניק ל-Workflow הרשאת כתיבה כדי לעדכן את קובץ ה-CSV בתוך ה-Repository
     permissions:
       contents: write
       
@@ -36,19 +35,14 @@ jobs:
 
       - name: 🚀 Commit and Push Shadow Results
         run: |
-          # הגדרת פרופיל ה-Git של השרת הווירטואלי
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # בדיקה האם הקובץ קיים
           if [ -f shadow_results.csv ]; then
             git add shadow_results.csv
-            # ביצוע Commit רק אם יש שינוי אמיתי בקובץ
             git diff --cached --quiet || git commit -m "📈 Auto-update shadow results [skip ci]"
-            
-            # משיכת עדכונים עם Rebase למניעת התנגשויות (מופעל אחרי ה-Commit)
-            git pull --rebase origin main || true
-            
+            # pull with rebase and automatically prefer local version on conflict
+            git pull --rebase -X ours origin main || true
             git push origin main
           else
             echo "shadow_results.csv not found, skipping commit."
