@@ -297,7 +297,7 @@ def run_scan() -> None:
     else:
         log.warning(f"Circuit Breaker active: {circuit_breaker.status()} — no new trades")
 
-    # 6b. Update existing trades
+        # 6b. Update existing trades
     active_trades = trade_mgr.get_active_trades()
     for trade in active_trades:
         symbol = trade.symbol
@@ -337,7 +337,7 @@ def run_scan() -> None:
             market_health=market_health,
             btc_regime=regime
         )
-                if action:
+        if action:
             if action["action"] == "SELL_PARTIAL":
                 send_simple_message(_trade_partial_message(trade, action))
             elif action["action"] == "SELL_ALL":
