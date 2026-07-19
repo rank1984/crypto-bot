@@ -76,7 +76,7 @@ def _build_top_coin_message(c: dict) -> str:
         lines.append("✅ כל התנאים ההכרחיים התקיימו")
     else:
         for neg in real_negatives:
-            # מנקה כפילויות של המילה "חסר" אם היא כבר הגיעה מהמנוע
+            # מנקה כפילויות של המילה "חסר" אם היא כבר הגיע מהמנוע
             clean_neg = neg.replace('חסר:', '').replace('חסר ', '').strip()
             lines.append(f"❌ חסר: {clean_neg}")
             
@@ -152,6 +152,27 @@ def send_telegram(coins: list[dict], portfolio_usd: float = 1000.0, filtered: di
             "chat_id": TELEGRAM_CHAT_ID,
             "text": text[:4096],
             "parse_mode": "Markdown"
+        }, timeout=10)
+        r.raise_for_status()
+        log.info("Telegram ✓")
+        return True
+    except Exception as e:
+        log.error(f"Telegram failed: {e}")
+        return False
+
+def send_simple_message(text: str) -> bool:
+    """שולח הודעה פשוטה (טקסט חופשי) לטלגרם."""
+    if not text or not text.strip():
+        return False
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print(text)
+        return False
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
+        r = requests.post(url, json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text[:4096]
         }, timeout=10)
         r.raise_for_status()
         log.info("Telegram ✓")
