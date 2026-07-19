@@ -427,36 +427,7 @@ def run_scan() -> None:
     lines.append("• 📋 בדוק טבלת מומלצים למעלה.")
 
     send_simple_message("\n".join(lines))
-watch_list = filtered.get("watch", [])
-if watch_list:
-    lines.append("🟡 במעקב (WATCH) – טרם בשל:")
-    for c in watch_list[:3]:
-        lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "
-                     f"הסתברות: {c.get('probability', 0):.0f}%")
-    lines.append("")
 
-arm_list = filtered.get("arm", [])
-if arm_list:
-    lines.append("🟠 במעקב צמוד (ARM) – קרובים לפריצה:")
-    for c in arm_list[:3]:
-        lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "
-                     f"הסתברות: {c.get('probability', 0):.0f}%  "
-                     f"מרחק: {c.get('trigger_distance_pct', 0):.2f}%")
-    lines.append("")
-
-if not (buy_list or arm_list):
-    lines.append("ℹ️ אין כרגע המלצות קנייה.")
-
-lines.append("")
-lines.append("🔹 מה לעשות עכשיו:")
-lines.append("• ℹ️ הבוט מייעץ – **לא** קונה אוטומטית.")
-lines.append("• 🟢 קניות – מומלץ לקנות ידנית את המטבעות הרשומים.")
-lines.append("• 🟡 במעקב – לא לקנות עדיין. להמתין.")
-lines.append("• 🟠 במעקב צמוד – להתכונן, קרובים לפריצה.")
-lines.append("• 📊 שוק בינוני – מותר לסחור בזהירות.")
-lines.append("• 📋 בדוק טבלת מומלצים למעלה.")
-
-send_simple_message("\n".join(lines))
     # ── 8. Learning & Shadow ──────────────────────────────────────────────────
     try:
         from learning.recorder import record_scan
