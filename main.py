@@ -7,7 +7,7 @@ from scanner.universe            import build_universe
 from scanner.dynamic_universe    import build_dynamic_universe
 from scanner.market_data         import get_candles
 from scanner.ranking             import rank_universe
-from notifier.sender             import send_telegram
+from notifier.sender             import send_simple_message
 from utils.config                import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
 from utils.logger                import get_logger
 
@@ -48,17 +48,7 @@ circuit_breaker = CircuitBreaker()
 init_replay_db()
 
 # ── Live Monitor ──────────────────────────────────────────────────────────────
-def _send_telegram_safe(msg: str):
-    """שליחת הודעה לטלגרם בצורה בטוחה – מדלג על הודעות ריקות."""
-    if not msg or not msg.strip():
-        log.debug("Skipping empty Telegram message")
-        return
-    try:
-        send_telegram([{"msg": msg}])
-    except Exception as e:
-        log.error(f"Telegram send failed: {e}")
-
-live_monitor = LiveMonitor(trade_mgr, _send_telegram_safe)
+live_monitor = LiveMonitor(trade_mgr, send_simple_message)
 live_monitor.start()
 
 
@@ -140,7 +130,7 @@ def run_scan() -> None:
     top, _diag = result if isinstance(result, tuple) else (result, None)
     if not top:
         log.warning("No coins passed scoring — sending 'no signal' message")
-        send_telegram([], stats=_diag)
+        send_simple_message("ℹ️ No opportunities found. Market is quiet.")
         return
 
     # ── חישוב Market Health מחדש עם נתוני ranking ────────────────────────────
@@ -182,13 +172,11 @@ def run_scan() -> None:
         c["news_score"] = news_score
         c["btc_regime"] = regime
 
-    health_msg = f"Market Health: {market_health:.0f}/100 | News Score: {news_score} | Regime: {regime} | Circuit Breaker: {circuit_breaker.status()}"
-
     # בדיקת אירועים קרובים
     original_max = None
     if trading_disabled():
         log.warning("Trading disabled due to high impact event")
-        send_telegram([{"msg": get_event_warning()}])
+        send_simple_message(get_event_warning())
         original_max = trade_mgr.max_trades
         trade_mgr.max_trades = 0
 
@@ -303,8 +291,7 @@ def run_scan() -> None:
                 trade = trade_mgr.open_trade(signal_data, entry_price)
                 if trade:
                     trade.quality = quality
-                    msg = _trade_open_message(trade)
-                    _send_telegram_safe(msg)
+                    send_simple_message(_trade_open_message(trade))
             else:
                 log.info(f"Max trades reached, {c['symbol']} put on WATCH (no open slot)")
     else:
@@ -352,21 +339,18 @@ def run_scan() -> None:
         )
         if action:
             if action["action"] == "SELL_PARTIAL":
-                msg = _trade_partial_message(trade, action)
-                _send_telegram_safe(msg)
+                send_simple_message(_trade_partial_message(trade, action))
             elif action["action"] == "SELL_ALL":
-                msg = _trade_close_message(trade, action)
-                _send_telegram_safe(msg)
+                send_simple_message(_trade_close_message(trade, action))
                 circuit_breaker.update_on_close(action["pnl"], market_health)
 
-    # ── 7. Telegram summary ───────────────────────────────────────────────────
-        # ── בנה הודעה אחת מאוחדת ─────────────────────────────────────────
+    # ── 7. Unified Telegram message ───────────────────────────────────────────
     lines = []
     lines.append(f"📊 Market Health: {market_health:.0f}/100 | News: {news_score} | Regime: {regime}")
     lines.append(f"🛡 Circuit Breaker: {circuit_breaker.status()}")
     lines.append("")
 
-    # הצגת ARM
+    # ARM
     arm_list = filtered.get("arm", [])
     if arm_list:
         lines.append("🟠 ARM (monitoring):")
@@ -377,7 +361,7 @@ def run_scan() -> None:
             )
         lines.append("")
 
-    # הצגת BUY
+    # BUY
     buy_list = filtered.get("buy", [])
     if buy_list:
         lines.append("🟢 BUY:")
@@ -388,10 +372,10 @@ def run_scan() -> None:
             )
         lines.append("")
 
-    # Top WATCH
+    # WATCH
     watch_list = filtered.get("watch", [])
     if watch_list:
-        lines.append("🟡 WATCH (top 3):")
+        lines.append("🟡 WATCH:")
         for c in watch_list[:3]:
             lines.append(
                 f"  {c['symbol']}  AI:{c.get('ai_score', 0):.0f}  Prob:{c.get('probability', 0):.0f}%"
@@ -401,8 +385,7 @@ def run_scan() -> None:
     if not (buy_list or arm_list):
         lines.append("ℹ️ No BUY/ARM this scan.")
 
-    full_msg = "\n".join(lines)
-    _send_telegram_safe(full_msg)
+    send_simple_message("\n".join(lines))
 
     # ── 8. Learning & Shadow ──────────────────────────────────────────────────
     try:
@@ -420,7 +403,7 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Shadow Mode skipped: {e}")
 
-    # ── Outcome Tracking (רץ בבלוק עצמאי כדי לא להיחסם משאר ה-try-except) ─────────
+    # ── Outcome Tracking ──────────────────────────────────────────────────────
     try:
         from tools.outcome_tracker import update_outcomes
         update_outcomes()
