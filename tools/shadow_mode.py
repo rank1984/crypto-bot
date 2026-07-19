@@ -145,8 +145,24 @@ def record_trade(coin: dict, signal):
     if not signal or signal.decision not in ["BUY", "PREPARE"]:
         return
 
+    symbol = coin.get("symbol", "UNKNOWN")
+
+    # בדיקת כפילות – אם יש כבר עסקה פעילה למטבע, לא נוסיף
+    try:
+        with _conn() as c:
+            existing = c.execute("""
+                SELECT id FROM shadow_trades
+                WHERE symbol = ? AND trade_state = 'ACTIVE'
+            """, (symbol,)).fetchone()
+            if existing:
+                log.debug(f"Skipping duplicate active trade for {symbol}")
+                return
+    except Exception as e:
+        log.warning(f"Duplicate check failed: {e}")
+
     ts = datetime.now(timezone.utc).isoformat()
     initial_status = "Pending ⏳" if signal.decision == "BUY" else "-"
+    # ... המשך הפונקציה (INSERT) ...
 
     try:
         with _conn() as c:
