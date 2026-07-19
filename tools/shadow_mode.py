@@ -196,41 +196,6 @@ def record_trade(coin: dict, signal):
 # ═══════════════════════════════════════════════════════════════════════════════
 # 4. Update exit
 # ═══════════════════════════════════════════════════════════════════════════════
-def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minutes: int,
-                       pnl_pct: float = 0.0, max_profit_pct: float = 0.0,
-                       max_drawdown_pct: float = 0.0, trade_state: str = 'CLOSED',
-                       exit_price: float = 0.0):
-    try:
-        with _conn() as c:
-            c.execute('''
-                UPDATE shadow_trades
-                SET status = 'CLOSED 🏁',
-                    exit_reason = ?,
-                    pnl = ?,
-                    pnl_pct = ?,
-                    duration_minutes = ?,
-                    max_profit_pct = ?,
-                    max_drawdown_pct = ?,
-                    trade_state = ?,
-                    exit_price = ?
-                WHERE symbol = ? AND status != 'CLOSED 🏁'
-            ''', (exit_reason, pnl, pnl_pct, duration_minutes, max_profit_pct,
-                  max_drawdown_pct, trade_state, exit_price, symbol))
-        export_shadow_csv()
-    except Exception as e:
-        log.error(f"Failed to update shadow exit for {symbol}: {e}")
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 5. Open trades status
-# ═══════════════════════════════════════════════════════════════════════════════
-def _get_binance_price(symbol: str) -> float:
-    try:
-        r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=5)
-        data = r.json()
-        return float(data.get("price", 0.0))
-    except:
-        return 0.0
-
 def update_open_trades():
     try:
         with _conn() as c:
@@ -242,10 +207,27 @@ def update_open_trades():
             if current_price <= 0:
                 continue
 
-            new_status = "Pending ⏳"
+            entry = float(trade["entry_price"])
             tp1 = float(trade["tp1"]) if trade["tp1"] else 0.0
             sl = float(trade["sl"]) if trade["sl"] else 0.0
 
+            # ── עדכון ביצועים בזמן אמת ──────────────────────────────
+            pnl_pct = ((current_price - entry) / entry) * 100
+            max_profit = max(float(trade["max_profit_pct"] or 0), pnl_pct)
+            max_dd = min(float(trade["max_drawdown_pct"] or 0), pnl_pct)
+
+            # שמירה שוטפת
+            with _conn() as c:
+                c.execute("""
+                    UPDATE shadow_trades
+                    SET pnl_pct = ?,
+                        max_profit_pct = ?,
+                        max_drawdown_pct = ?
+                    WHERE id = ?
+                """, (round(pnl_pct, 2), round(max_profit, 2), round(max_dd, 2), trade["id"]))
+
+            # ── בדיקת סגירה לפי TP1 / SL / Timeout ─────────────────
+            new_status = "Pending ⏳"
             if tp1 > 0 and current_price >= tp1:
                 new_status = "TP1 Hit 🎯"
             elif sl > 0 and current_price <= sl:
@@ -256,8 +238,19 @@ def update_open_trades():
                     new_status = "Timeout ⏱️"
 
             if new_status != "Pending ⏳":
+                duration_min = int((datetime.now(timezone.utc) -
+                                    datetime.fromisoformat(trade["ts"])).total_seconds() / 60)
                 with _conn() as c:
-                    c.execute("UPDATE shadow_trades SET status = ? WHERE id = ?", (new_status, trade["id"]))
+                    c.execute("""
+                        UPDATE shadow_trades
+                        SET status = ?,
+                            trade_state = 'CLOSED',
+                            exit_price = ?,
+                            pnl_pct = ?,
+                            duration_minutes = ?,
+                            outcome_checked = 1
+                        WHERE id = ?
+                    """, (new_status, current_price, round(pnl_pct, 2), duration_min, trade["id"]))
                 updated_count += 1
 
         if updated_count > 0:
@@ -265,7 +258,6 @@ def update_open_trades():
             export_shadow_csv()
     except Exception as e:
         log.error(f"Error in update_open_trades: {e}")
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # 6. CSV export
 # ═══════════════════════════════════════════════════════════════════════════════
