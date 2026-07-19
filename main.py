@@ -264,12 +264,6 @@ def run_scan() -> None:
             else:
                 c["trigger_price"] = 0
         live_monitor.add_to_watchlist(c)
-        msg = (f"🟠 ARM {c['symbol']}\n"
-               f"Trigger: {c['trigger_price']:.5f}\n"
-               f"Distance: {c.get('trigger_distance_pct', 0):.2f}%\n"
-               f"Probability: {c.get('probability', 0):.1f}%\n"
-               f"Flow: {c.get('flow_score', 0):.0f} | OI: {c.get('oi_change', 0):.1f}%")
-        _send_telegram_safe(msg)
 
     # ── 6. Trade Management ───────────────────────────────────────────────────
     # 6a. Open new trades
