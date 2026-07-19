@@ -2,6 +2,7 @@ import os
 import sqlite3
 import csv
 import requests
+import pandas as pd
 from datetime import datetime, timezone, timedelta
 from utils.logger import get_logger
 
