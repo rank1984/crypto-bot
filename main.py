@@ -344,46 +344,47 @@ def run_scan() -> None:
                 send_simple_message(_trade_close_message(trade, action))
                 circuit_breaker.update_on_close(action["pnl"], market_health)
 
-    # ── 7. Unified Telegram message ───────────────────────────────────────────
+        # ── 7. הודעה מאוחדת בעברית ──────────────────────────────────────────────
     lines = []
-    lines.append(f"📊 Market Health: {market_health:.0f}/100 | News: {news_score} | Regime: {regime}")
-    lines.append(f"🛡 Circuit Breaker: {circuit_breaker.status()}")
+    lines.append(f"📊 מצב שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
+    lines.append(f"🛡 מפסק: {circuit_breaker.status()}")
     lines.append("")
 
     # ARM
     arm_list = filtered.get("arm", [])
     if arm_list:
-        lines.append("🟠 ARM (monitoring):")
+        lines.append("🟠 במעקב צמוד (ARM):")
         for c in arm_list[:3]:
             lines.append(
-                f"  {c['symbol']}  AI:{c.get('ai_score', 0):.0f}  Prob:{c.get('probability', 0):.0f}%  "
-                f"Dist:{c.get('trigger_distance_pct', 0):.2f}%"
+                f"  {c['symbol']}  בינה:{c.get('ai_score', 0):.0f}  הסתברות:{c.get('probability', 0):.0f}%  "
+                f"מרחק:{c.get('trigger_distance_pct', 0):.2f}%"
             )
         lines.append("")
 
     # BUY
     buy_list = filtered.get("buy", [])
     if buy_list:
-        lines.append("🟢 BUY:")
+        lines.append("🟢 קניות (BUY):")
         for c in buy_list:
             lines.append(
-                f"  {c['symbol']}  Entry:{c.get('entry_price', 0):.4f}  "
-                f"SL:{c.get('entry_sl', 0):.4f}  TP1:{c.get('entry_tp1', 0):.4f}"
+                f"  {c['symbol']}  כניסה:{c.get('entry_price', 0):.4f}  "
+                f"סטופ:{c.get('entry_sl', 0):.4f}  יעד1:{c.get('entry_tp1', 0):.4f}  "
+                f"איכות:{c.get('trade_quality', 0):.0f}"
             )
         lines.append("")
 
     # WATCH
     watch_list = filtered.get("watch", [])
     if watch_list:
-        lines.append("🟡 WATCH:")
+        lines.append("🟡 במעקב (WATCH):")
         for c in watch_list[:3]:
             lines.append(
-                f"  {c['symbol']}  AI:{c.get('ai_score', 0):.0f}  Prob:{c.get('probability', 0):.0f}%"
+                f"  {c['symbol']}  בינה:{c.get('ai_score', 0):.0f}  הסתברות:{c.get('probability', 0):.0f}%"
             )
         lines.append("")
 
     if not (buy_list or arm_list):
-        lines.append("ℹ️ No BUY/ARM this scan.")
+        lines.append("ℹ️ אין הזדמנויות כרגע.")
 
     send_simple_message("\n".join(lines))
 
