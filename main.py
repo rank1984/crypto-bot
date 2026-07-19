@@ -49,7 +49,10 @@ init_replay_db()
 
 # ── Live Monitor ──────────────────────────────────────────────────────────────
 def _send_telegram_safe(msg: str):
-    """שליחת הודעה לטלגרם בצורה בטוחה."""
+    """שליחת הודעה לטלגרם בצורה בטוחה – מדלג על הודעות ריקות."""
+    if not msg or not msg.strip():
+        log.debug("Skipping empty Telegram message")
+        return
     try:
         send_telegram([{"msg": msg}])
     except Exception as e:
