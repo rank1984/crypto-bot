@@ -254,7 +254,7 @@ def run_scan() -> None:
         live_monitor.add_to_watchlist(c)
 
     # ── 6. Trade Management ───────────────────────────────────────────────────
-        # 6a. Open new trades
+    # 6a. Open new trades
     if circuit_breaker.can_trade():
         for c in filtered.get("buy", []):
             if trade_mgr.can_open_trade():
@@ -297,7 +297,7 @@ def run_scan() -> None:
     else:
         log.warning(f"Circuit Breaker active: {circuit_breaker.status()} — no new trades")
 
-        # 6b. Update existing trades
+    # 6b. Update existing trades
     active_trades = trade_mgr.get_active_trades()
     for trade in active_trades:
         symbol = trade.symbol
@@ -344,10 +344,24 @@ def run_scan() -> None:
                 send_simple_message(_trade_close_message(trade, action))
                 circuit_breaker.update_on_close(action["pnl"], market_health)
 
-            # ── 7. הודעה מאוחדת בעברית ──────────────────────────────────────────────
+    # ── 7. הודעה מאוחדת בעברית (ברורה, עם הסברים) ─────────────────────────
     lines = []
     lines.append(f"📊 מצב שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
-    lines.append(f"🛡 מפסק: {circuit_breaker.status()}")
+
+    # הסבר קצר על מצב שוק
+    if market_health >= 65:
+        lines.append("   ↳ שוק חזק – מותר לסחור.")
+    elif market_health >= 40:
+        lines.append("   ↳ שוק בינוני – אפשר לסחור בזהירות.")
+    else:
+        lines.append("   ↳ שוק חלש – עדיף להמתין.")
+
+    # Circuit Breaker
+    cb_status = circuit_breaker.status()
+    lines.append(f"🛡 מפסק: {cb_status}")
+    if cb_status != "ACTIVE":
+        lines.append(f"   ⚠️ סיבה: {circuit_breaker.block_reason}")
+
     lines.append("")
 
     # BUY
@@ -360,6 +374,7 @@ def run_scan() -> None:
                 f"סטופ:{c.get('entry_sl', 0):.4f}  יעד1:{c.get('entry_tp1', 0):.4f}  "
                 f"איכות:{c.get('trade_quality', 0):.0f}"
             )
+        lines.append("   ↳ הבוט קנה אוטומטית. אין צורך בפעולה.")
         lines.append("")
 
     # WATCH
@@ -370,6 +385,7 @@ def run_scan() -> None:
             lines.append(
                 f"  {c['symbol']}  בינה:{c.get('ai_score', 0):.0f}  הסתברות:{c.get('probability', 0):.0f}%"
             )
+        lines.append("   ↳ מעקב – טרם בשל לקנייה.")
         lines.append("")
 
     # ARM
@@ -381,6 +397,7 @@ def run_scan() -> None:
                 f"  {c['symbol']}  בינה:{c.get('ai_score', 0):.0f}  הסתברות:{c.get('probability', 0):.0f}%  "
                 f"מרחק:{c.get('trigger_distance_pct', 0):.2f}%"
             )
+        lines.append("   ↳ קרובים לפריצה – כדאי לעקוב.")
         lines.append("")
 
     if not (buy_list or arm_list):
