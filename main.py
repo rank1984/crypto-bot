@@ -254,7 +254,7 @@ def run_scan() -> None:
         live_monitor.add_to_watchlist(c)
 
     # ── 6. Trade Management ───────────────────────────────────────────────────
-    # 6a. Open new trades
+        # 6a. Open new trades
     if circuit_breaker.can_trade():
         for c in filtered.get("buy", []):
             if trade_mgr.can_open_trade():
@@ -280,7 +280,7 @@ def run_scan() -> None:
                 quality = calc_trade_quality(c, news_score)
                 c["trade_quality"] = quality
 
-                                signal_data = {
+                signal_data = {
                     "symbol": c["symbol"],
                     "entry": entry_price,
                     "sl": sl,
