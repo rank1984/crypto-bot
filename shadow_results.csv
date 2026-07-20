@@ -1,4 +1,9 @@
 ﻿Time,Coin,Decision,Setup,Entry,Trigger Price,TP1,TP2,SL,Final Score,Probability,Flow,Pre,OI,Funding,RS,Compression,Market Health,News Score,BTC Regime,Status,Reason,Exit Reason,PnL,PnL%,Max Profit%,Max DD%,Trade State,Exit Price,Duration (m),Trigger Hit,TP1 Hit,TP2 Hit,SL Hit,Max Up%,Max Down%,Outcome Checked
+18:31:54,ADAUSDT,WATCH,,0.0,0.0,0.0,0.0,0.0,61.2,23.7,43.1,34.0,6.12,0.0,0.834,False,46.8,39.0,RANGE,WATCH,No valid setup,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+18:31:54,XMRUSDT,WATCH,,0.0,0.0,0.0,0.0,0.0,84.5,27.1,34.9,40.8,219.97,0.0,-0.147,False,46.8,39.0,RANGE,WATCH,No valid setup,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+18:31:54,APTUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,90.5,27.7,34.8,47.1,86.35,0.0,0.098,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+18:31:54,AGTUSDT,WATCH,,0.0,0.0,0.0,0.0,0.0,60.5,29.8,43.9,43.0,219.11,0.0,0.483,False,46.8,39.0,RANGE,WATCH,No valid setup,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+18:31:54,ALICEUSDT,PREPARE,,0.0,0.0,0.0,0.0,0.0,100.0,60.5,57.9,45.1,157.79,0.0,3.433,False,46.8,39.0,RANGE,PREPARE,No valid setup,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 18:23:54,TRACUSDT,WATCH,,0.0,0.0,0.0,0.0,0.0,85.0,45.3,46.3,32.3,1387.15,0.0,0.689,False,46.8,39.0,RANGE,WATCH,No valid setup,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 18:23:54,YBUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,63.0,46.3,39.8,34.3,7425.52,0.0,1.116,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 18:23:54,SNXUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,100.0,47.8,53.2,40.0,140.85,0.0,0.833,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
