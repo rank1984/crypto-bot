@@ -19,7 +19,7 @@ from scanner.event_engine     import trading_disabled, get_event_warning
 from engines.alt_data         import get_coingecko_trending, trending_bonus
 
 # ── ייבוא למערכת ה-WebSocket (וודא שהנתיב תואם לפרויקט שלך) ───────────────────
-from monitor.orderbook        import BinanceOrderBookMonitor, order_book_signal_handler
+from engines.alt_data import BinanceOrderBookMonitor
 
 # ── Circuit Breaker, Trade Quality, Trade Replay ──────────────────────────────
 from portfolio.circuit_breaker import CircuitBreaker
