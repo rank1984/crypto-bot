@@ -1,4 +1,10 @@
 ﻿Time,Coin,Decision,Setup,Entry,Trigger Price,TP1,TP2,SL,Final Score,Probability,Flow,Pre,OI,Funding,RS,Compression,Market Health,News Score,BTC Regime,Status,Reason,Exit Reason,PnL,PnL%,Max Profit%,Max DD%,Trade State,Exit Price,Duration (m),Trigger Hit,TP1 Hit,TP2 Hit,SL Hit,Max Up%,Max Down%,Outcome Checked
+21:21:05,AVAXUSDT,BUY,DIP_BUY,6.615,6.615,6.94575,7.60725,6.55108,67.2,21.4,22.4,44.3,26.89,0.0,0.339,False,46.8,39.0,RANGE,BUY,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+21:21:05,ASTERUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,100.0,27.6,39.3,37.7,240.93,0.0,0.034,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+21:21:05,XPLUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,85.8,29.4,45.0,42.7,4061.89,0.0,0.299,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+21:21:05,RUNEUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,86.3,29.7,51.7,52.3,161.23,0.0,-0.024,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+21:21:05,SYNUSDT,WATCH,,0.0,0.0,0.0,0.0,0.0,82.3,57.0,52.4,55.3,115.32,0.0,-0.072,True,46.8,39.0,RANGE,WATCH,No valid setup,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+21:19:40,AVAXUSDT,BUY,DIP_BUY,6.615,0.0,6.94575,7.60725,6.55108,67.2,21.4,22.4,44.3,26.89,0.0,0.339,False,46.8,39.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 20:04:21,ICPUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,87.1,16.1,38.0,43.0,-12.11,0.0,0.152,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 20:04:21,SPKUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,97.3,28.9,38.3,45.5,113.78,0.0,0.356,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 20:04:21,JSTUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,79.6,44.4,42.2,36.8,1627.02,0.0,0.712,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
