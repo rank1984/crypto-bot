@@ -1,4 +1,9 @@
 ﻿Time,Coin,Decision,Setup,Entry,Trigger Price,TP1,TP2,SL,Final Score,Probability,Flow,Pre,OI,Funding,RS,Compression,Market Health,News Score,BTC Regime,Status,Reason,Exit Reason,PnL,PnL%,Max Profit%,Max DD%,Trade State,Exit Price,Duration (m),Trigger Hit,TP1 Hit,TP2 Hit,SL Hit,Max Up%,Max Down%,Outcome Checked
+22:20:19,OPUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,94.2,16.7,50.0,29.9,-38.63,0.0,0.037,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+22:20:19,KAITOUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,96.4,28.6,37.5,45.2,1166.83,0.0,0.381,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+22:20:19,NESUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,97.3,29.5,45.5,50.5,287.62,0.0,0.275,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+22:20:19,AGTUSDT,PREPARE,,0.0,0.0,0.0,0.0,0.0,75.2,48.2,68.7,56.8,1056.32,0.0,0.309,False,46.8,39.0,RANGE,PREPARE,No valid setup,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+22:20:19,HANAUSDT,WATCH,,0.0,0.0,0.0,0.0,0.0,78.5,51.0,35.1,26.5,123.44,0.0,3.78,False,46.8,39.0,RANGE,WATCH,No valid setup,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 21:21:05,AVAXUSDT,BUY,DIP_BUY,6.615,6.615,6.94575,7.60725,6.55108,67.2,21.4,22.4,44.3,26.89,0.0,0.339,False,46.8,39.0,RANGE,BUY,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 21:21:05,ASTERUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,100.0,27.6,39.3,37.7,240.93,0.0,0.034,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 21:21:05,XPLUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,85.8,29.4,45.0,42.7,4061.89,0.0,0.299,False,46.8,39.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
