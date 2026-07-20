@@ -411,17 +411,20 @@ def export_shadow_csv():
         with _conn() as c:
             trades = c.execute("SELECT * FROM shadow_trades ORDER BY id DESC").fetchall()
 
-        with open(filepath, mode='w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                "Time", "Coin", "Decision", "Setup", "Entry", "Trigger Price", "TP1", "TP2", "SL",
-                "Final Score", "Probability", "Flow", "Pre", "OI", "Funding", "RS",
-                "Compression", "Market Health", "News Score", "BTC Regime",
-                "Status", "Reason", "Exit Reason", "PnL", "PnL%", "Max Profit%",
-                "Max DD%", "Trade State", "Exit Price", "Duration (m)",
-                "Trigger Hit", "TP1 Hit", "TP2 Hit", "SL Hit",
-                "Max Up%", "Max Down%", "Outcome Checked"
-            ])
+        # פתח את הקובץ במצב 'a' להוספה, או צור אותו עם כותרת אם אינו קיים
+file_exists = os.path.isfile(filepath)
+with open(filepath, mode='a', newline='', encoding='utf-8-sig') as f:
+    writer = csv.writer(f)
+    if not file_exists:
+        writer.writerow([
+            "Time", "Coin", "Decision", "Setup", "Entry", "Trigger Price", "TP1", "TP2", "SL",
+            "Final Score", "Probability", "Flow", "Pre", "OI", "Funding", "RS",
+            "Compression", "Market Health", "News Score", "BTC Regime",
+            "Status", "Reason", "Exit Reason", "PnL", "PnL%", "Max Profit%",
+            "Max DD%", "Trade State", "Exit Price", "Duration (m)",
+            "Trigger Hit", "TP1 Hit", "TP2 Hit", "SL Hit",
+            "Max Up%", "Max Down%", "Outcome Checked"
+        ])
 
             log.info(f"Exporting {len(trades)} shadow trades")
             for t in trades:
