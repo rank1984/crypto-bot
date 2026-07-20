@@ -16,7 +16,7 @@ from scanner.news_engine      import get_market_health, get_news_score
 from scanner.event_engine     import trading_disabled, get_event_warning
 
 # ── שדרוג א: ייבוא מנוע הטרנדינג של CoinGecko ─────────────────────────────────
-from engines.alt_data         import get_coingecko_trending, trending_bonus
+from engines.alt_data          import get_coingecko_trending, trending_bonus
 
 # ── ייבוא למערכת ה-WebSocket (וודא שהנתיב תואם לפרויקט שלך) ───────────────────
 from engines.alt_data import BinanceOrderBookMonitor
@@ -287,47 +287,53 @@ def run_scan() -> None:
         live_monitor.add_to_watchlist(c)
 
     # ── 6. Trade Management ───────────────────────────────────────────────────
-    # 6a. Open new trades
-    if circuit_breaker.can_trade():
-        for c in filtered.get("buy", []):
-            if trade_mgr.can_open_trade():
-                entry_price = c.get("entry_price", 0)
-                sl = c.get("sl", 0)
-                tp1 = c.get("tp1", 0)
-                tp2 = c.get("tp2", 0)
-                current_price = c.get("last_price", 0)
-
-                if entry_price == 0 or current_price == 0:
-                    df_5m = get_candles(c["symbol"], "5m", limit=5)
-                    if df_5m is not None and len(df_5m) > 0:
-                        current_price = float(df_5m["close"].iloc[-1])
-                        if entry_price == 0:
-                            entry_price = current_price
-                if sl == 0:
-                    sl = round(entry_price * 0.98, 8)
-                if tp1 == 0:
-                    tp1 = round(entry_price * 1.04, 8)
-                if tp2 == 0:
-                    tp2 = round(entry_price * 1.10, 8)
-
-                # ── שדרוג ג: שילוב הבונוס בחישוב ה-Trade Quality ────────────────
-                quality = calc_trade_quality(c, news_score) + c.get("trending_bonus", 0)
-                c["trade_quality"] = quality
-
-                signal_data = {
-                    "symbol": c["symbol"],
-                    "entry": entry_price,
-                    "sl": sl,
-                    "tp1": tp1,
-                    "tp2": tp2,
-                    "setup_type": c.get("setup_type", "UNKNOWN"),
-                }
-                trade = trade_mgr.open_trade(signal_data, entry_price)
-                if trade:
-                    trade.quality = quality
-            else:
-                log.info(f"Max trades reached, {c['symbol']} put on WATCH (no open slot)")
-    else:
+    # 6a. Open new trades    
+    if circuit_breaker.can_trade():        
+        for c in filtered.get("buy", []):            
+            if trade_mgr.can_open_trade():                
+                entry_price = c.get("entry_price", 0)                
+                sl = c.get("sl", 0)                
+                tp1 = c.get("tp1", 0)                
+                tp2 = c.get("tp2", 0)                
+                current_price = c.get("last_price", 0)                
+                prob = c.get("probability", 0)                
+                flow = c.get("flow_score", 0)                
+                final_score = c.get("final_score", 0)                
+                # ── Final AI Gate ──────────────────────────────────────────                
+                if prob < 50 or flow < 50 or (market_health < 50 and regime == "RANGE"):                    
+                    log.info(f"AI Gate: {c['symbol']} downgraded (prob={prob:.0f}, flow={flow:.0f})")                    
+                    c["entry_decision"] = "WATCH"                    
+                    continue                
+                # ─────────────────────────────────────────────────────────────                
+                if entry_price == 0 or current_price == 0:                    
+                    df_5m = get_candles(c["symbol"], "5m", limit=5)                    
+                    if df_5m is not None and len(df_5m) > 0:                        
+                        current_price = float(df_5m["close"].iloc[-1])                        
+                        if entry_price == 0:                            
+                            entry_price = current_price                
+                if sl == 0:                    
+                    sl = round(entry_price * 0.98, 8)                
+                if tp1 == 0:                    
+                    tp1 = round(entry_price * 1.04, 8)                
+                if tp2 == 0:                    
+                    tp2 = round(entry_price * 1.10, 8)                
+                quality = calc_trade_quality(c, news_score)                
+                c["trade_quality"] = quality                
+                signal_data = {                    
+                    "symbol": c["symbol"],                    
+                    "entry": entry_price,                    
+                    "sl": sl,                    
+                    "tp1": tp1,                    
+                    "tp2": tp2,                    
+                    "setup_type": c.get("setup_type", "UNKNOWN"),                
+                }                
+                trade = trade_mgr.open_trade(signal_data, entry_price)                
+                if trade:                    
+                    trade.quality = quality                    
+                    # ההודעה תישלח בהודעה המאוחדת בסוף הסריקה            
+            else:                
+                log.info(f"Max trades reached, {c['symbol']} put on WATCH (no open slot)")    
+    else:        
         log.warning(f"Circuit Breaker active: {circuit_breaker.status()} — no new trades")
 
     # 6b. Update existing trades
@@ -377,83 +383,87 @@ def run_scan() -> None:
                 send_simple_message(_trade_close_message(trade, action))
                 circuit_breaker.update_on_close(action["pnl"], market_health)
 
-    # ── 7. הודעה מאוחדת בעברית (ייעוץ בלבד) ──────────────────────────────
-    lines = []
-    
-    if top:
-        leader = top[0]
-        lines.append(f"🥇 {leader['symbol']} – המוביל כרגע")
-        lines.append(f"   מחיר: {leader.get('price', 0):.5f}  |  "
-                     f"בינה: {leader.get('ai_score', 0):.0f}  |  "
-                     f"הסתברות: {leader.get('probability', 0):.0f}%")
-        if leader.get('trigger_price'):
-            lines.append(f"   טריגר: {leader['trigger_price']:.5f}")
-        lines.append("")
-
-    lines.append(f"📊 מצב שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
-    if market_health >= 65:
-        lines.append("   ↳ שוק חזק – מותר לסחור.")
-    elif market_health >= 40:
-        lines.append("   ↳ שוק בינוני – אפשר לסחור בזהירות.")
-    else:
-        lines.append("   ↳ שוק חלש – עדיף להמתין.")
-
-    cb_status = circuit_breaker.status()
-    lines.append(f"🛡 מפסק: {cb_status}")
-    if cb_status != "ACTIVE":
-        lines.append(f"   ⚠️ סיבה: {circuit_breaker.block_reason}")
-    lines.append("")
-
-    lines.append("📊 דירוג 5 מומלצים:")
-    lines.append("┌──────┬──────┬────────┬────────┐")
-    lines.append("│ מטבע │ בינה │ הסתברות│ מרחק   │")
-    lines.append("├──────┼──────┼────────┼────────┤")
-    for c in top[:5]:
-        sym = c['symbol'].replace('USDT', '')[:8].ljust(6)
-        ai = str(c.get('ai_score', 0)).rjust(4)
-        prob = (str(c.get('probability', 0)) + '%').rjust(6)
-        dist = f"{c.get('trigger_distance_pct', 0):.2f}%".rjust(6)
-        lines.append(f"│ {sym} │ {ai} │ {prob} │ {dist} │")
-    lines.append("└──────┴──────┴────────┴────────┘")
-    lines.append("")
-
-    buy_list = filtered.get("buy", [])
-    if buy_list:
-        lines.append("🟢 קניות (BUY) – הבוט ממליץ:")
-        for c in buy_list:
-            lines.append(f"  {c['symbol']}  כניסה: {c.get('entry_price', 0):.4f}  "
-                         f"סטופ: {c.get('entry_sl', 0):.4f}  יעד1: {c.get('entry_tp1', 0):.4f}")
-        lines.append("")
-
-    watch_list = filtered.get("watch", [])
-    if watch_list:
-        lines.append("🟡 במעקב (WATCH) – טרם בשל:")
-        for c in watch_list[:3]:
-            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "
-                         f"הסתברות: {c.get('probability', 0):.0f}%")
-        lines.append("")
-
-    arm_list = filtered.get("arm", [])
-    if arm_list:
-        lines.append("🟠 במעקב צמוד (ARM) – קרובים לפריצה:")
-        for c in arm_list[:3]:
-            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "
-                         f"הסתברות: {c.get('probability', 0):.0f}%  "
-                         f"מרחק: {c.get('trigger_distance_pct', 0):.2f}%")
-        lines.append("")
-
-    if not (buy_list or arm_list):
-        lines.append("ℹ️ אין כרגע המלצות קנייה.")
-
-    lines.append("")
-    lines.append("🔹 מה לעשות עכשיו:")
-    lines.append("• ℹ️ הבוט מייעץ – **לא** קונה אוטומטית.")
-    lines.append("• 🟢 קניות – מומלץ לקנות ידנית את המטבעות הרשומים.")
-    lines.append("• 🟡 במעקב – לא לקנות עדיין. להמתין.")
-    lines.append("• 🟠 במעקב צמוד – להתכונן, קרובים לפריצה.")
-    lines.append("• 📊 שוק בינוני – מותר לסחור בזהירות.")
-    lines.append("• 📋 בדוק טבלת מומלצים למעלה.")
-
+    # ── 7. הודעה מאוחדת בעברית (מסכם + קטגוריות) ─────────────────────────    
+    lines = []    
+    # כותרת עליונה – המטבע המוביל    
+    if top:        
+        leader = top[0]        
+        lines.append(f"🥇 {leader['symbol']} – המוביל כרגע")        
+        lines.append(f"   מחיר: {leader.get('price', 0):.5f}  |  "                     
+                     f"בינה: {leader.get('ai_score', 0):.0f}  |  "                     
+                     f"הסתברות: {leader.get('probability', 0):.0f}%")        
+        if leader.get('trigger_price'):            
+            lines.append(f"   טריגר: {leader['trigger_price']:.5f}")        
+        lines.append("")    
+    # מצב שוק    
+    lines.append(f"📊 מצב שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")    
+    if market_health >= 65:        
+        lines.append("   ↳ שוק חזק – מותר לסחור.")    
+    elif market_health >= 40:        
+        lines.append("   ↳ שוק בינוני – אפשר לסחור בזהירות.")    
+    else:        
+        lines.append("   ↳ שוק חלש – עדיף להמתין.")    
+    # מפסק    
+    cb_status = circuit_breaker.status()    
+    lines.append(f"🛡 מפסק: {cb_status}")    
+    if cb_status != "ACTIVE":        
+        lines.append(f"   ⚠️ סיבה: {circuit_breaker.block_reason}")    
+    lines.append("")    
+    # טבלת 5 מומלצים    
+    lines.append("📊 דירוג 5 מומלצים:")    
+    lines.append("┌──────┬──────┬────────┬────────┐")    
+    lines.append("│ מטבע │ בינה │ הסתברות│ מרחק   │")    
+    lines.append("├──────┼──────┼────────┼────────┤")    
+    for c in top[:5]:        
+        sym = c['symbol'].replace('USDT', '')[:8].ljust(6)        
+        ai = str(c.get('ai_score', 0)).rjust(4)        
+        prob = (str(c.get('probability', 0)) + '%').rjust(6)        
+        dist = f"{c.get('trigger_distance_pct', 0):.2f}%".rjust(6)        
+        lines.append(f"│ {sym} │ {ai} │ {prob} │ {dist} │")    
+    lines.append("└──────┴──────┴────────┴────────┘")    
+    lines.append("")    
+    # פילוח האותות    
+    buy_list = filtered.get("buy", [])    
+    prepare_list = filtered.get("prepare", [])    
+    watch_list = filtered.get("watch", [])    
+    arm_list = filtered.get("arm", [])    
+    if buy_list:        
+        lines.append("🟢 קניות (BUY) – הבוט ממליץ לקנות עכשיו:")        
+        for c in buy_list:            
+            lines.append(f"  {c['symbol']}  כניסה: {c.get('entry_price', 0):.4f}  "                         
+                         f"סטופ: {c.get('entry_sl', 0):.4f}  יעד1: {c.get('entry_tp1', 0):.4f}")        
+        lines.append("")    
+    if prepare_list:        
+        lines.append("🟡 הכנה (PREPARE) – הצטברות איכותית:")        
+        for c in prepare_list[:3]:            
+            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "                         
+                         f"הסתברות: {c.get('probability', 0):.0f}%")        
+        lines.append("")    
+    if arm_list:        
+        lines.append("🟠 במעקב צמוד (ARM) – קרובים לפריצה:")        
+        for c in arm_list[:3]:            
+            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "                         
+                         f"הסתברות: {c.get('probability', 0):.0f}%  "                         
+                         f"מרחק: {c.get('trigger_distance_pct', 0):.2f}%")        
+        lines.append("")    
+    if watch_list:        
+        lines.append("🟡 במעקב (WATCH) – טרם בשל:")        
+        for c in watch_list[:3]:            
+            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "                         
+                         f"הסתברות: {c.get('probability', 0):.0f}%")        
+        lines.append("")    
+    # סיכום עסקאות    
+    active_now = trade_mgr.get_active_trades()    
+    if active_now:        
+        lines.append(f"🔹 נפתחו {len(active_now)} עסקאות:")        
+        for t in active_now:            
+            lines.append(f"  {t.symbol}  כניסה: {t.entry_price:.4f}  SL: {t.sl:.4f}  TP1: {t.tp1:.4f}")    
+    lines.append("")    
+    lines.append("🔹 מה לעשות עכשיו:")    
+    lines.append("• ℹ️ הבוט מייעץ – **לא** קונה אוטומטית.")    
+    lines.append("• 🟢 קניות – מומלץ לקנות ידנית את המטבעות הרשומים.")    
+    lines.append("• 🟡 במעקב/הכנה – לא לקנות עדיין. להמתין.")    
+    lines.append("• 📊 בדוק טבלת מומלצים וסיכום עסקאות.")    
     send_simple_message("\n".join(lines))
 
     # ── 8. Learning & Shadow ──────────────────────────────────────────────────
