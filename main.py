@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, ARM State, Circuit Breaker)
+CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, ARM State, Circuit Breaker & Trending Bonus)
 """
 import time, signal, sys, argparse
 
@@ -14,6 +14,12 @@ from utils.logger                import get_logger
 # ── News & Event Engines ──────────────────────────────────────────────────────
 from scanner.news_engine      import get_market_health, get_news_score
 from scanner.event_engine     import trading_disabled, get_event_warning
+
+# ── שדרוג א: ייבוא מנוע הטרנדינג של CoinGecko ─────────────────────────────────
+from engines.alt_data         import get_coingecko_trending, trending_bonus
+
+# ── ייבוא למערכת ה-WebSocket (וודא שהנתיב תואם לפרויקט שלך) ───────────────────
+from monitor.orderbook        import BinanceOrderBookMonitor, order_book_signal_handler
 
 # ── Circuit Breaker, Trade Quality, Trade Replay ──────────────────────────────
 from portfolio.circuit_breaker import CircuitBreaker
@@ -35,7 +41,6 @@ def _handle_signal(sig, frame):
 signal.signal(signal.SIGINT,  _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
 
-
 # ── Trade Manager Global ──────────────────────────────────────────────────────
 from scanner.trade_manager import TradeManager
 
@@ -51,6 +56,8 @@ init_replay_db()
 live_monitor = LiveMonitor(trade_mgr, send_simple_message)
 live_monitor.start()
 
+# ── Global WebSocket Monitors Dictionary ──────────────────────────────────────
+ws_monitors = {}
 
 def _trade_open_message(trade) -> str:
     quality = getattr(trade, 'quality', 0)
@@ -78,7 +85,6 @@ def _trade_partial_message(trade, action: dict) -> str:
         f"Price: {action['price']:.4f}\n"
         f"Sold: {action['ratio']*100:.0f}%"
     )
-
 
 def run_scan() -> None:
     log.info("── Scan started ──────────────────────────────────────")
@@ -190,7 +196,6 @@ def run_scan() -> None:
 
     # ── ודא last_price + trigger_distance_pct ────────────────────────────────
     for c in top:
-        # last_price fallback
         if "last_price" not in c or c.get("last_price", 0) == 0:
             fallback = c.get("close", c.get("price", 0))
             if fallback == 0:
@@ -199,7 +204,6 @@ def run_scan() -> None:
                     fallback = float(df_tmp["close"].iloc[-1])
             c["last_price"] = fallback
 
-        # trigger distance
         last_price = c.get("last_price", 0)
         trigger_price = c.get("trigger_price", c.get("entry_price", 0))
         if last_price > 0 and trigger_price > 0:
@@ -216,6 +220,14 @@ def run_scan() -> None:
     from scanner.signal_filter import filter_coins
     filtered = filter_coins(top)
 
+    # ── שדרוג ב: הוספת בונוס טרנדינג מ-CoinGecko אחרי הסינון ────────────────
+    try:
+        trending_coins = get_coingecko_trending()
+        for c in top:
+            c["trending_bonus"] = trending_bonus(c["symbol"], trending_coins)
+    except Exception as e:
+        log.warning(f"Failed to fetch trending data: {e}")
+
     log.info(f"TOP COINS BEFORE FILTER = {len(top)}")
     for c in top[:10]:
         log.info(
@@ -226,7 +238,8 @@ def run_scan() -> None:
             f"compressed={c.get('is_compressed',False)} "
             f"oi={c.get('oi_change',0):.1f} "
             f"rs={c.get('rs_1h',0):.2f} "
-            f"decision={c.get('entry_decision','NO')}"
+            f"decision={c.get('entry_decision','NO')} "
+            f"trend_bonus={c.get('trending_bonus',0):.1f}"
         )
 
     log.info(
@@ -236,6 +249,26 @@ def run_scan() -> None:
         f"ARM={len(filtered.get('arm', []))} "
         f"WATCH={len(filtered.get('watch', []))}"
     )
+
+    # ── שדרוג ד: הפעלת מנטרי WebSocket ברקע ל-10 המובילים ─────────────────────
+    global ws_monitors
+    # ניקוי וסגירה של מאזינים קודמים שלא רלוונטים יותר
+    for sym, m in list(ws_monitors.items()):
+        try:
+            m.stop() # בהנחה ויש פונקציית stop במחלקה שלך למניעת זליגות
+        except:
+            pass
+    ws_monitors.clear()
+
+    # יצירת מאזינים חדשים
+    for c in top[:10]:
+        sym = c["symbol"]
+        try:
+            m = BinanceOrderBookMonitor(sym, callback=order_book_signal_handler)
+            m.start()
+            ws_monitors[sym] = m
+        except Exception as e:
+            log.error(f"Failed to start WebSocket for {sym}: {e}")
 
     # ── Live Monitor: Priority Queue (Top 5 ARM) ─────────────────────────────
     arm_candidates = filtered.get("arm", [])
@@ -277,7 +310,8 @@ def run_scan() -> None:
                 if tp2 == 0:
                     tp2 = round(entry_price * 1.10, 8)
 
-                quality = calc_trade_quality(c, news_score)
+                # ── שדרוג ג: שילוב הבונוס בחישוב ה-Trade Quality ────────────────
+                quality = calc_trade_quality(c, news_score) + c.get("trending_bonus", 0)
                 c["trade_quality"] = quality
 
                 signal_data = {
@@ -291,7 +325,6 @@ def run_scan() -> None:
                 trade = trade_mgr.open_trade(signal_data, entry_price)
                 if trade:
                     trade.quality = quality
-                    # ההודעה תישלח בהודעה המאוחדת בסוף הסריקה
             else:
                 log.info(f"Max trades reached, {c['symbol']} put on WATCH (no open slot)")
     else:
@@ -347,7 +380,6 @@ def run_scan() -> None:
     # ── 7. הודעה מאוחדת בעברית (ייעוץ בלבד) ──────────────────────────────
     lines = []
     
-    # כותרת עליונה – המטבע המוביל
     if top:
         leader = top[0]
         lines.append(f"🥇 {leader['symbol']} – המוביל כרגע")
@@ -358,7 +390,6 @@ def run_scan() -> None:
             lines.append(f"   טריגר: {leader['trigger_price']:.5f}")
         lines.append("")
 
-    # מצב שוק
     lines.append(f"📊 מצב שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
     if market_health >= 65:
         lines.append("   ↳ שוק חזק – מותר לסחור.")
@@ -367,14 +398,12 @@ def run_scan() -> None:
     else:
         lines.append("   ↳ שוק חלש – עדיף להמתין.")
 
-    # מפסק
     cb_status = circuit_breaker.status()
     lines.append(f"🛡 מפסק: {cb_status}")
     if cb_status != "ACTIVE":
         lines.append(f"   ⚠️ סיבה: {circuit_breaker.block_reason}")
     lines.append("")
 
-    # טבלת 5 מומלצים
     lines.append("📊 דירוג 5 מומלצים:")
     lines.append("┌──────┬──────┬────────┬────────┐")
     lines.append("│ מטבע │ בינה │ הסתברות│ מרחק   │")
@@ -388,7 +417,6 @@ def run_scan() -> None:
     lines.append("└──────┴──────┴────────┴────────┘")
     lines.append("")
 
-    # קטגוריות BUY / WATCH / ARM
     buy_list = filtered.get("buy", [])
     if buy_list:
         lines.append("🟢 קניות (BUY) – הבוט ממליץ:")
@@ -467,7 +495,8 @@ def run_scan() -> None:
             f"flow={c.get('flow_score',0):.0f}  "
             f"pre={c.get('pre_score',0):.0f}  "
             f"signal={c.get('signal','?'):<10}  "
-            f"entry={c.get('entry_decision','NO')}"
+            f"entry={c.get('entry_decision','NO')}  "
+            f"trend={c.get('trending_bonus',0):.1f}"
         )
 
     active_now = trade_mgr.get_active_trades()
@@ -481,7 +510,6 @@ def run_scan() -> None:
 
     if original_max is not None:
         trade_mgr.max_trades = original_max
-
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -512,6 +540,11 @@ def main() -> None:
             time.sleep(1)
 
     live_monitor.stop()
+    # סגירת כל ה-WebSockets בצורה מסודרת בסיום
+    for m in ws_monitors.values():
+        try: m.stop()
+        except: pass
+        
     log.info("CRYPTO-BOT Elite stopped.")
     sys.exit(0)
 
