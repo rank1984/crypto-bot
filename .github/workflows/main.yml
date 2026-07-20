@@ -26,18 +26,17 @@ jobs:
           
       - name: Install dependencies
         run: pip install -r requirements.txt
-  
-        me: Run bot
+        
+      - name: Run bot
         env:
           TELEGRAM_TOKEN:  ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py --once
 
-                - name: 🚀 Commit and Push Shadow Results
+      - name: 🚀 Commit and Push Shadow Results
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-      - na
           
           if [ -f shadow_results.csv ]; then
             git add data/shadow.db shadow_results.csv
