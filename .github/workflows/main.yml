@@ -26,22 +26,24 @@ jobs:
           
       - name: Install dependencies
         run: pip install -r requirements.txt
-        
-      - name: Run bot
+  
+        me: Run bot
         env:
           TELEGRAM_TOKEN:  ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py --once
 
-            - name: 🚀 Commit and Push Shadow Results
+                - name: 🚀 Commit and Push Shadow Results
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+      - na
           
-          git add data/shadow.db shadow_results.csv
-          git diff --cached --quiet || git commit -m "📈 Auto-update shadow results [skip ci]"
-          git pull --rebase -X ours origin main || true
-          git push origin main
+          if [ -f shadow_results.csv ]; then
+            git add data/shadow.db shadow_results.csv
+            git diff --cached --quiet || git commit -m "📈 Auto-update shadow results [skip ci]"
+            git pull --rebase -X ours origin main || true
+            git push origin main
           else
             echo "shadow_results.csv not found, skipping commit."
           fi
