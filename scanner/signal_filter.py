@@ -13,6 +13,10 @@ log = get_logger(__name__)
 
 
 def classify_signal(c: dict) -> str:
+    """
+    מחזיר final_decision אחיד:
+    BUY / PREPARE / ARM / WATCH / IGNORE
+    """
     dec        = c.get("entry_decision", "NO")
     flow       = c.get("flow_score", 0)
     pre        = c.get("pre_score", 0)
@@ -26,33 +30,32 @@ def classify_signal(c: dict) -> str:
     oi_growing  = oi_change > 2.0
     rs_positive = rs_1h > 0
     oi_strong   = oi_change > 30.0
-    at_trigger  = (0.0 <= dist_pct <= 0.05)  # ממש על הטריגר
+    at_trigger  = (0.0 <= dist_pct <= 0.05)
 
-    # BUY – טריגר מאושר
+    # ── BUY: Entry Engine אישר + AI Gate ─────────────────────────────
     if dec == "BUY":
-        if flow < 30 and pre < 30:
+        if prob < 55 or flow < 60 or c.get("final_score", 0) < 70:
             return "WATCH"
         return "BUY"
 
-    # ARM – מרחק ≤1%, איכות גבוהה, או ממש על הטריגר
+    # ── ARM: קרוב לטריגר, איכותי ─────────────────────────────────────
+    if at_trigger and (compressed or flow >= 40 or oi_strong):
+        return "ARM"
     arm_conditions = [
         prob >= 25 if prob > 0 else True,
         dist_pct <= 1.0,
         compressed or flow >= 45 or oi_strong,
-        market_health >= 50,   # הורדנו מ-60
+        market_health >= 50,
     ]
-    # אם ממש על הטריגר – ARM גם בלי כל התנאים (רק איכות בסיסית)
-    if at_trigger and (compressed or flow >= 40 or oi_strong):
-        return "ARM"
     if sum(arm_conditions) >= 3 and dist_pct <= 1.0:
         return "ARM"
 
-    # PREPARE – הצטברות
+    # ── PREPARE: הצטברות ─────────────────────────────────────────────
     prepare_factors = [compressed, flow >= 55, oi_growing, rs_positive]
     if flow >= 55 and sum(prepare_factors) >= 3:
         return "PREPARE"
 
-    # WATCH
+    # ── WATCH ─────────────────────────────────────────────────────────
     if flow >= 45 or pre >= 45 or (prob >= 25 and dist_pct < 2.0):
         return "WATCH"
 
