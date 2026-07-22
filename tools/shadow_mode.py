@@ -101,7 +101,21 @@ def init_shadow_db():
 # 2. Save every signal (WATCH / PREPARE / ARM / BUY / IGNORE)
 # ═══════════════════════════════════════════════════════════════════════════════
 def save_shadow_signal(coin: dict, signal: str):
-    """שומר כל מטבע שנסרק — גם אם לא נכנס כעסקה."""
+    """שומר כל מטבע שנסרק — אלא אם יש כבר עסקה פעילה (אז לא מכניסים שוב)."""
+    symbol = coin.get("symbol", "UNKNOWN")
+    
+    # בדוק אם יש עסקה פעילה לאותו מטבע – אם כן, דלג
+    try:
+        with _conn() as c:
+            active = c.execute("""
+                SELECT id FROM shadow_trades
+                WHERE symbol = ? AND trade_state = 'ACTIVE'
+            """, (symbol,)).fetchone()
+            if active:
+                return  # כבר קיימת עסקה – לא מכניסים סיגנל נוסף
+    except Exception as e:
+        log.warning(f"Active check failed in save_shadow_signal: {e}")
+
     ts = datetime.now(timezone.utc).isoformat()
     try:
         with _conn() as c:
@@ -113,7 +127,7 @@ def save_shadow_signal(coin: dict, signal: str):
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts,
-                coin.get("symbol", "UNKNOWN"),
+                symbol,
                 signal,
                 coin.get("entry_setup", ""),
                 coin.get("entry_price", coin.get("price", 0)),
