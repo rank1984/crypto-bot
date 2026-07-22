@@ -2,11 +2,12 @@
 CRYPTO-BOT Elite — News & Sentiment Engine v2
 
 Market Health מורכב (BTC, OI, Funding, Liquidations, News, Fear&Greed)
-News Score – מבוסס CryptoPanic (sentiment) + זיהוי אירועים
+News Score – מבוסס CryptoPanic RSS (חינם, ניתוח סנטימנט מילות מפתח)
 Cache – פנימי ל-10 דקות
 """
 import requests
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from utils.logger import get_logger
 
@@ -29,7 +30,7 @@ def _from_cache(key):
 def _to_cache(key, value):
     _cache[key] = {"value": value, "ts": time.time()}
 
-# ─── 1. Fear & Greed (פעם ביום, אבל נטען כל 10 דקות) ─────────────────────────
+# ─── 1. Fear & Greed (פעם ביום, מנוהל ב-Cache ל-10 דקות) ─────────────────────
 def get_fear_greed() -> int:
     cached = _from_cache("fear_greed")
     if cached is not None:
@@ -47,29 +48,50 @@ def get_fear_greed() -> int:
 # ─── 2. CryptoPanic News Score (באמצעות RSS חינמי) ──────────────────────────
 def get_news_score() -> int:
     """
-    מחזיר ציון 0-100 לפי סנטימנט החדשות האחרונות.
-    משתמש ב-CryptoPanic RSS (חינם) – מחזיר כותרות עם 'sentiment'.
+    מושך סנטימנט מ-CryptoPanic RSS (חינם).
+    מחזיר ציון 0-100 (גבוה = חיובי).
     """
     cached = _from_cache("news_score")
     if cached is not None:
         return cached
 
-    score = 50  # neutral
     try:
-        # CryptoPanic RSS – אפשר להמיר ל-API key (חינם) לקבלת JSON
-        # לשלב ראשוני נקרא RSS (ללא מפתח) – קיים, אבל מגביל.
-        # לצורך הדגמה, נשתמש ב-API key חינמי (נניח שיש לך – תוכל להחליף)
-        # API example: https://cryptopanic.com/api/v1/posts/?auth_token=YOUR_TOKEN&filter=hot
-        # ללא מפתח – RSS: https://cryptopanic.com/news/rss/
-        # כרגע נחזיר ערך מבוסס Fear&Greed + תוספת קטנה, עד שתחבר API
-        fg = get_fear_greed()
-        score = min(100, max(0, fg + 10))  # זמני
-        log.info("News Score (placeholder): using Fear&Greed+10")
-    except Exception as e:
-        log.warning(f"News Score error: {e}")
+        url = "https://cryptopanic.com/news/rss/"
+        r = requests.get(url, timeout=10)
+        root = ET.fromstring(r.content)
 
-    _to_cache("news_score", score)
-    return score
+        positive_count = 0
+        total_count = 0
+
+        for item in root.iter("item"):
+            title = item.find("title").text.lower() if item.find("title") is not None else ""
+            description = item.find("description").text.lower() if item.find("description") is not None else ""
+
+            # זיהוי מילים חיוביות/שליליות
+            positive_words = ["bull", "surge", "rally", "jump", "green", "buy", "long", "profit", "gain", "adoption"]
+            negative_words = ["bear", "crash", "dump", "red", "sell", "short", "loss", "ban", "hack", "scam"]
+
+            pos = sum(1 for w in positive_words if w in title or w in description)
+            neg = sum(1 for w in negative_words if w in title or w in description)
+
+            if pos > neg:
+                positive_count += 1
+            total_count += 1
+
+        if total_count == 0:
+            score = 50
+        else:
+            score = int((positive_count / total_count) * 100)
+
+        _to_cache("news_score", score)
+        log.info(f"News Score (CryptoPanic RSS): {score}")
+        return score
+
+    except Exception as e:
+        log.warning(f"CryptoPanic RSS error: {e}")
+        score = min(100, max(0, get_fear_greed() + 10))
+        _to_cache("news_score", score)
+        return score
 
 # ─── 3. Market Health (העיקרי) ──────────────────────────────────────────────
 def get_market_health(btc_change_1h: float,
@@ -103,6 +125,7 @@ def get_market_health(btc_change_1h: float,
         btc_score = 20
     elif btc_change_1h < -0.5:
         btc_score = 35
+
     # regime: bullish adds, bearish subtracts
     if regime == "TRENDING_BULL":
         btc_score = min(100, btc_score + 15)
@@ -131,7 +154,7 @@ def get_market_health(btc_change_1h: float,
     else:
         funding_score = 50
 
-    # Liquidations – 15% (פרוקסי: OI change sharp, נשתמש ב-liquidations ישירות)
+    # Liquidations – 15%
     if liquidations > 100_000_000:  # > 100M short liquidations
         liq_score = 90  # short squeeze
     elif liquidations > 50_000_000:
@@ -153,5 +176,4 @@ def get_market_health(btc_change_1h: float,
 
 # ─── 4. News Journal (אופציונלי) ────────────────────────────────────────────
 def log_news(headline, sentiment, impact, btc_price):
-    # יישמר בקובץ log או DB – לשלב מאוחר יותר
     pass
