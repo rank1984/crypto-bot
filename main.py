@@ -260,16 +260,6 @@ def run_scan() -> None:
             pass
     ws_monitors.clear()
 
-    # יצירת מאזינים חדשים
-    for c in top[:10]:
-        sym = c["symbol"]
-        try:
-            m = BinanceOrderBookMonitor(sym, callback=order_book_signal_handler)
-            m.start()
-            ws_monitors[sym] = m
-        except Exception as e:
-            log.error(f"Failed to start WebSocket for {sym}: {e}")
-
     # ── Live Monitor: Priority Queue (Top 5 ARM) ─────────────────────────────
     arm_candidates = filtered.get("arm", [])
     arm_candidates.sort(key=lambda x: (x.get("probability", 0)*0.5 + x.get("flow_score", 0)*0.3 + x.get("oi_change", 0)/10), reverse=True)
