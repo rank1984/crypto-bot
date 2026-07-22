@@ -299,12 +299,12 @@ def run_scan() -> None:
                 prob = c.get("probability", 0)                
                 flow = c.get("flow_score", 0)                
                 final_score = c.get("final_score", 0)                
-                # ── Final AI Gate ──────────────────────────────────────────                
-                if prob < 50 or flow < 50 or (market_health < 50 and regime == "RANGE"):                    
-                    log.info(f"AI Gate: {c['symbol']} downgraded (prob={prob:.0f}, flow={flow:.0f})")                    
-                    c["entry_decision"] = "WATCH"                    
-                    continue                
-                # ─────────────────────────────────────────────────────────────                
+            # ── Final AI Gate (קשיח – איכות לפני כמות) ─────────────
+                if prob < 55 or flow < 60 or final_score < 70:
+                    log.info(f"AI Gate: {c['symbol']} downgraded (prob={prob:.0f}, flow={flow:.0f}, score={final_score:.0f})")
+                    c["entry_decision"] = "WATCH"
+                    continue
+                # ─────────────────────────────────────────────────────────              
                 if entry_price == 0 or current_price == 0:                    
                     df_5m = get_candles(c["symbol"], "5m", limit=5)                    
                     if df_5m is not None and len(df_5m) > 0:                        
