@@ -23,15 +23,14 @@ def update_outcomes():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    # בחר שורות עם entry_price>0, outcome_checked=0, ועברו >= 12 שעות
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)).isoformat()
+    # מעבדים את כל השורות שלא נבדקו, ללא תלות בזמן
     rows = cur.execute("""
         SELECT * FROM shadow_trades
         WHERE outcome_checked = 0
           AND entry_price > 0
-          AND ts <= ?
         ORDER BY id
-    """, (cutoff,)).fetchall()
+        LIMIT 50
+    """).fetchall()
 
     log.info(f"Outcome tracker: found {len(rows)} rows to process")
 
