@@ -220,6 +220,9 @@ def run_scan() -> None:
     from scanner.signal_filter import filter_coins
     filtered = filter_coins(top)
 
+    for c in top:
+        c["final_decision"] = c.get("signal", "IGNORE")
+
     # ── שדרוג ב: הוספת בונוס טרנדינג מ-CoinGecko אחרי הסינון ────────────────
     try:
         trending_coins = get_coingecko_trending()
@@ -238,7 +241,7 @@ def run_scan() -> None:
             f"compressed={c.get('is_compressed',False)} "
             f"oi={c.get('oi_change',0):.1f} "
             f"rs={c.get('rs_1h',0):.2f} "
-            f"decision={c.get('entry_decision','NO')} "
+            f"final={c.get('final_decision','IGNORE')} "
             f"trend_bonus={c.get('trending_bonus',0):.1f}"
         )
 
@@ -289,12 +292,7 @@ def run_scan() -> None:
                 prob = c.get("probability", 0)                
                 flow = c.get("flow_score", 0)                
                 final_score = c.get("final_score", 0)                
-            # ── Final AI Gate (קשיח – איכות לפני כמות) ─────────────
-                if prob < 55 or flow < 60 or final_score < 70:
-                    log.info(f"AI Gate: {c['symbol']} downgraded (prob={prob:.0f}, flow={flow:.0f}, score={final_score:.0f})")
-                    c["entry_decision"] = "WATCH"
-                    continue
-                # ─────────────────────────────────────────────────────────              
+                                
                 if entry_price == 0 or current_price == 0:                    
                     df_5m = get_candles(c["symbol"], "5m", limit=5)                    
                     if df_5m is not None and len(df_5m) > 0:                        
@@ -379,8 +377,8 @@ def run_scan() -> None:
     if top:        
         leader = top[0]        
         lines.append(f"🥇 {leader['symbol']} – המוביל כרגע")        
-        lines.append(f"   מחיר: {leader.get('price', 0):.5f}  |  "                     
-                     f"בינה: {leader.get('ai_score', 0):.0f}  |  "                     
+        lines.append(f"   מחיר: {leader.get('price', 0):.5f}  |  "                      
+                     f"בינה: {leader.get('ai_score', 0):.0f}  |  "                      
                      f"הסתברות: {leader.get('probability', 0):.0f}%")        
         if leader.get('trigger_price'):            
             lines.append(f"   טריגר: {leader['trigger_price']:.5f}")        
@@ -420,26 +418,26 @@ def run_scan() -> None:
     if buy_list:        
         lines.append("🟢 קניות (BUY) – הבוט ממליץ לקנות עכשיו:")        
         for c in buy_list:            
-            lines.append(f"  {c['symbol']}  כניסה: {c.get('entry_price', 0):.4f}  "                         
+            lines.append(f"  {c['symbol']}  כניסה: {c.get('entry_price', 0):.4f}  "                          
                          f"סטופ: {c.get('entry_sl', 0):.4f}  יעד1: {c.get('entry_tp1', 0):.4f}")        
         lines.append("")    
     if prepare_list:        
         lines.append("🟡 הכנה (PREPARE) – הצטברות איכותית:")        
         for c in prepare_list[:3]:            
-            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "                         
+            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "                          
                          f"הסתברות: {c.get('probability', 0):.0f}%")        
         lines.append("")    
     if arm_list:        
         lines.append("🟠 במעקב צמוד (ARM) – קרובים לפריצה:")        
         for c in arm_list[:3]:            
-            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "                         
-                         f"הסתברות: {c.get('probability', 0):.0f}%  "                         
+            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "                          
+                         f"הסתברות: {c.get('probability', 0):.0f}%  "                          
                          f"מרחק: {c.get('trigger_distance_pct', 0):.2f}%")        
         lines.append("")    
     if watch_list:        
         lines.append("🟡 במעקב (WATCH) – טרם בשל:")        
         for c in watch_list[:3]:            
-            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "                         
+            lines.append(f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "                          
                          f"הסתברות: {c.get('probability', 0):.0f}%")        
         lines.append("")    
     # סיכום עסקאות    
@@ -466,7 +464,7 @@ def run_scan() -> None:
     try:
         from tools.shadow_mode import save_shadow_signal, update_forward_returns
         for c in top:
-            save_shadow_signal(c, c.get("signal", "IGNORE"))
+            save_shadow_signal(c, c.get("final_decision", "IGNORE"))
         update_forward_returns()
         log.info(f"Shadow Mode: saved {len(top)} signals")
     except Exception as e:
@@ -494,8 +492,7 @@ def run_scan() -> None:
             f"score={c['final_score']:.0f}  "
             f"flow={c.get('flow_score',0):.0f}  "
             f"pre={c.get('pre_score',0):.0f}  "
-            f"signal={c.get('signal','?'):<10}  "
-            f"entry={c.get('entry_decision','NO')}  "
+            f"final={c.get('final_decision','IGNORE'):<10}  "
             f"trend={c.get('trending_bonus',0):.1f}"
         )
 
