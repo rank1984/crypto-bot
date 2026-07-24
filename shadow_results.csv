@@ -1,4 +1,6 @@
 ﻿Time,Coin,Decision,Setup,Entry,Trigger Price,TP1,TP2,SL,Final Score,Probability,Flow,Pre,OI,Funding,RS,Compression,Market Health,News Score,BTC Regime,Status,Reason,Exit Reason,PnL,PnL%,Max Profit%,Max DD%,Trade State,Exit Price,Duration (m),Trigger Hit,TP1 Hit,TP2 Hit,SL Hit,Max Up%,Max Down%,Outcome Checked
+01:10:04,BMXUSDT,BUY,DIP_BUY,0.3096,0.0,0.32508,0.35604,0.3075545,52.6,22.3,23.2,44.3,184.1,0.0,-0.03,False,46.6,38.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+01:05:48,BTCUSDT,BUY,DIP_BUY,65092.4,0.0,68347.02,74856.26,64435.802,77.2,11.8,35.0,18.4,-27.44,0.0,0.067,False,46.6,38.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 23:40:26,ANSEMUSDT,BUY,DIP_BUY,0.1733,0.0,0.181965,0.199295,0.168354,81.5,18.7,21.3,26.9,2.54,0.0,2.187,False,47.2,41.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 23:40:22,BOMEUSDT,BUY,DIP_BUY,0.0004344,0.0,0.00045612,0.00049956,0.00043074,81.3,29.3,47.8,44.1,578.94,0.0,0.12,False,47.2,41.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 22:42:33,BLENDUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,76.2,45.2,53.4,42.4,377.21,0.0,0.328,False,47.2,41.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
