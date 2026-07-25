@@ -1,4 +1,6 @@
 ﻿Time,Coin,Decision,Setup,Entry,Trigger Price,TP1,TP2,SL,Final Score,Probability,Flow,Pre,OI,Funding,RS,Compression,Market Health,News Score,BTC Regime,Status,Reason,Exit Reason,PnL,PnL%,Max Profit%,Max DD%,Trade State,Exit Price,Duration (m),Trigger Hit,TP1 Hit,TP2 Hit,SL Hit,Max Up%,Max Down%,Outcome Checked
+08:51:54,B2USDT,WATCH,,0.0,0.0,0.0,0.0,0.0,100.0,53.5,42.0,41.4,156.38,0.0,3.879,False,46.4,37.0,RANGE,WATCH,No valid setup,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
+08:51:54,SAHARAUSDT,WATCH,,0.0,0.0,0.0,0.0,0.0,61.4,55.4,45.6,43.3,89.64,0.0,0.153,True,46.4,37.0,RANGE,WATCH,No valid setup,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 06:42:29,OUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,80.5,29.9,31.7,38.2,399.9,0.0,1.006,False,46.4,37.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 22:45:57,ZROUSDT,WATCH,BREAKOUT,0.0,0.0,0.0,0.0,0.0,79.0,29.8,44.5,45.8,127.25,0.0,0.305,False,46.6,38.0,RANGE,WATCH,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 22:45:57,CAKEUSDT,PREPARE,BREAKOUT,0.0,0.0,0.0,0.0,0.0,99.7,49.4,69.0,67.9,1203.08,0.0,0.263,False,46.6,38.0,RANGE,PREPARE,BREAKOUT setup — waiting for trigger,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
