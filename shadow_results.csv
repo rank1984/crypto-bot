@@ -1,4 +1,5 @@
 ﻿Time,Coin,Decision,Setup,Entry,Trigger Price,TP1,TP2,SL,Final Score,Probability,Flow,Pre,OI,Funding,RS,Compression,Market Health,News Score,BTC Regime,Status,Reason,Exit Reason,PnL,PnL%,Max Profit%,Max DD%,Trade State,Exit Price,Duration (m),Trigger Hit,TP1 Hit,TP2 Hit,SL Hit,Max Up%,Max Down%,Outcome Checked
+16:29:32,TRXUSDT,BUY,DIP_BUY,0.331,0.0,0.34755,0.38065,0.3280515,70.1,8.7,20.3,19.7,-28.09,0.0,0.391,False,46.4,37.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 15:35:59,STRKUSDT,BUY,DIP_BUY,0.02993,0.0,0.0314265,0.0344195,0.0295117,73.7,26.2,29.2,36.2,172.46,0.0,0.882,False,46.4,37.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 15:35:03,AIUSDT,BUY,DIP_BUY,0.02683,0.0,0.0281715,0.0308545,0.0262083,48.2,23.0,26.2,41.3,21.81,0.0,0.377,False,46.4,37.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 12:44:48,LINKUSDT,BUY,DIP_BUY,8.3266,0.0,8.74293,9.57559,8.2697435,68.4,22.3,31.9,44.5,119.52,0.0,0.078,False,46.4,37.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
