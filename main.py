@@ -524,10 +524,19 @@ def run_scan() -> None:
 
     try:
         from tools.learning_dashboard import run_dashboard
-
-        run_dashboard()
+        report = run_dashboard()
+        if report:
+            send_simple_message(report)
     except Exception as e:
-        log.debug(f"Learning dashboard error: {e}")
+        log.debug(f"Dashboard error: {e}")
+
+    try:
+        from tools.ai_optimizer import get_suggestions
+        suggestions = get_suggestions()
+        if suggestions:
+            send_simple_message(f"🤖 AI Optimization Suggestions:\n{suggestions}")
+    except Exception as e:
+        log.debug(f"AI Optimizer error: {e}")
 
     try:
         from tools.score_history import init_score_history, save_score
