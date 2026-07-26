@@ -19,10 +19,6 @@ from scanner.event_engine import trading_disabled, get_event_warning
 # ── שדרוג א: ייבוא מנוע הטרנדינג של CoinGecko ─────────────────────────────────
 from engines.alt_data import get_coingecko_trending, trending_bonus
 
-# ── ייבוא למערכת ה-WebSocket (מושבת זמנית) ───────────────────────────────────
-# from monitor.orderbook import BinanceOrderBookMonitor, order_book_signal_handler  # מושבת זמנית
-# from engines.alt_data import BinanceOrderBookMonitor  # מושבת זמנית
-
 # ── Circuit Breaker, Trade Quality, Trade Replay ──────────────────────────────
 from portfolio.circuit_breaker import CircuitBreaker
 from scanner.trade_quality import calc_trade_quality
@@ -104,8 +100,10 @@ def run_scan() -> None:
         init_shadow_db()
     except Exception as e:
         log.warning(f"Shadow DB init error: {e}")
-     try:
+
+    try:
         from storage.candle_cache import init_cache
+
         init_cache()
     except Exception as e:
         log.warning(f"Candle Cache init error: {e}")
@@ -279,12 +277,6 @@ def run_scan() -> None:
         f"WATCH={len(filtered.get('watch', []))}"
     )
 
-    # ── שדרוג ד: הפעלת מנטרי WebSocket ברקע (מושבת זמנית) ─────────────────────
-    ENABLE_ORDERBOOK = False
-    if ENABLE_ORDERBOOK:
-        # יופעל מחדש כשתרצה
-        pass
-
     # ── Live Monitor: Priority Queue (Top 5 ARM) ─────────────────────────────
     arm_candidates = filtered.get("arm", [])
     arm_candidates.sort(
@@ -347,7 +339,6 @@ def run_scan() -> None:
                 trade = trade_mgr.open_trade(signal_data, entry_price)
                 if trade:
                     trade.quality = quality
-                    # ההודעה תישלח בהודעה המאוחדת בסוף הסריקה
             else:
                 log.info(
                     f"Max trades reached, {c['symbol']} put on WATCH (no open slot)"
@@ -406,19 +397,18 @@ def run_scan() -> None:
 
     # ── 7. הודעה מאוחדת בעברית (מסכם + קטגוריות) ─────────────────────────
     lines = []
-    # כותרת עליונה – המטבע המוביל
     if top:
         leader = top[0]
         lines.append(f"🥇 {leader['symbol']} – המוביל כרגע")
         lines.append(
-            f"   מחיר: {leader.get('price', 0):.5f}  |  "
+            f"    מחיר: {leader.get('price', 0):.5f}  |  "
             f"בינה: {leader.get('ai_score', 0):.0f}  |  "
             f"הסתברות: {leader.get('probability', 0):.0f}%"
         )
         if leader.get("trigger_price"):
-            lines.append(f"   טריגר: {leader['trigger_price']:.5f}")
+            lines.append(f"    טריגר: {leader['trigger_price']:.5f}")
         lines.append("")
-    # מצב שוק
+
     lines.append(
         f"📊 מצב שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}"
     )
@@ -428,13 +418,13 @@ def run_scan() -> None:
         lines.append("   ↳ שוק בינוני – אפשר לסחור בזהירות.")
     else:
         lines.append("   ↳ שוק חלש – עדיף להמתין.")
-    # מפסק
+
     cb_status = circuit_breaker.status()
     lines.append(f"🛡 מפסק: {cb_status}")
     if cb_status != "ACTIVE":
         lines.append(f"   ⚠️ סיבה: {circuit_breaker.block_reason}")
     lines.append("")
-    # טבלת 5 מומלצים
+
     lines.append("📊 דירוג 5 מומלצים:")
     lines.append("┌──────┬──────┬────────┬────────┐")
     lines.append("│ מטבע │ בינה │ הסתברות│ מרחק   │")
@@ -447,11 +437,12 @@ def run_scan() -> None:
         lines.append(f"│ {sym} │ {ai} │ {prob} │ {dist} │")
     lines.append("└──────┴──────┴────────┴────────┘")
     lines.append("")
-    # פילוח האותות
+
     buy_list = filtered.get("buy", [])
     prepare_list = filtered.get("prepare", [])
     watch_list = filtered.get("watch", [])
     arm_list = filtered.get("arm", [])
+
     if buy_list:
         lines.append("🟢 קניות (BUY) – הבוט ממליץ לקנות עכשיו:")
         for c in buy_list:
@@ -460,6 +451,7 @@ def run_scan() -> None:
                 f"סטופ: {c.get('entry_sl', 0):.4f}  יעד1: {c.get('entry_tp1', 0):.4f}"
             )
         lines.append("")
+
     if prepare_list:
         lines.append("🟡 הכנה (PREPARE) – הצטברות איכותית:")
         for c in prepare_list[:3]:
@@ -468,6 +460,7 @@ def run_scan() -> None:
                 f"הסתברות: {c.get('probability', 0):.0f}%"
             )
         lines.append("")
+
     if arm_list:
         lines.append("🟠 במעקב צמוד (ARM) – קרובים לפריצה:")
         for c in arm_list[:3]:
@@ -477,6 +470,7 @@ def run_scan() -> None:
                 f"מרחק: {c.get('trigger_distance_pct', 0):.2f}%"
             )
         lines.append("")
+
     if watch_list:
         lines.append("🟡 במעקב (WATCH) – טרם בשל:")
         for c in watch_list[:3]:
@@ -485,7 +479,7 @@ def run_scan() -> None:
                 f"הסתברות: {c.get('probability', 0):.0f}%"
             )
         lines.append("")
-    # סיכום עסקאות
+
     active_now = trade_mgr.get_active_trades()
     if active_now:
         lines.append(f"🔹 נפתחו {len(active_now)} עסקאות:")
@@ -519,7 +513,6 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Shadow Mode skipped: {e}")
 
-    # ── Outcome Tracking & Learning Dashboard ────────────────────────────────
     try:
         from tools.outcome_tracker import update_outcomes
 
@@ -529,6 +522,7 @@ def run_scan() -> None:
 
     try:
         from tools.learning_dashboard import run_dashboard
+
         report = run_dashboard()
         if report:
             send_simple_message(report)
@@ -537,6 +531,7 @@ def run_scan() -> None:
 
     try:
         from tools.ai_optimizer import get_suggestions
+
         suggestions = get_suggestions()
         if suggestions:
             send_simple_message(f"🤖 AI Optimization Suggestions:\n{suggestions}")
@@ -552,7 +547,6 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Score history skipped: {e}")
 
-    # print summary
     for i, c in enumerate(top, 1):
         log.info(
             f"  {i}. {c['symbol']:<12} "
@@ -615,7 +609,6 @@ def main() -> None:
             time.sleep(1)
 
     live_monitor.stop()
-    # סגירת כל ה-WebSockets בצורה מסודרת בסיום
     for m in ws_monitors.values():
         try:
             m.stop()
