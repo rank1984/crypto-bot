@@ -4,43 +4,12 @@ CRYPTO-BOT Elite — Outcome Tracker v5 (ACTIVE / FINAL)
 import sqlite3
 import os
 import pandas as pd
-import requests
 from datetime import datetime, timezone, timedelta
 from utils.logger import get_logger
+from storage.candle_cache import get_candles_range
 
 log = get_logger("outcome_tracker")
 DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
-
-def _fetch_klines(symbol, start_ms, limit=288):  # 24h
-    url = "https://api.binance.com/api/v3/klines"
-    params = {"symbol": symbol, "interval": "5m", "startTime": start_ms, "limit": limit}
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        data = r.json()
-        
-        if not isinstance(data, list):
-            log.warning(f"Outcome tracker: invalid response for {symbol}: {data}")
-            return None
-            
-        if len(data) == 0:
-            log.debug(f"Outcome tracker: empty klines for {symbol}")
-            return None
-            
-        if isinstance(data, dict) and "code" in data:
-            log.warning(f"Binance error {symbol}: {data}")
-            return None
-            
-        df = pd.DataFrame(data, columns=[
-            "time","open","high","low","close","volume",
-            "close_time","quote_vol","trades","taker_buy_base","taker_buy_quote","ignore"
-        ])
-        for col in ["high","low","close"]:
-            df[col] = df[col].astype(float)
-        df["time"] = pd.to_datetime(df["time"], unit="ms")
-        return df
-    except Exception as e:
-        log.warning(f"Klines {symbol}: {e}")
-        return None
 
 
 def update_outcomes():
@@ -69,13 +38,12 @@ def update_outcomes():
 
         try:
             t0 = datetime.fromisoformat(row["ts"]).replace(tzinfo=None)
-            start_ms = int(t0.timestamp() * 1000)
             
-            # יצירת מחרוזת זמן נוחה לקריאה עבור הלוג
+            # יצירת מחרוזת זמן נוחה לקריאה עבור הלוג ועבור שליפה מ-candle_cache
             ts_str = t0.strftime("%Y-%m-%d %H:%M:%S")
-            log.info(f"Outcome tracker: fetching klines for {symbol} since {ts_str}")
+            log.info(f"Outcome tracker: fetching cached klines for {symbol} since {ts_str}")
             
-            df = _fetch_klines(symbol, start_ms)
+            df = get_candles_range(symbol, ts_str)
             
             if df is None or df.empty:
                 continue
