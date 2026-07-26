@@ -99,4 +99,3 @@ def get_candles_range(symbol: str, start_ts: str, end_ts: str = None):
     df = pd.DataFrame(data)
     df["time"] = pd.to_datetime(df["time"])
     return df
-    
