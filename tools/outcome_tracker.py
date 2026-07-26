@@ -17,11 +17,19 @@ def _fetch_klines(symbol, start_ms, limit=288):  # 24h
     try:
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
-        if not isinstance(data, list) or len(data) == 0:
+        
+        if not isinstance(data, list):
+            log.warning(f"Outcome tracker: invalid response for {symbol}: {data}")
             return None
+            
+        if len(data) == 0:
+            log.debug(f"Outcome tracker: empty klines for {symbol}")
+            return None
+            
         if isinstance(data, dict) and "code" in data:
             log.warning(f"Binance error {symbol}: {data}")
             return None
+            
         df = pd.DataFrame(data, columns=[
             "time","open","high","low","close","volume",
             "close_time","quote_vol","trades","taker_buy_base","taker_buy_quote","ignore"
@@ -33,6 +41,7 @@ def _fetch_klines(symbol, start_ms, limit=288):  # 24h
     except Exception as e:
         log.warning(f"Klines {symbol}: {e}")
         return None
+
 
 def update_outcomes():
     conn = sqlite3.connect(DB_PATH)
@@ -61,7 +70,13 @@ def update_outcomes():
         try:
             t0 = datetime.fromisoformat(row["ts"]).replace(tzinfo=None)
             start_ms = int(t0.timestamp() * 1000)
+            
+            # יצירת מחרוזת זמן נוחה לקריאה עבור הלוג
+            ts_str = t0.strftime("%Y-%m-%d %H:%M:%S")
+            log.info(f"Outcome tracker: fetching klines for {symbol} since {ts_str}")
+            
             df = _fetch_klines(symbol, start_ms)
+            
             if df is None or df.empty:
                 continue
 
