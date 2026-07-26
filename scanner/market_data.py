@@ -97,22 +97,32 @@ def get_candles(symbol: str, interval: str,
                 limit: int = CANDLES_PER_TF) -> pd.DataFrame | None:
     cached = cache_load(symbol, interval)
     if cached is not None:
-        return _to_df(cached)
+        df = _to_df(cached)
+    else:
+        # נסה KuCoin
+        raw = _fetch_kucoin(symbol, interval, limit)
 
-    # נסה KuCoin
-    raw = _fetch_kucoin(symbol, interval, limit)
+        # Fallback: CoinGecko (רק ל-5min כ-proxy)
+        if not raw and interval in ("5min", "15min", "1hour"):
+            log.debug(f"KuCoin failed {symbol}/{interval} — trying CoinGecko")
+            raw = _fetch_coingecko_ohlcv(symbol)
 
-    # Fallback: CoinGecko (רק ל-5min כ-proxy)
-    if not raw and interval in ("5min", "15min", "1hour"):
-        log.debug(f"KuCoin failed {symbol}/{interval} — trying CoinGecko")
-        raw = _fetch_coingecko_ohlcv(symbol)
+        if not raw:
+            return None
 
-    if not raw:
-        return None
+        cache_save(symbol, interval, raw)
+        time.sleep(_DELAY)
+        df = _to_df(raw)
+        
+    # שמור ל‑Candle Cache (רק 5m)
+    if interval in ("5m", "5min"):
+        try:
+            from storage.candle_cache import save_candles
+            save_candles(symbol, df)
+        except:
+            pass
 
-    cache_save(symbol, interval, raw)
-    time.sleep(_DELAY)
-    return _to_df(raw)
+    return df
 
 
 def get_all_timeframes(symbol: str) -> dict:
