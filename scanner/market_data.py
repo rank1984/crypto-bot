@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import requests
 
-from utils.cache  import load as cache_load, save as cache_save
+from utils.cache import load as cache_load, save as cache_save
 from utils.config import KUCOIN_BASE, CANDLES_PER_TF, TIMEFRAMES
 from utils.logger import get_logger
 
@@ -114,13 +114,16 @@ def get_candles(symbol: str, interval: str,
         time.sleep(_DELAY)
         df = _to_df(raw)
         
-    # שמור ל‑Candle Cache (רק 5m)
+    # שמור ל‑Candle Cache (רק 5m / 5min)
     if interval in ("5m", "5min"):
         try:
             from storage.candle_cache import save_candles
-            save_candles(symbol, df)
-        except:
-            pass
+            df_to_save = df.copy()
+            if "time" not in df_to_save.columns:
+                df_to_save["time"] = pd.to_datetime(df_to_save["open_time"])
+            save_candles(symbol, df_to_save)
+        except Exception as e:
+            log.warning(f"Candle save error: {e}")
 
     return df
 
