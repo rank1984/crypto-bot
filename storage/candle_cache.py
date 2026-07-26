@@ -58,8 +58,23 @@ def get_candles_range(symbol: str, start_ts: str, end_ts: str = None):
             ORDER BY time
         """, (symbol, start_ts)).fetchall()
     conn.close()
+
     if not rows:
         return pd.DataFrame()
-    df = pd.DataFrame([dict(r) for r in rows])
+
+    # המרה ידנית ל-DataFrame (הגנה מפני Row)
+    data = {
+        "time": [],
+        "open": [], "high": [], "low": [], "close": [], "volume": []
+    }
+    for r in rows:
+        data["time"].append(r["time"])
+        data["open"].append(float(r["open"]))
+        data["high"].append(float(r["high"]))
+        data["low"].append(float(r["low"]))
+        data["close"].append(float(r["close"]))
+        data["volume"].append(float(r["volume"]))
+
+    df = pd.DataFrame(data)
     df["time"] = pd.to_datetime(df["time"])
     return df
