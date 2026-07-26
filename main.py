@@ -104,6 +104,11 @@ def run_scan() -> None:
         init_shadow_db()
     except Exception as e:
         log.warning(f"Shadow DB init error: {e}")
+     try:
+        from storage.candle_cache import init_cache
+        init_cache()
+    except Exception as e:
+        log.warning(f"Candle Cache init error: {e}")
 
     # ── 1. Universe ───────────────────────────────────────────────────────────
     btc_1h_mov = 0.0
