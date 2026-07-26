@@ -78,6 +78,9 @@ def init_shadow_db():
             ("outcome_max_up_pct", "REAL DEFAULT 0"),
             ("outcome_max_down_pct", "REAL DEFAULT 0"),
             ("outcome_checked", "INTEGER DEFAULT 0"),
+            ("outcome_status", "TEXT DEFAULT 'PENDING'"),
+            ("first_tp_hit_time", "REAL DEFAULT 0"),
+            ("last_update_time", "TEXT"),
             # ── עמודות ה-Ground Truth החדשות לחישוב זמנים ומחירי קצה ─────────
             ("outcome_trigger_min", "REAL DEFAULT 0"),
             ("outcome_tp1_min", "REAL DEFAULT 0"),
@@ -434,7 +437,8 @@ def export_shadow_csv():
                 "Status", "Reason", "Exit Reason", "PnL", "PnL%", "Max Profit%",
                 "Max DD%", "Trade State", "Exit Price", "Duration (m)",
                 "Trigger Hit", "TP1 Hit", "TP2 Hit", "SL Hit",
-                "Max Up%", "Max Down%", "Outcome Checked"
+                "Max Up%", "Max Down%", "Outcome Checked", 
+                "Outcome Status", "First TP Hit Time", "Last Update Time"
             ])
 
             log.info(f"Exporting {len(trades)} shadow trades")
@@ -478,7 +482,10 @@ def export_shadow_csv():
                     t.get("outcome_sl_hit", 0), 
                     t.get("outcome_max_up_pct", 0), 
                     t.get("outcome_max_down_pct", 0),
-                    t.get("outcome_checked", 0)
+                    t.get("outcome_checked", 0),
+                    t.get("outcome_status", ""),
+                    t.get("first_tp_hit_time", 0),
+                    t.get("last_update_time", "")
                 ])
         log.info(f"CSV Exported: {os.path.abspath(filepath)}")
     except Exception as e:
