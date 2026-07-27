@@ -34,7 +34,7 @@ REGIMES = {
     "RANGE": {
         "description": "שוק רגוע",
         "weights": {"freshness":0.35,"momentum":0.20,"breakout":0.25,"pattern":0.20},
-        "min_score_threshold": 60,   # הוריד מ-70 ל-60
+        "min_score_threshold": 55,   # הורדה נוספת ל-55
     },
     "RISK_OFF": {
         "description": "סיכון גבוה — זהירות",
