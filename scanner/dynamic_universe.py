@@ -147,14 +147,16 @@ def build_dynamic_universe(btc_1h_move: float = 0.0) -> list[str]:
         f"(OI:{len(oi_l)} Comp:{len(comp_l)} RS:{len(rs_l)} Base:{len(base)})"
     )
 
-    # ── מסנן נזילות – רק מטבעות עם Volume24h > 1,000,000 USDT ─────────
+    # ── מסנן נזילות – רק מטבעות עם Volume24h > 100,000 USDT ─────────
     try:
         from scanner.market_data import get_ticker_24h
         filtered = []
         for sym in result:
             ticker = get_ticker_24h(sym)
-            if ticker and float(ticker.get("quoteVolume", 0)) > 100_000:  # הורדנו סף לפי 10
-                filtered.append(sym)
+            if ticker:
+                vol = ticker.get("quoteVolume")
+                if vol is not None and float(vol) > 100_000:
+                    filtered.append(sym)
         result = filtered
         log.info(f"Dynamic Universe after liquidity filter: {len(result)} coins")
     except Exception as e:
