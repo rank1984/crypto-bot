@@ -153,8 +153,8 @@ def build_dynamic_universe(btc_1h_move: float = 0.0) -> list[str]:
         filtered = []
         for sym in result:
             ticker = get_ticker_24h(sym)
-            if ticker and float(ticker.get("quoteVolume", 0)) > 1_000_000:
-                filtered.append(sym)
+            if ticker and float(ticker.get("quoteVolume", 0)) > 100_000:  # הורדנו סף לפי 10
+            filtered.append(sym)
         result = filtered
         log.info(f"Dynamic Universe after liquidity filter: {len(result)} coins")
     except Exception as e:
