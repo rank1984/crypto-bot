@@ -162,9 +162,8 @@ def get_all_timeframes(symbol: str) -> dict:
 
 
 def get_ticker_24h(symbol: str) -> dict | None:
-    """
-    קבלת נתוני Ticker ב-24 השעות האחרונות מ-Binance.
-    """
+    """מנסה Binance, נופל ל‑KuCoin."""
+    # נסיון Binance
     try:
         r = requests.get(
             f"https://api.binance.com/api/v3/ticker/24hr",
@@ -174,7 +173,22 @@ def get_ticker_24h(symbol: str) -> dict | None:
         )
         if r.status_code == 200:
             return r.json()
-        return None
-    except Exception as e:
-        log.debug(f"Binance 24h ticker failed for {symbol}: {e}")
-        return None
+    except Exception:
+        pass
+
+    # Fallback ל‑KuCoin
+    try:
+        kucoin_sym = symbol.replace("USDT", "-USDT")
+        r = requests.get(
+            f"{KUCOIN_BASE}/api/v1/market/stats",
+            params={"symbol": kucoin_sym},
+            headers=_HEADERS,
+            timeout=5
+        )
+        if r.status_code == 200:
+            data = r.json().get("data", {})
+            return {"quoteVolume": data.get("volValue", 0)}
+    except Exception:
+        pass
+
+    return None
