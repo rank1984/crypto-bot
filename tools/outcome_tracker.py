@@ -38,8 +38,6 @@ def update_outcomes():
 
         try:
             t0 = datetime.fromisoformat(row["ts"]).replace(tzinfo=None)
-            
-            # יצירת מחרוזת זמן נוחה לקריאה עבור הלוג ועבור שליפה מ-candle_cache
             ts_str = t0.strftime("%Y-%m-%d %H:%M:%S")
             log.info(f"Outcome tracker: fetching cached klines for {symbol} since {ts_str}")
             
@@ -50,6 +48,8 @@ def update_outcomes():
 
             max_high = df["high"].max()
             min_low = df["low"].min()
+
+            # MFE / MAE calculations
             max_up = round((max_high - entry) / entry * 100, 2)
             max_down = round((min_low - entry) / entry * 100, 2)
 
@@ -69,7 +69,7 @@ def update_outcomes():
             sl_min  = first_time(sl, df["low"], "low") if sl_hit else None
             trigger_min = first_time(trigger, df["high"], "high") if trigger_hit else None
 
-            # סטטוס
+            # סטטוס עסקה
             now = datetime.utcnow()
             hours_elapsed = (now - t0).total_seconds() / 3600
             if tp1_hit or tp2_hit or sl_hit or hours_elapsed >= 48:
@@ -101,14 +101,26 @@ def update_outcomes():
             log.warning(f"Outcome error {symbol}: {e}")
 
     conn.commit()
+
+    # ── Data Quality Check ─────────────────────────────────────────────────
+    bad_rows = cur.execute("""
+        SELECT COUNT(*) FROM shadow_trades
+        WHERE outcome_status = 'FINAL' AND (tp1 IS NULL OR sl IS NULL)
+    """).fetchone()[0]
+    if bad_rows > 0:
+        log.warning(f"Outcome tracker: {bad_rows} rows with missing TP/SL after update")
+
     conn.close()
 
+    log.info(f"Outcome tracker: updated {updated} rows out of {len(rows)} fetched")
+    if updated < 50:
+        log.warning(f"Outcome tracker: updated {updated} rows (less than target threshold 50)")
+
     if updated:
-        log.info(f"Outcome tracker: updated {updated} rows")
         try:
             from tools.shadow_mode import export_shadow_csv
             export_shadow_csv()
-        except:
-            pass
+        except Exception as e:
+            log.debug(f"Export shadow CSV error: {e}")
     else:
         log.info("Outcome tracker: no rows updated")
