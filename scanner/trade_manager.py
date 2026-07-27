@@ -2,7 +2,7 @@
 CRYPTO-BOT Elite — Trade Manager v3
 
 - ATR Trailing Stop (dynamic multipliers)
-- Emergency Exit
+- Emergency Exit with 5-min Grace Period
 - Trade Health Score
 - Full context to Exit Engine
 - Telegram integration ready
@@ -19,7 +19,7 @@ log = get_logger(__name__)
 
 # ─── State Machine ────────────────────────────────────────────────────────────
 STATE_TRANSITIONS = {
-    "NEW":        ["ACTIVE"],
+    "NEW":       ["ACTIVE"],
     "ACTIVE":     ["TP1_HIT", "EXIT", "CLOSED"],
     "TP1_HIT":    ["BREAKEVEN"],
     "BREAKEVEN":  ["TP2_HIT", "EXIT", "CLOSED"],
@@ -219,10 +219,12 @@ class TradeManager:
         # Trade Health
         trade.health = self._calc_trade_health(trade, coin_data, current_price)
 
-        # Emergency Exit
-        emergency, reason = self._emergency_exit_needed(coin_data, market_health, btc_regime)
-        if emergency:
-            return self._close_trade(trade, current_price, f"EMERGENCY: {reason}")
+        # Emergency Exit – only after trade has been alive for at least 5 minutes
+        trade_age_min = (datetime.now() - trade.entry_time).total_seconds() / 60
+        if trade_age_min >= 5:
+            emergency, reason = self._emergency_exit_needed(coin_data, market_health, btc_regime)
+            if emergency:
+                return self._close_trade(trade, current_price, f"EMERGENCY: {reason}")
 
         # Stop Loss
         if current_price <= trade.sl:
