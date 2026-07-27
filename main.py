@@ -493,7 +493,10 @@ def run_scan() -> None:
     lines.append("• 🟢 קניות – מומלץ לקנות ידנית את המטבעות הרשומים.")
     lines.append("• 🟡 במעקב/הכנה – לא לקנות עדיין. להמתין.")
     lines.append("• 📊 בדוק טבלת מומלצים וסיכום עסקאות.")
-    send_simple_message("\n".join(lines))
+
+    if lines:
+        log.info(f"Unified message length: {len(lines)} lines, {len(''.join(lines))} chars")
+        send_simple_message("\n".join(lines))
 
     # ── 8. Learning & Shadow ──────────────────────────────────────────────────
     try:
