@@ -32,9 +32,15 @@ def classify_signal(c: dict) -> str:
     oi_strong   = oi_change > 30.0
     at_trigger  = (0.0 <= dist_pct <= 0.05)
 
-    # ── BUY: Entry Engine אישר + AI Gate ─────────────────────────────
+    # ── Final AI Gate (סנן זבל – לא סף אופטימלי) ──────────────────────
     if dec == "BUY":
-        if prob < 55 or flow < 60 or c.get("final_score", 0) < 70:
+        if prob < 40:
+            return "WATCH"
+        if flow < 40:
+            return "PREPARE"
+        if c.get("final_score", 0) < 60:
+            return "PREPARE"
+        if market_health < 35:
             return "WATCH"
         return "BUY"
 
@@ -77,10 +83,8 @@ def filter_coins(coins: list[dict]) -> dict:
     # ── הבטח לפחות 5 מטבעות (ללמידה) ──────────────────────────────────
     total_quality = len(buy) + len(prepare) + len(arm) + len(watch)
     if total_quality < 5:
-        # מיון ignored לפי ציון
         ignored.sort(key=lambda x: x.get("flow_score",0)+x.get("pre_score",0), reverse=True)
         needed = 5 - total_quality
-        # הפוך את הטובים ביותר ל-WATCH
         for c in ignored[:needed]:
             c["signal"] = "WATCH"
             watch.append(c)
