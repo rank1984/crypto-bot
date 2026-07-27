@@ -1,12 +1,5 @@
 """
 CRYPTO-BOT Elite — Dynamic Universe Builder
-
-לא תמיד אותם מטבעות.
-כל סריקה בונה Universe חדש מ-3 שכבות:
-    Layer A — Base Volume (CoinGecko)
-    Layer B — OI Expansion Leaders  (כסף נכנס בלי שמחיר זז)
-    Layer C — Compression Leaders   (ATR squeeze)
-    Layer D — Relative Strength     (מתחיל להכות BTC)
 """
 import requests
 import pandas as pd
@@ -33,10 +26,7 @@ def _kucoin_fut_sym(sym: str) -> str:
     return f"{base}USDTM"
 
 
-# ─── Layer A: Base ────────────────────────────────────────────────────────────
-
 def _min_volume_for_mcap(mcap: float) -> float:
-    """סף נזילות דינמי: Large(>1B)=20M$ Mid(100M-1B)=5M$ Small(<100M)=1M$"""
     if mcap >= 1_000_000_000: return 20_000_000
     if mcap >= 100_000_000:   return 5_000_000
     return 1_000_000
@@ -71,10 +61,7 @@ def _base_universe() -> list[str]:
     return symbols[:150]
 
 
-# ─── Layer B: OI Leaders ──────────────────────────────────────────────────────
-
 def _oi_leaders(base: list[str], top_n: int = 30) -> list[str]:
-    """OI עולה + מחיר לא זז = צבירה שקטה."""
     candidates = []
     for sym in base[:80]:
         try:
@@ -98,10 +85,7 @@ def _oi_leaders(base: list[str], top_n: int = 30) -> list[str]:
     return result
 
 
-# ─── Layer C: Compression ─────────────────────────────────────────────────────
-
 def _compression_leaders(base: list[str], top_n: int = 20) -> list[str]:
-    """ATR squeeze — שקט לפני סערה."""
     compressed = []
     for sym in base[:60]:
         try:
@@ -121,10 +105,7 @@ def _compression_leaders(base: list[str], top_n: int = 20) -> list[str]:
     return result
 
 
-# ─── Layer D: RS Leaders ──────────────────────────────────────────────────────
-
 def _rs_leaders(base: list[str], btc_1h_move: float, top_n: int = 20) -> list[str]:
-    """מתחיל להכות BTC ב-1h."""
     if btc_1h_move == 0: return []
     rs_candidates = []
     for sym in base[:80]:
@@ -144,12 +125,7 @@ def _rs_leaders(base: list[str], btc_1h_move: float, top_n: int = 20) -> list[st
     return result
 
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
-
 def build_dynamic_universe(btc_1h_move: float = 0.0) -> list[str]:
-    """
-    Union של כל השכבות — OI Leaders ראשון (הכי חשוב).
-    """
     log.info("Building dynamic universe...")
     base   = _base_universe()
     oi_l   = _oi_leaders(base)
@@ -167,7 +143,21 @@ def build_dynamic_universe(btc_1h_move: float = 0.0) -> list[str]:
             break
 
     log.info(
-        f"Dynamic Universe: {len(result)} "
+        f"Dynamic Universe pre-filter: {len(result)} "
         f"(OI:{len(oi_l)} Comp:{len(comp_l)} RS:{len(rs_l)} Base:{len(base)})"
     )
+
+    # ── מסנן נזילות – רק מטבעות עם Volume24h > 1,000,000 USDT ─────────
+    try:
+        from scanner.market_data import get_ticker_24h
+        filtered = []
+        for sym in result:
+            ticker = get_ticker_24h(sym)
+            if ticker and float(ticker.get("quoteVolume", 0)) > 1_000_000:
+                filtered.append(sym)
+        result = filtered
+        log.info(f"Dynamic Universe after liquidity filter: {len(result)} coins")
+    except Exception as e:
+        log.warning(f"Liquidity filter skipped: {e}")
+
     return result
