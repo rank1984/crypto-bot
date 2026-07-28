@@ -233,13 +233,14 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
 
     log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters")
 
-    # ── דירוג מורכב מעודכן (מתן משקל גבוה ל-Flow ו-Pre) ───────────────────────
+    # ── דירוג מורכב מעודכן (העלאת משקל ל-RS, שימור Flow, הורדת Probability) ──
     def _rank_score(x: dict) -> float:
         score = (
-            x.get("flow_score", 0) * 0.35 +   # הועלה מ-0.30
-            x.get("pre_score", 0) * 0.30 +    # הועלה מ-0.25
-            x.get("final_score", 0) * 0.15 +  # הורד מ-0.20
-            x.get("probability", 0) * 0.10    # הורד מ-0.15
+            x.get("rs_1h", 0) * 20 +          # RS – משקל גבוה (היה 0)
+            x.get("flow_score", 0) * 0.35 +
+            x.get("pre_score", 0) * 0.30 +
+            x.get("final_score", 0) * 0.10 +  # הורדה
+            x.get("probability", 0) * 0.05    # הורדה משמעותית
         )
 
         if x.get("entry_decision") == "BUY":
