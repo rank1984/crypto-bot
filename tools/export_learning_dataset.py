@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Export Dataset for Machine Learning Pipeline
+CRYPTO-BOT Elite — Export Clean Learning Dataset (BUY Signals Only)
 """
 import os
 import sqlite3
@@ -8,7 +8,7 @@ from utils.logger import get_logger
 
 log = get_logger("dataset_exporter")
 DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
-OUTPUT_CSV = "data/ml_learning_dataset.csv"
+OUTPUT_CSV = "data/learning_dataset.csv"
 
 
 def export_ml_dataset():
@@ -18,6 +18,7 @@ def export_ml_dataset():
 
     conn = sqlite3.connect(DB_PATH)
     
+    # שליפת עסקאות BUY שהגיעו לסטטוס FINAL בלבד
     query = """
         SELECT 
             id,
@@ -52,6 +53,7 @@ def export_ml_dataset():
             time_to_sl_min
         FROM shadow_trades
         WHERE outcome_status = 'FINAL'
+          AND UPPER(decision) = 'BUY'
         ORDER BY id ASC
     """
     
@@ -59,16 +61,16 @@ def export_ml_dataset():
     conn.close()
 
     if df.empty:
-        log.warning("No FINAL trades found for exporting ML dataset.")
+        log.warning("No FINAL 'BUY' trades found for exporting ML dataset.")
         return
 
-    # יצירת המטרות (Target Labels) לניתוחי ML
-    df["target_win"] = (df["outcome_tp1_hit"] == 1) & (df["outcome_sl_hit"] == 0)
-    df["target_win"] = df["target_win"].astype(int)
+    # יצירת משתנה המטרה הדיגיטלי (Target)
+    # Target = 1 (פגע ב-TP1 לפני SL), Target = 0 (נכשל)
+    df["target"] = ((df["outcome_tp1_hit"] == 1) & (df["outcome_sl_hit"] == 0)).astype(int)
 
     os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
     df.to_csv(OUTPUT_CSV, index=False)
-    log.info(f"ML Dataset successfully exported to {OUTPUT_CSV} ({len(df)} samples)")
+    log.info(f"ML Dataset successfully exported to {OUTPUT_CSV} ({len(df)} 'BUY' samples)")
 
 
 if __name__ == "__main__":
