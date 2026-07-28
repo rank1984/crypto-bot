@@ -10,11 +10,13 @@ log = get_logger(__name__)
 
 DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
 
+
 def _conn():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     c = sqlite3.connect(DB_PATH)
     c.row_factory = sqlite3.Row
     return c
+
 
 def _add_column_if_not_exists(cursor, table, column, col_type):
     """מוסיף עמודה לטבלה אם היא עדיין לא קיימת."""
@@ -22,6 +24,7 @@ def _add_column_if_not_exists(cursor, table, column, col_type):
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
     except sqlite3.OperationalError:
         pass  # העמודה כבר קיימת
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. Init
@@ -62,7 +65,7 @@ def init_shadow_db():
             )
         ''')
 
-        # ── הרצה דינמית ובטוחה של כל העמודות החדשות ───────────────────────────
+        # ── הרצה דינמית ובטוחה של כל העמודות החדשות וה-Ground Truth ─────────────
         new_columns = [
             ("pnl_pct", "REAL DEFAULT 0"),
             ("max_profit_pct", "REAL DEFAULT 0"),
@@ -81,11 +84,13 @@ def init_shadow_db():
             ("outcome_status", "TEXT DEFAULT 'PENDING'"),
             ("first_tp_hit_time", "REAL DEFAULT 0"),
             ("last_update_time", "TEXT"),
-            # ── עמודות ה-Ground Truth החדשות לחישוב זמנים ומחירי קצה ─────────
-            ("outcome_trigger_min", "REAL DEFAULT 0"),
-            ("outcome_tp1_min", "REAL DEFAULT 0"),
+            # Ground Truth Feature Store Extensions
+            ("outcome_mfe", "REAL DEFAULT 0"),
+            ("outcome_mae", "REAL DEFAULT 0"),
+            ("time_to_trigger_min", "REAL DEFAULT 0"),
+            ("time_to_tp1_min", "REAL DEFAULT 0"),
             ("outcome_tp2_min", "REAL DEFAULT 0"),
-            ("outcome_sl_min", "REAL DEFAULT 0"),
+            ("time_to_sl_min", "REAL DEFAULT 0"),
             ("outcome_highest_price", "REAL DEFAULT 0"),
             ("outcome_lowest_price", "REAL DEFAULT 0")
         ]
@@ -93,21 +98,19 @@ def init_shadow_db():
         for col, typ in new_columns:
             _add_column_if_not_exists(c, "shadow_trades", col, typ)
 
-    log.info("Shadow DB initialized for Trade Tracking")
+    log.info("Shadow DB initialized for Trade Tracking & Learning Pipeline")
     try:
         update_open_trades()
         export_shadow_csv()
     except Exception as e:
         log.error(f"Shadow Engine Error: {e}")
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2. Save every signal (WATCH / PREPARE / ARM / BUY / IGNORE)
+# 2. Save every signal
 # ═══════════════════════════════════════════════════════════════════════════════
 def save_shadow_signal(coin: dict, signal: str):
-    """שומר כל מטבע שנסרק — אלא אם יש כבר עסקה פעילה (אז לא מכניסים שוב)."""
     symbol = coin.get("symbol", "UNKNOWN")
-    
-    # בדוק אם יש עסקה פעילה לאותו מטבע – אם כן, דלג
     try:
         with _conn() as c:
             active = c.execute("""
@@ -115,7 +118,7 @@ def save_shadow_signal(coin: dict, signal: str):
                 WHERE symbol = ? AND trade_state = 'ACTIVE'
             """, (symbol,)).fetchone()
             if active:
-                return  # כבר קיימת עסקה – לא מכניסים סיגנל נוסף
+                return
     except Exception as e:
         log.warning(f"Active check failed in save_shadow_signal: {e}")
 
@@ -156,6 +159,7 @@ def save_shadow_signal(coin: dict, signal: str):
     except Exception as e:
         log.error(f"save_shadow_signal failed: {e}")
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. Record a BUY trade
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -164,8 +168,6 @@ def record_trade(coin: dict, signal):
         return
 
     symbol = coin.get("symbol", "UNKNOWN")
-
-    # בדיקת כפילות – אם יש כבר עסקה פעילה למטבע, לא נוסיף
     try:
         with _conn() as c:
             existing = c.execute("""
@@ -183,9 +185,6 @@ def record_trade(coin: dict, signal):
 
     try:
         with _conn() as c:
-            count = c.execute("SELECT COUNT(*) FROM shadow_trades").fetchone()[0]
-            log.info(f"Shadow DB rows BEFORE insert: {count}")
-
             c.execute('''
                 INSERT INTO shadow_trades (
                     ts, symbol, decision, setup, entry_price, trigger_price, tp1, tp2, sl,
@@ -194,7 +193,7 @@ def record_trade(coin: dict, signal):
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts,
-                coin.get("symbol", "UNKNOWN"),
+                symbol,
                 signal.decision,
                 getattr(signal, "setup_type", ""),
                 getattr(signal, "entry", 0.0),
@@ -217,17 +216,14 @@ def record_trade(coin: dict, signal):
                 coin.get("funding", 0),
                 'ACTIVE'
             ))
-
-            count = c.execute("SELECT COUNT(*) FROM shadow_trades").fetchone()[0]
-            log.info(f"Shadow DB rows AFTER insert: {count}")
-
-        log.info(f"Recorded shadow trade for {coin.get('symbol', 'UNKNOWN')} ({signal.decision})")
+        log.info(f"Recorded shadow trade for {symbol} ({signal.decision})")
         export_shadow_csv()
     except Exception as e:
         log.error(f"Failed to record shadow trade: {e}")
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4. Update exit (called from Trade Manager)
+# 4. Update exit
 # ═══════════════════════════════════════════════════════════════════════════════
 def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minutes: int,
                        pnl_pct: float = 0.0, max_profit_pct: float = 0.0,
@@ -253,45 +249,16 @@ def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minut
     except Exception as e:
         log.error(f"Failed to update shadow exit for {symbol}: {e}")
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# 5. Open trades status (real-time PnL, TP/SL detection, OHLCV outcome)
+# 5. Open trades status
 # ═══════════════════════════════════════════════════════════════════════════════
 def _get_binance_price(symbol: str) -> float:
     try:
         r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=5)
-        data = r.json()
-        return float(data.get("price", 0.0))
+        return float(r.json().get("price", 0.0))
     except:
         return 0.0
-
-def _get_klines_since(symbol: str, start_time_ms: int, limit=144):
-    """מחזיר DataFrame של נרות 5m מבינאנס מתאריך התחלה."""
-    try:
-        url = "https://api.binance.com/api/v3/klines"
-        params = {
-            "symbol": symbol,
-            "interval": "5m",
-            "startTime": start_time_ms,
-            "limit": limit
-        }
-        r = requests.get(url, params=params, timeout=10)
-        data = r.json()
-        if not isinstance(data, list):
-            return None
-
-        df = pd.DataFrame(data, columns=[
-            "time", "open", "high", "low", "close", "volume",
-            "close_time", "quote_vol", "trades", "taker_buy_base",
-            "taker_buy_quote", "ignore"
-        ])
-        df["high"] = df["high"].astype(float)
-        df["low"] = df["low"].astype(float)
-        df["close"] = df["close"].astype(float)
-        df["time"] = pd.to_datetime(df["time"], unit="ms")
-        return df
-    except Exception as e:
-        log.warning(f"Klines fetch failed for {symbol}: {e}")
-        return None
 
 
 def update_open_trades():
@@ -304,11 +271,8 @@ def update_open_trades():
             symbol = trade["symbol"]
             entry = float(trade["entry_price"])
             tp1 = float(trade["tp1"]) if trade["tp1"] else 0.0
-            tp2 = float(trade["tp2"]) if trade["tp2"] else 0.0
             sl = float(trade["sl"]) if trade["sl"] else 0.0
-            trigger = float(trade["trigger_price"] or (entry * 1.001))
 
-            # ── 1. מחיר נוכחי (לצורך PnL% שוטף) ──────────────────────
             current_price = _get_binance_price(symbol)
             if current_price <= 0:
                 continue
@@ -316,6 +280,18 @@ def update_open_trades():
             pnl_pct = ((current_price - entry) / entry) * 100
             max_profit = max(float(trade["max_profit_pct"] or 0), pnl_pct)
             max_dd = min(float(trade["max_drawdown_pct"] or 0), pnl_pct)
+
+            trade_time = datetime.fromisoformat(trade["ts"])
+            if trade_time.tzinfo is None:
+                trade_time = trade_time.replace(tzinfo=timezone.utc)
+
+            new_status = "Pending ⏳"
+            if tp1 > 0 and current_price >= tp1:
+                new_status = "TP1 Hit 🎯"
+            elif sl > 0 and current_price <= sl:
+                new_status = "SL Hit 🛑"
+            elif datetime.now(timezone.utc) - trade_time > timedelta(hours=24):
+                new_status = "Timeout ⏱️"
 
             with _conn() as c:
                 c.execute("""
@@ -326,81 +302,8 @@ def update_open_trades():
                     WHERE id = ?
                 """, (round(pnl_pct, 2), round(max_profit, 2), round(max_dd, 2), trade["id"]))
 
-            # ── 2. בדיקת Outcome על סמך נרות מאז הכניסה ──────────────
-            try:
-                trade_time = datetime.fromisoformat(trade["ts"])
-                start_ms = int(trade_time.replace(tzinfo=timezone.utc).timestamp() * 1000)
-                df = _get_klines_since(symbol, start_ms)
-                if df is not None and not df.empty:
-                    max_high = df["high"].max()
-                    min_low = df["low"].min()
-                    max_up = round((max_high - entry) / entry * 100, 2)
-                    max_down = round((min_low - entry) / entry * 100, 2)
-
-                    trigger_hit = 1 if max_high >= trigger else 0
-                    tp1_hit = 1 if tp1 > 0 and max_high >= tp1 else 0
-                    tp2_hit = 1 if tp2 > 0 and max_high >= tp2 else 0
-                    sl_hit = 1 if sl > 0 and min_low <= sl else 0
-
-                    # חישוב זמני חצייה (דקות)
-                    trigger_min = None
-                    tp1_min = None
-                    tp2_min = None
-                    sl_min = None
-                    if trigger_hit:
-                        first = df[df["high"] >= trigger]
-                        trigger_min = round((first["time"].iloc[0] - trade_time).total_seconds() / 60, 1)
-                    if tp1_hit:
-                        first = df[df["high"] >= tp1]
-                        tp1_min = round((first["time"].iloc[0] - trade_time).total_seconds() / 60, 1)
-                    if tp2_hit:
-                        first = df[df["high"] >= tp2]
-                        tp2_min = round((first["time"].iloc[0] - trade_time).total_seconds() / 60, 1)
-                    if sl_hit:
-                        first = df[df["low"] <= sl]
-                        sl_min = round((first["time"].iloc[0] - trade_time).total_seconds() / 60, 1)
-
-                    with _conn() as c:
-                        c.execute("""
-                            UPDATE shadow_trades
-                            SET outcome_trigger_hit = ?,
-                                outcome_tp1_hit = ?,
-                                outcome_tp2_hit = ?,
-                                outcome_sl_hit = ?,
-                                outcome_max_up_pct = ?,
-                                outcome_max_down_pct = ?,
-                                outcome_checked = 1,
-                                outcome_trigger_min = ?,
-                                outcome_tp1_min = ?,
-                                outcome_tp2_min = ?,
-                                outcome_sl_min = ?,
-                                outcome_highest_price = ?,
-                                outcome_lowest_price = ?
-                            WHERE id = ?
-                        """, (
-                            trigger_hit, tp1_hit, tp2_hit, sl_hit,
-                            max_up, max_down,
-                            trigger_min, tp1_min, tp2_min, sl_min,
-                            float(max_high), float(min_low),
-                            trade["id"]
-                        ))
-            except Exception as e:
-                log.warning(f"Outcome calculation failed for {symbol}: {e}")
-
-            # ── 3. סגירה לפי TP1 / SL / Timeout (מבוסס על מחיר נוכחי) ─
-            new_status = "Pending ⏳"
-            if tp1 > 0 and current_price >= tp1:
-                new_status = "TP1 Hit 🎯"
-            elif sl > 0 and current_price <= sl:
-                new_status = "SL Hit 🛑"
-            else:
-                if datetime.now(timezone.utc) - trade_time > timedelta(hours=24):
-                    new_status = "Timeout ⏱️"
-
-            if new_status != "Pending ⏳":
-                duration_min = int((datetime.now(timezone.utc) -
-                                    trade_time).total_seconds() / 60)
-                with _conn() as c:
+                if new_status != "Pending ⏳":
+                    duration_min = int((datetime.now(timezone.utc) - trade_time).total_seconds() / 60)
                     c.execute("""
                         UPDATE shadow_trades
                         SET status = ?,
@@ -411,13 +314,14 @@ def update_open_trades():
                             outcome_checked = 1
                         WHERE id = ?
                     """, (new_status, current_price, round(pnl_pct, 2), duration_min, trade["id"]))
-                updated_count += 1
+                    updated_count += 1
 
         if updated_count > 0:
-            log.info(f"Shadow Tracker: Updated {updated_count} trades.")
+            log.info(f"Shadow Tracker: Updated {updated_count} open trades.")
             export_shadow_csv()
     except Exception as e:
         log.error(f"Error in update_open_trades: {e}")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 6. CSV export
@@ -438,62 +342,60 @@ def export_shadow_csv():
                 "Max DD%", "Trade State", "Exit Price", "Duration (m)",
                 "Trigger Hit", "TP1 Hit", "TP2 Hit", "SL Hit",
                 "Max Up%", "Max Down%", "Outcome Checked", 
-                "Outcome Status", "First TP Hit Time", "Last Update Time"
+                "Outcome Status", "First TP Hit Time", "Last Update Time",
+                "MFE%", "MAE%", "TimeToTriggerMin", "TimeToTP1Min", "TimeToSLMin"
             ])
 
-            log.info(f"Exporting {len(trades)} shadow trades")
             for t in trades:
-                t = dict(t)   # ← המרה קריטית שמנקה שגיאות טיפוס
+                t = dict(t)
                 dt_str = datetime.fromisoformat(t["ts"]).strftime("%H:%M:%S") if t["ts"] else ""
                 writer.writerow([
-                    dt_str, 
-                    t.get("symbol", ""), 
-                    t.get("decision", ""), 
+                    dt_str,
+                    t.get("symbol", ""),
+                    t.get("decision", ""),
                     t.get("setup", ""),
-                    t.get("entry_price", 0), 
-                    t.get("trigger_price", 0), 
-                    t.get("tp1", 0), 
-                    t.get("tp2", 0), 
+                    t.get("entry_price", 0),
+                    t.get("trigger_price", 0),
+                    t.get("tp1", 0),
+                    t.get("tp2", 0),
                     t.get("sl", 0),
-                    t.get("ai_score", 0), 
-                    t.get("probability", 0), 
-                    t.get("flow_score", 0), 
+                    t.get("ai_score", 0),
+                    t.get("probability", 0),
+                    t.get("flow_score", 0),
                     t.get("pre_score", 0),
-                    t.get("oi_change", 0), 
-                    t.get("funding", 0), 
-                    t.get("rs_1h", 0), 
+                    t.get("oi_change", 0),
+                    t.get("funding", 0),
+                    t.get("rs_1h", 0),
                     t.get("is_compressed", ""),
-                    t.get("market_health", 50), 
-                    t.get("news_score", 50), 
+                    t.get("market_health", 50),
+                    t.get("news_score", 50),
                     t.get("btc_regime", ""),
-                    t.get("status", ""), 
-                    t.get("reason", ""), 
-                    t.get("exit_reason", ""), 
-                    t.get("pnl", 0), 
+                    t.get("status", ""),
+                    t.get("reason", ""),
+                    t.get("exit_reason", ""),
+                    t.get("pnl", 0),
                     t.get("pnl_pct", 0),
-                    t.get("max_profit_pct", 0), 
-                    t.get("max_drawdown_pct", 0), 
+                    t.get("max_profit_pct", 0),
+                    t.get("max_drawdown_pct", 0),
                     t.get("trade_state", ""),
-                    t.get("exit_price", 0), 
+                    t.get("exit_price", 0),
                     t.get("duration_minutes", 0),
-                    t.get("outcome_trigger_hit", 0), 
-                    t.get("outcome_tp1_hit", 0), 
+                    t.get("outcome_trigger_hit", 0),
+                    t.get("outcome_tp1_hit", 0),
                     t.get("outcome_tp2_hit", 0),
-                    t.get("outcome_sl_hit", 0), 
-                    t.get("outcome_max_up_pct", 0), 
+                    t.get("outcome_sl_hit", 0),
+                    t.get("outcome_max_up_pct", 0),
                     t.get("outcome_max_down_pct", 0),
                     t.get("outcome_checked", 0),
                     t.get("outcome_status", ""),
                     t.get("first_tp_hit_time", 0),
-                    t.get("last_update_time", "")
+                    t.get("last_update_time", ""),
+                    t.get("outcome_mfe", 0),
+                    t.get("outcome_mae", 0),
+                    t.get("time_to_trigger_min", 0),
+                    t.get("time_to_tp1_min", 0),
+                    t.get("time_to_sl_min", 0)
                 ])
         log.info(f"CSV Exported: {os.path.abspath(filepath)}")
     except Exception as e:
         log.error(f"Error exporting shadow CSV: {e}")
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 7. Forward returns (optional)
-# ═══════════════════════════════════════════════════════════════════════════════
-def update_forward_returns():
-    """Placeholder – not implemented yet."""
-    pass
