@@ -2,19 +2,23 @@
 CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, ARM State, Circuit Breaker & Trending Bonus)
 """
 
-import time, signal, sys, argparse
+import argparse
+import os
+import signal
+import sys
+import time
 
-from scanner.universe import build_universe
+from notifier.sender import send_simple_message
 from scanner.dynamic_universe import build_dynamic_universe
 from scanner.market_data import get_candles
 from scanner.ranking import rank_universe
-from notifier.sender import send_simple_message
+from scanner.universe import build_universe
 from utils.config import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
 from utils.logger import get_logger
 
 # ── News & Event Engines ──────────────────────────────────────────────────────
+from scanner.event_engine import get_event_warning, trading_disabled
 from scanner.news_engine import get_market_health, get_news_score
-from scanner.event_engine import trading_disabled, get_event_warning
 
 # ── שדרוג א: ייבוא מנוע הטרנדינג של CoinGecko ─────────────────────────────────
 from engines.alt_data import get_coingecko_trending, trending_bonus
@@ -38,8 +42,12 @@ def _handle_signal(sig, frame):
     _running = False
 
 
-signal.signal(signal.SIGINT, _handle_signal)
-signal.signal(signal.SIGTERM, _handle_signal)
+# GitHub Actions / Windows compatibility safe signals
+try:
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+except Exception:
+    pass
 
 # ── Trade Manager Global ──────────────────────────────────────────────────────
 from scanner.trade_manager import TradeManager
@@ -52,9 +60,15 @@ circuit_breaker = CircuitBreaker()
 # ── Init Trade Replay DB ──────────────────────────────────────────────────────
 init_replay_db()
 
+# ── GitHub Actions Detection ──────────────────────────────────────────────────
+IS_GITHUB_ACTIONS = os.getenv("GITHUB_ACTIONS") == "true"
+
 # ── Live Monitor ──────────────────────────────────────────────────────────────
-live_monitor = LiveMonitor(trade_mgr, send_simple_message)
-live_monitor.start()
+# מפעילים את Monitor רק אם זו הרצה מקומית, ולא ב-GitHub Actions
+live_monitor = None
+if not IS_GITHUB_ACTIONS:
+    live_monitor = LiveMonitor(trade_mgr, send_simple_message)
+    live_monitor.start()
 
 # ── Global WebSocket Monitors Dictionary ──────────────────────────────────────
 ws_monitors = {}
@@ -124,6 +138,8 @@ def run_scan() -> None:
                 * 100
             )
             symbols = build_dynamic_universe(btc_1h_move=btc_1h_mov)
+        else:
+            symbols = build_universe()
     else:
         log.info("Mode: Static Universe")
         symbols = build_universe()
@@ -143,7 +159,6 @@ def run_scan() -> None:
         regime="RANGE",
     )
 
-    # עדכון גלובלי ב-entry_engine (לפני rank_universe)
     import scanner.entry_engine as entry_engine
 
     entry_engine.GLOBAL_MARKET_HEALTH = market_health
@@ -186,18 +201,15 @@ def run_scan() -> None:
         regime=regime,
     )
 
-    # עדכון גלובלי סופי
     entry_engine.GLOBAL_MARKET_HEALTH = market_health
     entry_engine.GLOBAL_NEWS_SCORE = news_score
     entry_engine.GLOBAL_BTC_REGIME = regime
 
-    # הוספת market_health לכל מטבע
     for c in top:
         c["market_health"] = market_health
         c["news_score"] = news_score
         c["btc_regime"] = regime
 
-    # בדיקת אירועים קרובים
     original_max = None
     if trading_disabled():
         log.warning("Trading disabled due to high impact event")
@@ -210,12 +222,11 @@ def run_scan() -> None:
 
     top = decide_batch(top)
 
-    # ── 4. Quality Gate (legacy) ──────────────────────────────────────────────
+    # ── 4. Quality Gate ───────────────────────────────────────────────────────
     from scanner.quality_gate import apply_quality_gate_all
 
     top = apply_quality_gate_all(top)
 
-    # ── ודא last_price + trigger_distance_pct ────────────────────────────────
     for c in top:
         if "last_price" not in c or c.get("last_price", 0) == 0:
             fallback = c.get("close", c.get("price", 0))
@@ -239,7 +250,7 @@ def run_scan() -> None:
         if "trigger_price" not in c and trigger_price > 0:
             c["trigger_price"] = trigger_price
 
-    # ── 5. Signal Filter (כולל ARM) ──────────────────────────────────────────
+    # ── 5. Signal Filter ──────────────────────────────────────────────────────
     from scanner.signal_filter import filter_coins
 
     filtered = filter_coins(top)
@@ -247,7 +258,6 @@ def run_scan() -> None:
     for c in top:
         c["final_decision"] = c.get("signal", "IGNORE")
 
-    # ── שדרוג ב: הוספת בונוס טרנדינג מ-CoinGecko אחרי הסינון ────────────────
     try:
         trending_coins = get_coingecko_trending()
         for c in top:
@@ -256,52 +266,26 @@ def run_scan() -> None:
         log.warning(f"Failed to fetch trending data: {e}")
 
     log.info(f"TOP COINS BEFORE FILTER = {len(top)}")
-    for c in top[:10]:
-        log.info(
-            f"  {c['symbol']:<12} "
-            f"score={c.get('final_score',0):.0f} "
-            f"flow={c.get('flow_score',0):.0f} "
-            f"pre={c.get('pre_score',0):.0f} "
-            f"compressed={c.get('is_compressed',False)} "
-            f"oi={c.get('oi_change',0):.1f} "
-            f"rs={c.get('rs_1h',0):.2f} "
-            f"final={c.get('final_decision','IGNORE')} "
-            f"trend_bonus={c.get('trending_bonus',0):.1f}"
+
+    if live_monitor:
+        arm_candidates = filtered.get("arm", [])
+        arm_candidates.sort(
+            key=lambda x: (
+                x.get("probability", 0) * 0.5
+                + x.get("flow_score", 0) * 0.3
+                + x.get("oi_change", 0) / 10
+            ),
+            reverse=True,
         )
-
-    log.info(
-        f"FILTER RESULT → "
-        f"BUY={len(filtered.get('buy', []))} "
-        f"PREPARE={len(filtered.get('prepare', []))} "
-        f"ARM={len(filtered.get('arm', []))} "
-        f"WATCH={len(filtered.get('watch', []))}"
-    )
-
-    # ── Live Monitor: Priority Queue (Top 5 ARM) ─────────────────────────────
-    arm_candidates = filtered.get("arm", [])
-    arm_candidates.sort(
-        key=lambda x: (
-            x.get("probability", 0) * 0.5
-            + x.get("flow_score", 0) * 0.3
-            + x.get("oi_change", 0) / 10
-        ),
-        reverse=True,
-    )
-    top_arm = arm_candidates[:5]
-
-    live_monitor.clear_watchlist()
-
-    for c in top_arm:
-        if "trigger_price" not in c:
-            entry = c.get("entry_price", c.get("last_price", 0))
-            if entry > 0:
-                c["trigger_price"] = entry * 1.001
-            else:
-                c["trigger_price"] = 0
-        live_monitor.add_to_watchlist(c)
+        top_arm = arm_candidates[:5]
+        live_monitor.clear_watchlist()
+        for c in top_arm:
+            if "trigger_price" not in c:
+                entry = c.get("entry_price", c.get("last_price", 0))
+                c["trigger_price"] = entry * 1.001 if entry > 0 else 0
+            live_monitor.add_to_watchlist(c)
 
     # ── 6. Trade Management ───────────────────────────────────────────────────
-    # 6a. Open new trades
     if circuit_breaker.can_trade():
         for c in filtered.get("buy", []):
             if trade_mgr.can_open_trade():
@@ -310,9 +294,6 @@ def run_scan() -> None:
                 tp1 = c.get("tp1", 0)
                 tp2 = c.get("tp2", 0)
                 current_price = c.get("last_price", 0)
-                prob = c.get("probability", 0)
-                flow = c.get("flow_score", 0)
-                final_score = c.get("final_score", 0)
 
                 if entry_price == 0 or current_price == 0:
                     df_5m = get_candles(c["symbol"], "5m", limit=5)
@@ -339,63 +320,8 @@ def run_scan() -> None:
                 trade = trade_mgr.open_trade(signal_data, entry_price)
                 if trade:
                     trade.quality = quality
-            else:
-                log.info(
-                    f"Max trades reached, {c['symbol']} put on WATCH (no open slot)"
-                )
-    else:
-        log.warning(
-            f"Circuit Breaker active: {circuit_breaker.status()} — no new trades"
-        )
 
-    # 6b. Update existing trades
-    active_trades = trade_mgr.get_active_trades()
-    for trade in active_trades:
-        symbol = trade.symbol
-        df_5m = get_candles(symbol, "5m", limit=30)
-        df_1h = get_candles(symbol, "1hour", limit=30)
-        if df_5m is None or len(df_5m) == 0:
-            continue
-        current_price = float(df_5m["close"].iloc[-1])
-
-        coin_data = next((x for x in top if x["symbol"] == symbol), None)
-        if not coin_data:
-            coin_data = {
-                "symbol": symbol,
-                "rs_1h": 0.0,
-                "rs_4h": 0.0,
-                "oi_change": 0.0,
-                "last_price": current_price,
-            }
-        else:
-            coin_data["last_price"] = current_price
-
-        coin_data["market_health"] = market_health
-        coin_data["news_score"] = news_score
-        coin_data["btc_regime"] = regime
-
-        try:
-            save_snapshot(trade, coin_data, market_health, news_score, regime)
-        except Exception as e:
-            log.debug(f"Trade replay save error: {e}")
-
-        action = trade_mgr.update(
-            symbol=symbol,
-            current_price=current_price,
-            coin_data=coin_data,
-            df_5m=df_5m,
-            df_1h=df_1h,
-            market_health=market_health,
-            btc_regime=regime,
-        )
-        if action:
-            if action["action"] == "SELL_PARTIAL":
-                send_simple_message(_trade_partial_message(trade, action))
-            elif action["action"] == "SELL_ALL":
-                send_simple_message(_trade_close_message(trade, action))
-                circuit_breaker.update_on_close(action["pnl"], market_health)
-
-    # ── 7. הודעה מאוחדת בעברית (מסכם + קטגוריות) ─────────────────────────
+    # ── 7. הודעה מאוחדת בעברית ────────────────────────────────────────────────
     lines = []
     if top:
         leader = top[0]
@@ -412,17 +338,9 @@ def run_scan() -> None:
     lines.append(
         f"📊 מצב שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}"
     )
-    if market_health >= 65:
-        lines.append("   ↳ שוק חזק – מותר לסחור.")
-    elif market_health >= 40:
-        lines.append("   ↳ שוק בינוני – אפשר לסחור בזהירות.")
-    else:
-        lines.append("   ↳ שוק חלש – עדיף להמתין.")
 
     cb_status = circuit_breaker.status()
     lines.append(f"🛡 מפסק: {cb_status}")
-    if cb_status != "ACTIVE":
-        lines.append(f"   ⚠️ סיבה: {circuit_breaker.block_reason}")
     lines.append("")
 
     lines.append("📊 דירוג 5 מומלצים:")
@@ -435,67 +353,18 @@ def run_scan() -> None:
         prob = (str(c.get("probability", 0)) + "%").rjust(6)
         dist = f"{c.get('trigger_distance_pct', 0):.2f}%".rjust(6)
         lines.append(f"│ {sym} │ {ai} │ {prob} │ {dist} │")
-    lines.append("└──────┴──────┴────────┴────────┘")
-    lines.append("")
+        lines.append("└──────┴──────┴────────┴────────┘")
 
     buy_list = filtered.get("buy", [])
-    prepare_list = filtered.get("prepare", [])
-    watch_list = filtered.get("watch", [])
-    arm_list = filtered.get("arm", [])
-
     if buy_list:
-        lines.append("🟢 קניות (BUY) – הבוט ממליץ לקנות עכשיו:")
+        lines.append("\n🟢 קניות (BUY) – הבוט ממליץ לקנות עכשיו:")
         for c in buy_list:
             lines.append(
                 f"  {c['symbol']}  כניסה: {c.get('entry_price', 0):.4f}  "
                 f"סטופ: {c.get('entry_sl', 0):.4f}  יעד1: {c.get('entry_tp1', 0):.4f}"
             )
-        lines.append("")
-
-    if prepare_list:
-        lines.append("🟡 הכנה (PREPARE) – הצטברות איכותית:")
-        for c in prepare_list[:3]:
-            lines.append(
-                f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "
-                f"הסתברות: {c.get('probability', 0):.0f}%"
-            )
-        lines.append("")
-
-    if arm_list:
-        lines.append("🟠 במעקב צמוד (ARM) – קרובים לפריצה:")
-        for c in arm_list[:3]:
-            lines.append(
-                f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "
-                f"הסתברות: {c.get('probability', 0):.0f}%  "
-                f"מרחק: {c.get('trigger_distance_pct', 0):.2f}%"
-            )
-        lines.append("")
-
-    if watch_list:
-        lines.append("🟡 במעקב (WATCH) – טרם בשל:")
-        for c in watch_list[:3]:
-            lines.append(
-                f"  {c['symbol']}  בינה: {c.get('ai_score', 0):.0f}  "
-                f"הסתברות: {c.get('probability', 0):.0f}%"
-            )
-        lines.append("")
-
-    active_now = trade_mgr.get_active_trades()
-    if active_now:
-        lines.append(f"🔹 נפתחו {len(active_now)} עסקאות:")
-        for t in active_now:
-            lines.append(
-                f"  {t.symbol}  כניסה: {t.entry_price:.4f}  SL: {t.sl:.4f}  TP1: {t.tp1:.4f}"
-            )
-    lines.append("")
-    lines.append("🔹 מה לעשות עכשיו:")
-    lines.append("• ℹ️ הבוט מייעץ – **לא** קונה אוטומטית.")
-    lines.append("• 🟢 קניות – מומלץ לקנות ידנית את המטבעות הרשומים.")
-    lines.append("• 🟡 במעקב/הכנה – לא לקנות עדיין. להמתין.")
-    lines.append("• 📊 בדוק טבלת מומלצים וסיכום עסקאות.")
 
     if lines:
-        log.info(f"Unified message length: {len(lines)} lines, {len(''.join(lines))} chars")
         send_simple_message("\n".join(lines))
 
     # ── 8. Learning & Shadow ──────────────────────────────────────────────────
@@ -505,73 +374,6 @@ def run_scan() -> None:
         record_scan(_diag, top)
     except Exception as e:
         log.debug(f"Learning recorder skipped: {e}")
-
-    try:
-        from tools.shadow_mode import save_shadow_signal, update_forward_returns
-
-        for c in top:
-            save_shadow_signal(c, c.get("final_decision", "IGNORE"))
-        update_forward_returns()
-        log.info(f"Shadow Mode: saved {len(top)} signals")
-    except Exception as e:
-        log.debug(f"Shadow Mode skipped: {e}")
-
-    try:
-        from tools.outcome_tracker import update_outcomes
-
-        update_outcomes()
-    except Exception as e:
-        log.debug(f"Outcome tracker error: {e}")
-
-    try:
-        from tools.learning_dashboard import run_dashboard
-
-        report = run_dashboard()
-        if report:
-            send_simple_message(report)
-    except Exception as e:
-        log.debug(f"Dashboard error: {e}")
-
-    try:
-        from tools.ai_optimizer import get_suggestions
-
-        suggestions = get_suggestions()
-        if suggestions:
-            send_simple_message(f"🤖 AI Optimization Suggestions:\n{suggestions}")
-    except Exception as e:
-        log.debug(f"AI Optimizer error: {e}")
-
-    try:
-        from tools.score_history import init_score_history, save_score
-
-        init_score_history()
-        for c in top:
-            save_score(c, c.get("rating", "C"))
-    except Exception as e:
-        log.debug(f"Score history skipped: {e}")
-
-    for i, c in enumerate(top, 1):
-        log.info(
-            f"  {i}. {c['symbol']:<12} "
-            f"score={c['final_score']:.0f}  "
-            f"flow={c.get('flow_score',0):.0f}  "
-            f"pre={c.get('pre_score',0):.0f}  "
-            f"final={c.get('final_decision','IGNORE'):<10}  "
-            f"trend={c.get('trending_bonus',0):.1f}"
-        )
-
-    active_now = trade_mgr.get_active_trades()
-    if active_now:
-        log.info(
-            "── Active Trades ──────────────────────────────────────────"
-        )
-        for t in active_now:
-            quality = getattr(t, "quality", 0)
-            log.info(
-                f"  {t.symbol} | Entry={t.entry_price:.4f} | State={t.state} | "
-                f"SL={t.sl:.4f} | TP1={t.tp1:.4f} | TP2={t.tp2:.4f} | "
-                f"Health={getattr(t, 'health', 0):.0f} | Quality={quality:.0f}"
-            )
 
     if original_max is not None:
         trade_mgr.max_trades = original_max
@@ -586,16 +388,20 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # זיהוי אוטומטי אם אנחנו רצים ב-GitHub Actions
+    run_once = args.once or IS_GITHUB_ACTIONS
+
     log.info(
-        f"CRYPTO-BOT Elite starting | dynamic_universe={USE_DYNAMIC_UNIVERSE}"
+        f"CRYPTO-BOT Elite starting | dynamic_universe={USE_DYNAMIC_UNIVERSE} | GitHubActions={IS_GITHUB_ACTIONS}"
     )
 
-    if args.once:
-        log.info("Mode: --once")
+    if run_once:
+        log.info("Mode: Single scan execution (--once)")
         run_scan()
+        log.info("Scan completed successfully. Exiting.")
         sys.exit(0)
 
-    log.info(f"Mode: loop every {SCAN_INTERVAL_SECONDS}s")
+    log.info(f"Mode: Loop every {SCAN_INTERVAL_SECONDS}s")
     while _running:
         try:
             run_scan()
@@ -605,18 +411,10 @@ def main() -> None:
         if not _running:
             break
 
-        log.info(f"Sleeping {SCAN_INTERVAL_SECONDS}s...")
-        for _ in range(SCAN_INTERVAL_SECONDS):
-            if not _running:
-                break
-            time.sleep(1)
+        time.sleep(SCAN_INTERVAL_SECONDS)
 
-    live_monitor.stop()
-    for m in ws_monitors.values():
-        try:
-            m.stop()
-        except:
-            pass
+    if live_monitor:
+        live_monitor.stop()
 
     log.info("CRYPTO-BOT Elite stopped.")
     sys.exit(0)
