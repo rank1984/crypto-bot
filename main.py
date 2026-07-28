@@ -375,6 +375,14 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Learning recorder skipped: {e}")
 
+    # ── 9. Export ML Learning Dataset ──────────────────────────────────────────
+    try:
+        from tools.export_learning_dataset import export_ml_dataset
+
+        export_ml_dataset()
+    except Exception as e:
+        log.debug(f"ML Dataset export error: {e}")
+
     if original_max is not None:
         trade_mgr.max_trades = original_max
 
