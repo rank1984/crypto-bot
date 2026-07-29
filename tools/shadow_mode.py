@@ -335,20 +335,27 @@ def export_shadow_csv():
         with open(filepath, mode='w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
             writer.writerow([
-                "Time", "Coin", "Decision", "Setup", "Entry", "Trigger Price", "TP1", "TP2", "SL",
+                "Time (Israel)", "Coin", "Decision", "Setup", "Entry", "Trigger Price", "TP1", "TP2", "SL",
                 "Final Score", "Probability", "Flow", "Pre", "OI", "Funding", "RS",
                 "Compression", "Market Health", "News Score", "BTC Regime",
                 "Status", "Reason", "Exit Reason", "PnL", "PnL%", "Max Profit%",
                 "Max DD%", "Trade State", "Exit Price", "Duration (m)",
                 "Trigger Hit", "TP1 Hit", "TP2 Hit", "SL Hit",
-                "Max Up%", "Max Down%", "Outcome Checked", 
-                "Outcome Status", "First TP Hit Time", "Last Update Time",
-                "MFE%", "MAE%", "TimeToTriggerMin", "TimeToTP1Min", "TimeToSLMin"
+                "Max Up%", "Max Down%", "Outcome Checked"
             ])
+
+            log.info(f"Exporting {len(trades)} shadow trades")
 
             for t in trades:
                 t = dict(t)
-                dt_str = datetime.fromisoformat(t["ts"]).strftime("%H:%M:%S") if t["ts"] else ""
+                # המרה לשעון ישראל (UTC+3)
+                dt_utc = datetime.fromisoformat(t["ts"]) if t.get("ts") else None
+                if dt_utc:
+                    dt_isr = dt_utc + timedelta(hours=3)
+                    dt_str = dt_isr.strftime("%H:%M:%S")
+                else:
+                    dt_str = ""
+
                 writer.writerow([
                     dt_str,
                     t.get("symbol", ""),
@@ -386,15 +393,7 @@ def export_shadow_csv():
                     t.get("outcome_sl_hit", 0),
                     t.get("outcome_max_up_pct", 0),
                     t.get("outcome_max_down_pct", 0),
-                    t.get("outcome_checked", 0),
-                    t.get("outcome_status", ""),
-                    t.get("first_tp_hit_time", 0),
-                    t.get("last_update_time", ""),
-                    t.get("outcome_mfe", 0),
-                    t.get("outcome_mae", 0),
-                    t.get("time_to_trigger_min", 0),
-                    t.get("time_to_tp1_min", 0),
-                    t.get("time_to_sl_min", 0)
+                    t.get("outcome_checked", 0)
                 ])
         log.info(f"CSV Exported: {os.path.abspath(filepath)}")
     except Exception as e:
