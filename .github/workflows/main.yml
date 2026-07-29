@@ -33,6 +33,21 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py --once
 
+      - name: 📊 Run Institutional Analysis
+        run: |
+          pip install pandas matplotlib scikit-learn
+          python tools/institutional_analysis.py
+
+      - name: 📄 Upload Analysis Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analysis-report
+          path: |
+            analysis_report.txt
+            calibration_curve.png
+          retention-days: 7
+
       - name: 🚀 Commit and Push Shadow Results
         run: |
           git config --local user.email "action@github.com"
