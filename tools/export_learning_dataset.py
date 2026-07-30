@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Export Clean Learning Dataset (BUY Signals Only)
+CRYPTO-BOT Elite — Export Clean Learning Dataset (BUY Signals Only, Full Features)
 """
 import os
 import sqlite3
@@ -18,7 +18,6 @@ def export_ml_dataset():
 
     conn = sqlite3.connect(DB_PATH)
     
-    # שליפת עסקאות BUY שהגיעו לסטטוס FINAL בלבד
     query = """
         SELECT 
             id,
@@ -36,7 +35,7 @@ def export_ml_dataset():
             pre_score,
             oi_change,
             rs_1h,
-            is_compressed,
+            CASE WHEN UPPER(is_compressed) = 'TRUE' THEN 1 ELSE 0 END as is_compressed,
             probability,
             market_health,
             news_score,
@@ -46,11 +45,14 @@ def export_ml_dataset():
             outcome_tp1_hit,
             outcome_tp2_hit,
             outcome_sl_hit,
-            outcome_mfe,
-            outcome_mae,
+            COALESCE(outcome_mfe, 0) as outcome_mfe,
+            COALESCE(outcome_mae, 0) as outcome_mae,
             time_to_trigger_min,
             time_to_tp1_min,
-            time_to_sl_min
+            time_to_sl_min,
+            COALESCE(pnl_pct, 0) as pnl_pct,
+            COALESCE(max_profit_pct, 0) as max_profit_pct,
+            COALESCE(max_drawdown_pct, 0) as max_drawdown_pct
         FROM shadow_trades
         WHERE outcome_status = 'FINAL'
           AND UPPER(decision) = 'BUY'
@@ -64,9 +66,16 @@ def export_ml_dataset():
         log.warning("No FINAL 'BUY' trades found for exporting ML dataset.")
         return
 
-    # יצירת משתנה המטרה הדיגיטלי (Target)
-    # Target = 1 (פגע ב-TP1 לפני SL), Target = 0 (נכשל)
+    # Target: 1 if TP1 hit and SL not hit, else 0
     df["target"] = ((df["outcome_tp1_hit"] == 1) & (df["outcome_sl_hit"] == 0)).astype(int)
+
+    # Feature engineering (interactions)
+    df["rs_x_flow"] = df["rs_1h"] * df["flow_score"]
+    df["compressed_x_oi"] = df["is_compressed"] * df["oi_change"]
+    df["prob_x_flow"] = df["probability"] * df["flow_score"]
+
+    # Hour extraction
+    df["hour"] = pd.to_datetime(df["ts"]).dt.hour
 
     os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
     df.to_csv(OUTPUT_CSV, index=False)
