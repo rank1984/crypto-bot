@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, ARM State, Circuit Breaker & Trending Bonus)
+CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, ARM State, Circuit Breaker, Trending Bonus & Dashboards)
 """
 
 import argparse
@@ -375,13 +375,34 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Learning recorder skipped: {e}")
 
-    # ── 9. Export ML Learning Dataset ──────────────────────────────────────────
+    # ── 9. Export ML Learning Dataset ─────────────────────────────────────────
     try:
         from tools.export_learning_dataset import export_ml_dataset
 
         export_ml_dataset()
     except Exception as e:
         log.debug(f"ML Dataset export error: {e}")
+
+    # ── 10. Dashboards ────────────────────────────────────────────────────────
+    # Expectancy Dashboard (by Setup)
+    try:
+        from tools.expectancy_dashboard import run_dashboard as expect_dash
+
+        report = expect_dash()
+        if report:
+            send_simple_message(report)
+    except Exception as e:
+        log.debug(f"Expectancy dashboard error: {e}")
+
+    # Learning Dashboard (Net EV, CI, Profit Factor)
+    try:
+        from tools.learning_dashboard import run_dashboard
+
+        lr = run_dashboard()
+        if lr:
+            send_simple_message(lr)
+    except Exception as e:
+        log.debug(f"Learning dashboard error: {e}")
 
     if original_max is not None:
         trade_mgr.max_trades = original_max
@@ -396,7 +417,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # זיהוי אוטומטי אם אנחנו רצים ב-GitHub Actions
     run_once = args.once or IS_GITHUB_ACTIONS
 
     log.info(
