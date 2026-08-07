@@ -1,4 +1,5 @@
 ﻿Time (Israel),Coin,Decision,Setup,Entry,Trigger Price,TP1,TP2,SL,Final Score,Probability,Flow,Pre,OI,Funding,RS,Compression,Market Health,News Score,BTC Regime,Status,Reason,Exit Reason,PnL,PnL%,Max Profit%,Max DD%,Trade State,Exit Price,Duration (m),Trigger Hit,TP1 Hit,TP2 Hit,SL Hit,Max Up%,Max Down%,Outcome Checked
+14:05:19,BANKUSDT,BUY,DIP_BUY,0.0415,0.0,0.043575,0.047725,0.0410935,67.3,55.6,34.5,49.8,121.23,0.0,0.411,True,46.8,39.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 14:12:30,GIGGLEUSDT,BUY,VWAP_RECLAIM,33.19,0.0,34.35165,35.8452,32.67524536,100.0,59.9,56.0,43.2,50.35,0.0,3.42,False,46.4,37.0,RANGE,Pending ⏳,VWAP_RECLAIM trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 07:26:47,BICOUSDT,BUY,VWAP_RECLAIM,0.0166,0.0,0.017181,0.017928,0.0164022,57.3,9.9,25.0,15.9,-30.34,0.0,-0.049,False,46.0,35.0,RANGE,Pending ⏳,VWAP_RECLAIM trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 04:08:42,SUSDT,BUY,DIP_BUY,0.02242,0.0,0.023541,0.025783,0.02225815,46.8,13.0,25.8,15.2,-11.03,0.0,0.076,False,46.0,35.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
