@@ -1,4 +1,5 @@
 ﻿Time (Israel),Coin,Decision,Setup,Entry,Trigger Price,TP1,TP2,SL,Final Score,Probability,Flow,Pre,OI,Funding,RS,Compression,Market Health,News Score,BTC Regime,Status,Reason,Exit Reason,PnL,PnL%,Max Profit%,Max DD%,Trade State,Exit Price,Duration (m),Trigger Hit,TP1 Hit,TP2 Hit,SL Hit,Max Up%,Max Down%,Outcome Checked
+08:05:45,ESPUSDT,BUY,DIP_BUY,0.06593,0.0,0.0692265,0.0758195,0.0649735,49.6,25.4,31.8,38.6,255.39,0.0,0.958,False,47.0,40.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 05:50:55,CTSIUSDT,BUY,DIP_BUY,0.0253,0.0,0.026565,0.029095,0.0249745,52.1,29.4,33.1,35.3,25.79,0.0,0.796,False,47.0,40.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 22:19:16,CCUSDT,BUY,DIP_BUY,0.093,0.0,0.09765,0.10695,0.09236585,63.6,17.0,16.6,38.5,-73.78,0.0,-0.157,True,46.8,39.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
 19:35:07,BABYUSDT,BUY,DIP_BUY,0.01163,0.0,0.0122115,0.0133745,0.0114425,85.8,14.5,38.2,31.3,-32.41,0.0,0.449,False,46.8,39.0,RANGE,Pending ⏳,DIP_BUY trigger confirmed,,,0.0,0.0,0.0,ACTIVE,0.0,0,0,0,0,0,0.0,0.0,0
