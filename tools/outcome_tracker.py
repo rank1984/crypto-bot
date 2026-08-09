@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Outcome Tracker v5 (ACTIVE / FINAL)
+CRYPTO-BOT Elite — Outcome Tracker v5 (ACTIVE / FINAL) – PnL% fix
 """
 import os
 import sqlite3
@@ -46,23 +46,26 @@ def update_outcomes():
             if df is None or df.empty:
                 continue
 
-            # המרת עמודת הזמן ל-datetime במידה והיא מחרוזת
             if not pd.api.types.is_datetime64_any_dtype(df["time"]):
                 df["time"] = pd.to_datetime(df["time"])
 
             max_high = float(df["high"].max())
             min_low = float(df["low"].min())
 
-            # MFE (Maximum Favorable Excursion) / MAE (Maximum Adverse Excursion)
             max_up = round((max_high - entry) / entry * 100, 2)
             max_down = round((min_low - entry) / entry * 100, 2)
+
+            # חישוב PnL% לפי מחיר סגירה אחרון
+            pnl_pct = 0.0
+            last_close = float(df["close"].iloc[-1])
+            if entry > 0:
+                pnl_pct = round((last_close - entry) / entry * 100, 2)
 
             trigger_hit = 1 if max_high >= trigger else 0
             tp1_hit = 1 if tp1 > 0 and max_high >= tp1 else 0
             tp2_hit = 1 if tp2 > 0 and max_high >= tp2 else 0
             sl_hit = 1 if sl > 0 and min_low <= sl else 0
 
-            # חישוב זמני חצייה בדקות
             def first_time(level, series, direction="high"):
                 mask = series >= level if direction == "high" else series <= level
                 if mask.any():
@@ -75,7 +78,6 @@ def update_outcomes():
             sl_min  = first_time(sl, df["low"], "low") if sl_hit else None
             trigger_min = first_time(trigger, df["high"], "high") if trigger_hit else None
 
-            # קביעת סטטוס העסקה
             now = datetime.utcnow()
             hours_elapsed = (now - t0).total_seconds() / 3600
             if tp1_hit or tp2_hit or sl_hit or hours_elapsed >= 48:
@@ -90,7 +92,8 @@ def update_outcomes():
                     outcome_mfe = ?, outcome_mae = ?, outcome_status = ?,
                     time_to_trigger_min = ?, time_to_tp1_min = ?, outcome_tp2_min = ?,
                     time_to_sl_min = ?, outcome_highest_price = ?, outcome_lowest_price = ?,
-                    first_tp_hit_time = ?, last_update_time = ?
+                    first_tp_hit_time = ?, last_update_time = ?,
+                    pnl_pct = ?
                 WHERE id = ?
             """, (
                 trigger_hit, tp1_hit, tp2_hit, sl_hit,
@@ -99,6 +102,7 @@ def update_outcomes():
                 max_high, min_low,
                 tp1_min or tp2_min or sl_min,
                 datetime.utcnow().isoformat(),
+                pnl_pct,
                 row["id"]
             ))
             updated += 1
@@ -107,7 +111,6 @@ def update_outcomes():
 
     conn.commit()
 
-    # Data Quality Check
     bad_rows = cur.execute("""
         SELECT COUNT(*) FROM shadow_trades
         WHERE outcome_status = 'FINAL' AND (tp1 IS NULL OR sl IS NULL)
