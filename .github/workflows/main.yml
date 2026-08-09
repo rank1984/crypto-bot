@@ -34,7 +34,7 @@ jobs:
         run: python main.py --once
 
       - name: 📊 Shadow Rules Analysis
-        run: python tools/shadow_rules_analysis.py
+        run: PYTHONPATH=. python tools/shadow_rules_analysis.py
 
       - name: 📊 Run Institutional Analysis
         run: |
