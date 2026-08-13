@@ -56,10 +56,8 @@ def update_outcomes():
             max_down = round((min_low - entry) / entry * 100, 2)
 
             # חישוב PnL% לפי מחיר סגירה אחרון
-            pnl_pct = 0.0
             last_close = float(df["close"].iloc[-1])
-            if entry > 0:
-                pnl_pct = round((last_close - entry) / entry * 100, 2)
+            pnl_pct = round((last_close - entry) / entry * 100, 2) if entry > 0 else 0.0
 
             trigger_hit = 1 if max_high >= trigger else 0
             tp1_hit = 1 if tp1 > 0 and max_high >= tp1 else 0
@@ -126,7 +124,7 @@ def update_outcomes():
 
     if updated:
         try:
-            from scanner.shadow_mode import export_shadow_csv
+            from tools.shadow_mode import export_shadow_csv
             export_shadow_csv()
         except Exception as e:
             log.debug(f"Export shadow CSV error: {e}")
