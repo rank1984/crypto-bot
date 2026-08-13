@@ -19,16 +19,12 @@ def _conn():
 
 
 def _add_column_if_not_exists(cursor, table, column, col_type):
-    """מוסיף עמודה לטבלה אם היא עדיין לא קיימת."""
     try:
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
     except sqlite3.OperationalError:
-        pass  # העמודה כבר קיימת
+        pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 1. Init
-# ═══════════════════════════════════════════════════════════════════════════════
 def init_shadow_db():
     with _conn() as c:
         c.execute('''
@@ -65,7 +61,6 @@ def init_shadow_db():
             )
         ''')
 
-        # ── הרצה דינמית ובטוחה של כל העמודות החדשות וה-Ground Truth ─────────────
         new_columns = [
             ("pnl_pct", "REAL DEFAULT 0"),
             ("max_profit_pct", "REAL DEFAULT 0"),
@@ -84,7 +79,6 @@ def init_shadow_db():
             ("outcome_status", "TEXT DEFAULT 'PENDING'"),
             ("first_tp_hit_time", "REAL DEFAULT 0"),
             ("last_update_time", "TEXT"),
-            # Ground Truth Feature Store Extensions
             ("outcome_mfe", "REAL DEFAULT 0"),
             ("outcome_mae", "REAL DEFAULT 0"),
             ("time_to_trigger_min", "REAL DEFAULT 0"),
@@ -92,7 +86,8 @@ def init_shadow_db():
             ("outcome_tp2_min", "REAL DEFAULT 0"),
             ("time_to_sl_min", "REAL DEFAULT 0"),
             ("outcome_highest_price", "REAL DEFAULT 0"),
-            ("outcome_lowest_price", "REAL DEFAULT 0")
+            ("outcome_lowest_price", "REAL DEFAULT 0"),
+            ("shadow_rs", "TEXT DEFAULT 'UNKNOWN'")   # ⭐ חדש
         ]
 
         for col, typ in new_columns:
@@ -106,9 +101,10 @@ def init_shadow_db():
         log.error(f"Shadow Engine Error: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 2. Save every signal
-# ═══════════════════════════════════════════════════════════════════════════════
+def _shadow_rs_value(rs: float) -> str:
+    return "RS_OK" if rs >= 0.5 else "RS_LOW"
+
+
 def save_shadow_signal(coin: dict, signal: str):
     symbol = coin.get("symbol", "UNKNOWN")
     try:
@@ -123,14 +119,15 @@ def save_shadow_signal(coin: dict, signal: str):
         log.warning(f"Active check failed in save_shadow_signal: {e}")
 
     ts = datetime.now(timezone.utc).isoformat()
+    shadow_rs = _shadow_rs_value(float(coin.get("rs_1h", 0)))
     try:
         with _conn() as c:
             c.execute('''
                 INSERT INTO shadow_trades (
                     ts, symbol, decision, setup, entry_price, trigger_price, tp1, tp2, sl,
                     ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
-                    probability, market_health, news_score, btc_regime, funding
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    probability, market_health, news_score, btc_regime, funding, shadow_rs
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts,
                 symbol,
@@ -154,15 +151,13 @@ def save_shadow_signal(coin: dict, signal: str):
                 coin.get("news_score", 50),
                 coin.get("btc_regime", ""),
                 coin.get("funding", 0),
+                shadow_rs
             ))
         export_shadow_csv()
     except Exception as e:
         log.error(f"save_shadow_signal failed: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 3. Record a BUY trade
-# ═══════════════════════════════════════════════════════════════════════════════
 def record_trade(coin: dict, signal):
     if not signal or signal.decision not in ["BUY", "PREPARE"]:
         return
@@ -182,6 +177,7 @@ def record_trade(coin: dict, signal):
 
     ts = datetime.now(timezone.utc).isoformat()
     initial_status = "Pending ⏳" if signal.decision == "BUY" else "-"
+    shadow_rs = _shadow_rs_value(float(coin.get("rs_1h", 0)))
 
     try:
         with _conn() as c:
@@ -189,8 +185,8 @@ def record_trade(coin: dict, signal):
                 INSERT INTO shadow_trades (
                     ts, symbol, decision, setup, entry_price, trigger_price, tp1, tp2, sl,
                     ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
-                    probability, market_health, news_score, btc_regime, funding, trade_state
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    probability, market_health, news_score, btc_regime, funding, trade_state, shadow_rs
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts,
                 symbol,
@@ -214,7 +210,8 @@ def record_trade(coin: dict, signal):
                 coin.get("news_score", 50),
                 coin.get("btc_regime", ""),
                 coin.get("funding", 0),
-                'ACTIVE'
+                'ACTIVE',
+                shadow_rs
             ))
         log.info(f"Recorded shadow trade for {symbol} ({signal.decision})")
         export_shadow_csv()
@@ -222,9 +219,6 @@ def record_trade(coin: dict, signal):
         log.error(f"Failed to record shadow trade: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 4. Update exit
-# ═══════════════════════════════════════════════════════════════════════════════
 def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minutes: int,
                        pnl_pct: float = 0.0, max_profit_pct: float = 0.0,
                        max_drawdown_pct: float = 0.0, trade_state: str = 'CLOSED',
@@ -250,9 +244,6 @@ def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minut
         log.error(f"Failed to update shadow exit for {symbol}: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 5. Open trades status
-# ═══════════════════════════════════════════════════════════════════════════════
 def _get_binance_price(symbol: str) -> float:
     try:
         r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=5)
@@ -323,9 +314,6 @@ def update_open_trades():
         log.error(f"Error in update_open_trades: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 6. CSV export
-# ═══════════════════════════════════════════════════════════════════════════════
 def export_shadow_csv():
     filepath = "shadow_results.csv"
     try:
@@ -341,20 +329,15 @@ def export_shadow_csv():
                 "Status", "Reason", "Exit Reason", "PnL", "PnL%", "Max Profit%",
                 "Max DD%", "Trade State", "Exit Price", "Duration (m)",
                 "Trigger Hit", "TP1 Hit", "TP2 Hit", "SL Hit",
-                "Max Up%", "Max Down%", "Outcome Checked"
+                "Max Up%", "Max Down%", "Outcome Checked", "Shadow RS"
             ])
 
             log.info(f"Exporting {len(trades)} shadow trades")
 
             for t in trades:
                 t = dict(t)
-                # המרה לשעון ישראל (UTC+3)
                 dt_utc = datetime.fromisoformat(t["ts"]) if t.get("ts") else None
-                if dt_utc:
-                    dt_isr = dt_utc + timedelta(hours=3)
-                    dt_str = dt_isr.strftime("%H:%M:%S")
-                else:
-                    dt_str = ""
+                dt_str = (dt_utc + timedelta(hours=3)).strftime("%H:%M:%S") if dt_utc else ""
 
                 writer.writerow([
                     dt_str,
@@ -393,7 +376,8 @@ def export_shadow_csv():
                     t.get("outcome_sl_hit", 0),
                     t.get("outcome_max_up_pct", 0),
                     t.get("outcome_max_down_pct", 0),
-                    t.get("outcome_checked", 0)
+                    t.get("outcome_checked", 0),
+                    t.get("shadow_rs", "UNKNOWN")
                 ])
         log.info(f"CSV Exported: {os.path.abspath(filepath)}")
     except Exception as e:
