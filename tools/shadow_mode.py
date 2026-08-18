@@ -101,7 +101,6 @@ def init_shadow_db():
 
     log.info("Shadow DB initialized for Trade Tracking & Learning Pipeline")
 
-    # Outcome Tracker הוא מקור האמת – לא update_open_trades
     try:
         export_shadow_csv()
     except Exception as e:
@@ -110,7 +109,6 @@ def init_shadow_db():
 
 def _shadow_tags(coin: dict) -> str:
     tags = []
-
     try:
         rs_val = float(coin.get("rs_1h", 0) or 0)
     except (TypeError, ValueError):
@@ -180,7 +178,7 @@ def save_shadow_signal(coin: dict, signal: str):
                 coin.get("entry_tp1", 0),
                 coin.get("entry_tp2", 0),
                 coin.get("entry_sl", 0),
-                coin.get("ai_score", 0),  # AI Score אמיתי
+                coin.get("ai_score", 0),
                 coin.get("flow_score", 0),
                 coin.get("pre_score", 0),
                 coin.get("oi_change", 0),
