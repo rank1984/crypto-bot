@@ -19,7 +19,14 @@ def run_dashboard():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    total = cur.execute("SELECT COUNT(*) as cnt FROM shadow_trades WHERE outcome_status='FINAL' AND decision='BUY' AND outcome_checked=1").fetchone()["cnt"]
+    total = cur.execute("""
+        SELECT COUNT(*) as cnt
+        FROM shadow_trades
+        WHERE outcome_status='FINAL'
+          AND decision='BUY'
+          AND outcome_checked=1
+    """).fetchone()["cnt"]
+
     if total < 5:
         log.info(f"Dashboard: need >5 checked FINAL trades, have {total}")
         return ""
@@ -34,12 +41,10 @@ def run_dashboard():
     avg_mae, ci_mae = _mean_ci(mae_vals)
     avg_pnl, ci_pnl = _mean_ci(pnl_vals)
 
-    # Net EV
     COST = 0.2
-    gross_ev = avg_pnl or 0          # EV אמיתי מבוסס PnL
+    gross_ev = avg_pnl or 0
     net_ev = gross_ev - COST
 
-    # Profit Factor
     wins = [x for x in pnl_vals if x > 0]
     losses = [abs(x) for x in pnl_vals if x < 0]
 
@@ -50,7 +55,6 @@ def run_dashboard():
     else:
         pf = sum(wins) / sum(losses)
 
-    # RS ranges
     rs_ranges = cur.execute("""
         SELECT CASE WHEN rs_1h<0 THEN '<0' WHEN rs_1h<0.5 THEN '0-0.5' WHEN rs_1h<1 THEN '0.5-1' ELSE '>1' END as rng,
                COUNT(*), AVG(outcome_tp1_hit)
