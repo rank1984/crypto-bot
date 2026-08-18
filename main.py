@@ -64,14 +64,10 @@ init_replay_db()
 IS_GITHUB_ACTIONS = os.getenv("GITHUB_ACTIONS") == "true"
 
 # ── Live Monitor ──────────────────────────────────────────────────────────────
-# מפעילים את Monitor רק אם זו הרצה מקומית, ולא ב-GitHub Actions
 live_monitor = None
 if not IS_GITHUB_ACTIONS:
     live_monitor = LiveMonitor(trade_mgr, send_simple_message)
     live_monitor.start()
-
-# ── Global WebSocket Monitors Dictionary ──────────────────────────────────────
-ws_monitors = {}
 
 
 def _trade_open_message(trade) -> str:
@@ -110,14 +106,12 @@ def run_scan() -> None:
     # ── 0. Init Databases ─────────────────────────────────────────────────────
     try:
         from tools.shadow_mode import init_shadow_db
-
         init_shadow_db()
     except Exception as e:
         log.warning(f"Shadow DB init error: {e}")
 
     try:
         from storage.candle_cache import init_cache
-
         init_cache()
     except Exception as e:
         log.warning(f"Candle Cache init error: {e}")
@@ -148,7 +142,7 @@ def run_scan() -> None:
         log.error("Empty universe — skipping scan")
         return
 
-    # ── Market Health (לפני rank_universe – מחשבים עם ערכי default) ──────────
+    # ── Market Health (לפני rank_universe) ────────────────────────────────────
     news_score = get_news_score()
     market_health = get_market_health(
         btc_change_1h=btc_1h_mov,
@@ -173,7 +167,7 @@ def run_scan() -> None:
         send_simple_message("ℹ️ No opportunities found. Market is quiet.")
         return
 
-    # ── חישוב Market Health מחדש עם נתוני ranking ────────────────────────────
+    # ── חישוב Market Health מחדש ──────────────────────────────────────────────
     if _diag is not None:
         if hasattr(_diag, "get"):
             oi_change_total = _diag.get("total_oi_change", 0)
@@ -219,12 +213,10 @@ def run_scan() -> None:
 
     # ── 3. Decision Engine ────────────────────────────────────────────────────
     from scanner.decision_engine import decide_batch
-
     top = decide_batch(top)
 
     # ── 4. Quality Gate ───────────────────────────────────────────────────────
     from scanner.quality_gate import apply_quality_gate_all
-
     top = apply_quality_gate_all(top)
 
     for c in top:
@@ -238,21 +230,17 @@ def run_scan() -> None:
 
         last_price = c.get("last_price", 0)
         trigger_price = c.get("trigger_price", c.get("entry_price", 0))
-        if last_price > 0 and trigger_price > 0:
-            c["trigger_distance_pct"] = (
-                (trigger_price - last_price) / last_price
-            ) * 100
-        elif trigger_price > 0:
-            c["trigger_distance_pct"] = 0.5
+
+        if last_price > 0 and trigger_price and trigger_price > 0:
+            c["trigger_distance_pct"] = ((trigger_price - last_price) / last_price) * 100
         else:
-            c["trigger_distance_pct"] = 999
+            c["trigger_distance_pct"] = None
 
         if "trigger_price" not in c and trigger_price > 0:
             c["trigger_price"] = trigger_price
 
     # ── 5. Signal Filter ──────────────────────────────────────────────────────
     from scanner.signal_filter import filter_coins
-
     filtered = filter_coins(top)
 
     for c in top:
@@ -321,7 +309,7 @@ def run_scan() -> None:
                 if trade:
                     trade.quality = quality
 
-    # ── 7. הודעה מאוחדת ברורה בעברית ─────────────────────────────
+    # ── 7. הודעה מאוחדת ברורה בעברית ─────────────────────────────────────────
     lines = []
     lines.append("📊 תמונת מצב מהירה")
     lines.append(f"שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
@@ -329,21 +317,21 @@ def run_scan() -> None:
     lines.append(f"מפסק: {cb_status}")
     lines.append("")
 
-    # טבלת 5 מובילים
-    lines.append("🏆 5 המובילים:")
-    lines.append("┌────────────┬──────┬──────────┬────────┐")
-    lines.append("│ מטבע       │ AI   │ הסתברות │ מרחק   │")
-    lines.append("├────────────┼──────┼──────────┼────────┤")
+    lines.append("🏆 דירוג 5 מובילים:")
+    lines.append("מטבע        AI   הסתברות   מרחק לטריגר")
+    lines.append("-" * 44)
     for c in top[:5]:
-        sym = c['symbol'].replace('USDT', '')[:10].ljust(10)
-        ai = str(c.get('ai_score', 0)).rjust(4)
-        prob = f"{c.get('probability', 0):.0f}%".rjust(8)
-        dist = f"{c.get('trigger_distance_pct', 0):.2f}%".rjust(6)
-        lines.append(f"│ {sym} │ {ai} │ {prob} │ {dist} │")
-    lines.append("└────────────┴──────┴──────────┴────────┘")
+        sym = c['symbol'].replace('USDT', '')[:12].ljust(12)
+        ai = f"{c.get('ai_score', 0):.0f}".rjust(4)
+        prob = f"{c.get('probability', 0):.0f}%".rjust(6)
+        dist_val = c.get('trigger_distance_pct')
+        if dist_val is None:
+            dist = "—"
+        else:
+            dist = f"{dist_val:.2f}%"
+        lines.append(f"{sym}  {ai}  {prob}  {dist}")
     lines.append("")
 
-    # קטגוריות
     buy_list = filtered.get("buy", [])
     if buy_list:
         lines.append("🟢 קנייה מומלצת:")
@@ -369,7 +357,7 @@ def run_scan() -> None:
     if arm_list:
         lines.append("🟠 במעקב צמוד (ARM) – קרוב לפריצה:")
         for c in arm_list[:3]:
-            lines.append(f"  {c['symbol']} מרחק:{c.get('trigger_distance_pct',0):.2f}%")
+            lines.append(f"  {c['symbol']} מרחק:{c.get('trigger_distance_pct',0):.2f}%" if c.get('trigger_distance_pct') is not None else f"  {c['symbol']} מרחק:—")
         lines.append("")
 
     watch_list = filtered.get("watch", [])
@@ -390,7 +378,6 @@ def run_scan() -> None:
     # ── 8. Learning & Shadow ──────────────────────────────────────────────────
     try:
         from learning.recorder import record_scan
-
         record_scan(_diag, top)
     except Exception as e:
         log.debug(f"Learning recorder skipped: {e}")
@@ -398,29 +385,16 @@ def run_scan() -> None:
     # ── 9. Export ML Learning Dataset ─────────────────────────────────────────
     try:
         from tools.export_learning_dataset import export_ml_dataset
-
         export_ml_dataset()
     except Exception as e:
         log.debug(f"ML Dataset export error: {e}")
 
-    # ── 10. Dashboards ────────────────────────────────────────────────────────
-    # Expectancy Dashboard (by Setup)
-    try:
-        from tools.expectancy_dashboard import run_dashboard as expect_dash
-
-        report = expect_dash()
-        if report:
-            send_simple_message(report)
-    except Exception as e:
-        log.debug(f"Expectancy dashboard error: {e}")
-
-    # Learning Dashboard (Net EV, CI, Profit Factor)
+    # ── 10. Dashboards (לוג בלבד, לא שליחה) ─────────────────────────────────
     try:
         from tools.learning_dashboard import run_dashboard
-
         lr = run_dashboard()
         if lr:
-            send_simple_message(lr)
+            log.info(lr)
     except Exception as e:
         log.debug(f"Learning dashboard error: {e}")
 
@@ -430,18 +404,12 @@ def run_scan() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Single scan and exit (GitHub Actions)",
-    )
+    parser.add_argument("--once", action="store_true", help="Single scan and exit")
     args = parser.parse_args()
 
     run_once = args.once or IS_GITHUB_ACTIONS
 
-    log.info(
-        f"CRYPTO-BOT Elite starting | dynamic_universe={USE_DYNAMIC_UNIVERSE} | GitHubActions={IS_GITHUB_ACTIONS}"
-    )
+    log.info(f"CRYPTO-BOT Elite starting | dynamic_universe={USE_DYNAMIC_UNIVERSE} | GitHubActions={IS_GITHUB_ACTIONS}")
 
     if run_once:
         log.info("Mode: Single scan execution (--once)")
