@@ -20,41 +20,15 @@ def export_ml_dataset():
 
     query = """
         SELECT
-            id,
-            ts,
-            symbol,
-            decision,
-            setup,
-            entry_price,
-            trigger_price,
-            tp1,
-            tp2,
-            sl,
-            ai_score,
-            flow_score,
-            pre_score,
-            oi_change,
-            rs_1h,
-            is_compressed,
-            probability,
-            market_health,
-            news_score,
-            btc_regime,
-            funding,
-            outcome_tp1_hit,
-            outcome_tp2_hit,
-            outcome_sl_hit,
-            outcome_mfe,
-            outcome_mae,
-            pnl_pct,
-            pnl_r,
-            mfe_r,
-            mae_r,
-            exit_reason,
-            exit_price,
-            duration_minutes,
-            shadow_rs,
-            shadow_tags
+            id, ts, symbol, decision, setup,
+            entry_price, trigger_price, tp1, tp2, sl,
+            ai_score, flow_score, pre_score, oi_change, rs_1h,
+            is_compressed, probability, market_health, news_score,
+            btc_regime, funding,
+            outcome_tp1_hit, outcome_tp2_hit, outcome_sl_hit,
+            outcome_mfe, outcome_mae, pnl_pct, pnl_r, mfe_r, mae_r,
+            exit_reason, exit_price, duration_minutes,
+            shadow_rs, shadow_tags
         FROM shadow_trades
         WHERE outcome_status = 'FINAL'
           AND decision = 'BUY'
@@ -70,7 +44,6 @@ def export_ml_dataset():
         log.warning("No checked BUY FINAL trades with PnL found.")
         return
 
-    # target labels
     df["target_tp1"] = df["outcome_tp1_hit"].astype(int)
     df["target_win"] = (df["pnl_pct"] > 0).astype(int)
 
