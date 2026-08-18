@@ -56,7 +56,6 @@ def _first_event(df, level, column, direction):
 
 
 def update_outcomes():
-
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
@@ -74,9 +73,7 @@ def update_outcomes():
     updated = 0
 
     for row in rows:
-
         try:
-
             symbol = row["symbol"]
             entry = float(row["entry_price"] or 0)
             if entry <= 0:
@@ -89,7 +86,6 @@ def update_outcomes():
 
             t0 = _parse_ts(row["ts"])
             if t0 is None:
-                log.warning(f"{symbol}: invalid entry timestamp")
                 continue
 
             ts_str = t0.strftime("%Y-%m-%d %H:%M:%S")
@@ -105,7 +101,6 @@ def update_outcomes():
             entry_ts = pd.Timestamp(t0, tz="UTC")
             df = df[df["time"] >= entry_ts].copy()
             if df.empty:
-                log.warning(f"{symbol}: no candles after entry")
                 continue
 
             df = df.sort_values("time").reset_index(drop=True)
@@ -116,20 +111,14 @@ def update_outcomes():
             max_up = round((max_high - entry) / entry * 100, 2)
             max_down = round((min_low - entry) / entry * 100, 2)
 
-            # ── Current PnL ─────────────────────────────────────────────
             last_close = float(df["close"].iloc[-1])
-            pnl_pct = (
-                round((last_close - entry) / entry * 100, 2)
-                if entry > 0 else 0.0
-            )
+            pnl_pct = round((last_close - entry) / entry * 100, 2) if entry > 0 else 0.0
 
-            # ── Outcome Hits ───────────────────────────────────────────
             trigger_hit = 1 if trigger > 0 and max_high >= trigger else 0
             tp1_hit = 1 if tp1 > 0 and max_high >= tp1 else 0
             tp2_hit = 1 if tp2 > 0 and max_high >= tp2 else 0
             sl_hit = 1 if sl > 0 and min_low <= sl else 0
 
-            # ── First hit time ──────────────────────────────────────────
             def first_time(level, series, direction="high"):
                 if level <= 0:
                     return None
@@ -139,12 +128,7 @@ def update_outcomes():
                     mask = series <= level
                 if not mask.any():
                     return None
-                t_event = (
-                    df.loc[mask, "time"]
-                    .iloc[0]
-                    .to_pydatetime()
-                    .replace(tzinfo=None)
-                )
+                t_event = df.loc[mask, "time"].iloc[0].to_pydatetime().replace(tzinfo=None)
                 return round((t_event - t0).total_seconds() / 60, 1)
 
             trigger_min = first_time(trigger, df["high"], "high") if trigger_hit else None
@@ -152,23 +136,13 @@ def update_outcomes():
             tp2_min = first_time(tp2, df["high"], "high") if tp2_hit else None
             sl_min = first_time(sl, df["low"], "low") if sl_hit else None
 
-            # ── Outcome status ──────────────────────────────────────────
             now = datetime.utcnow()
             hours_elapsed = (now - t0).total_seconds() / 3600
+            new_status = "FINAL" if (tp1_hit or tp2_hit or sl_hit or hours_elapsed >= TIMEOUT_HOURS) else "ACTIVE"
 
-            if tp1_hit or tp2_hit or sl_hit or hours_elapsed >= TIMEOUT_HOURS:
-                new_status = "FINAL"
-            else:
-                new_status = "ACTIVE"
-
-            # ── First meaningful outcome event ─────────────────────────
-            event_times = [
-                x for x in [tp1_min, tp2_min, sl_min]
-                if x is not None
-            ]
+            event_times = [x for x in [tp1_min, tp2_min, sl_min] if x is not None]
             first_outcome_time = min(event_times) if event_times else None
 
-            # ── UPDATE (19 placeholders, 19 values) ────────────────────
             cur.execute("""
                 UPDATE shadow_trades
                 SET
@@ -192,29 +166,14 @@ def update_outcomes():
                     pnl_pct = ?
                 WHERE id = ?
             """, (
-                trigger_hit,
-                tp1_hit,
-                tp2_hit,
-                sl_hit,
-                max_up,
-                max_down,
-                max_up,
-                abs(max_down),
-                new_status,
-                trigger_min,
-                tp1_min,
-                tp2_min,
-                sl_min,
-                max_high,
-                min_low,
-                first_outcome_time,
-                datetime.utcnow().isoformat(),
-                pnl_pct,
-                row["id"]
+                trigger_hit, tp1_hit, tp2_hit, sl_hit,
+                max_up, max_down, max_up, abs(max_down),
+                new_status, trigger_min, tp1_min, tp2_min, sl_min,
+                max_high, min_low, first_outcome_time,
+                datetime.utcnow().isoformat(), pnl_pct, row["id"]
             ))
 
             updated += 1
-
             log.info(f"{symbol}: status={new_status} trigger={trigger_hit} tp1={tp1_hit} sl={sl_hit} PnL={pnl_pct:.2f}%")
 
         except Exception as e:
