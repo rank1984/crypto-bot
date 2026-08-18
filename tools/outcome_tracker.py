@@ -95,7 +95,7 @@ def update_outcomes():
             df = get_candles_range(symbol, ts_str)
 
             if df is None or df.empty:
-                log.warning(f"{symbol}: no candles returned")
+                log.warning(f"{symbol}: no candles returned — keeping outcome open")
                 continue
 
             df["time"] = pd.to_datetime(df["time"], utc=True, errors="coerce")
@@ -172,9 +172,11 @@ def update_outcomes():
             tp2_min = minutes_from_entry(tp2_event)
             sl_min = minutes_from_entry(sl_event)
 
+            # ── תיקון סופי: 19 placeholders ו־19 ערכים ──────────────────────
             cur.execute("""
                 UPDATE shadow_trades
                 SET
+                    outcome_trigger_hit = ?,
                     outcome_tp1_hit = ?,
                     outcome_tp2_hit = ?,
                     outcome_sl_hit = ?,
@@ -182,33 +184,36 @@ def update_outcomes():
                     outcome_max_down_pct = ?,
                     outcome_mfe = ?,
                     outcome_mae = ?,
-                    pnl_pct = ?,
-                    pnl_r = ?,
-                    duration_minutes = ?,
-                    exit_reason = ?,
-                    exit_price = ?,
                     outcome_status = ?,
+                    time_to_trigger_min = ?,
                     time_to_tp1_min = ?,
                     outcome_tp2_min = ?,
                     time_to_sl_min = ?,
                     outcome_highest_price = ?,
                     outcome_lowest_price = ?,
-                    outcome_checked = 1,
-                    last_update_time = ?
+                    first_tp_hit_time = ?,
+                    last_update_time = ?,
+                    pnl_pct = ?
                 WHERE id = ?
             """, (
-                tp1_hit, tp2_hit, sl_hit,
-                round(mfe_pct, 4), round(mae_pct, 4),
-                round(mfe_pct, 4), round(abs(mae_pct), 4),
-                round(pnl_pct, 4), round(pnl_r, 4) if pnl_r is not None else None,
-                int(duration_minutes),
-                exit_reason,
-                exit_price,
+                trigger_hit,
+                tp1_hit,
+                tp2_hit,
+                sl_hit,
+                max_up,
+                max_down,
+                max_up,
+                abs(max_down),
                 new_status,
-                tp1_min, tp2_min, sl_min,
-                max_high, min_low,
-                1,
+                trigger_min,
+                tp1_min,
+                tp2_min,
+                sl_min,
+                max_high,
+                min_low,
+                tp1_min or tp2_min or sl_min,
                 datetime.utcnow().isoformat(),
+                pnl_pct,
                 row["id"]
             ))
 
