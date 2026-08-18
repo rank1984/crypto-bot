@@ -400,7 +400,7 @@ def run_scan() -> None:
     except Exception as e:
         log.error(f"ML Dataset export error: {e}", exc_info=True)
 
-    # ── 11. Learning Dashboard (לוג בלבד, לא טלגרם) ─────────────────────────
+    # ── 11. Learning Dashboard (לוג בלבד) ─────────────────────────────────────
     try:
         from tools.learning_dashboard import run_dashboard
         lr = run_dashboard()
