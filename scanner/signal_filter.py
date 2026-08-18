@@ -4,7 +4,7 @@ CRYPTO-BOT Elite — Signal Filter
 5 מצבים:
     IGNORE
     WATCH
-    ARM      — קרוב לטריגר (≤1%), איכותי – נכנס למעקב מהיר
+    ARM
     PREPARE
     BUY
 """
@@ -13,10 +13,6 @@ log = get_logger(__name__)
 
 
 def classify_signal(c: dict) -> str:
-    """
-    מחזיר final_decision אחיד:
-    BUY / PREPARE / ARM / WATCH / IGNORE
-    """
     dec           = c.get("entry_decision", "NO")
     flow          = c.get("flow_score", 0)
     pre           = c.get("pre_score", 0)
@@ -24,7 +20,9 @@ def classify_signal(c: dict) -> str:
     oi_change     = c.get("oi_change", 0)
     rs_1h         = c.get("rs_1h", 0)
     prob          = c.get("probability", 0)
-    dist_pct      = c.get("trigger_distance_pct", 999)
+    dist_pct      = c.get("trigger_distance_pct")
+    if dist_pct is None:
+        dist_pct = 999
     market_health = c.get("market_health", 70)
     btc_regime    = c.get("btc_regime", "RANGE")
 
@@ -40,7 +38,6 @@ def classify_signal(c: dict) -> str:
     if btc_regime == "RANGE" and market_health < 55:
         if dec == "BUY":
             return "WATCH"
-    # ───────────────────────────────────────────────────────────────────────
 
     # ── Final AI Gate ─────────────────────────────────────────────────────
     if dec == "BUY":
@@ -90,7 +87,6 @@ def filter_coins(coins: list[dict]) -> dict:
         elif sig == "WATCH":   watch.append(c)
         else:                  ignored.append(c)
 
-    # ── הבטח לפחות 5 מטבעות (ללמידה) ──────────────────────────────────
     total_quality = len(buy) + len(prepare) + len(arm) + len(watch)
     if total_quality < 5:
         ignored.sort(key=lambda x: x.get("flow_score",0)+x.get("pre_score",0), reverse=True)
@@ -100,7 +96,6 @@ def filter_coins(coins: list[dict]) -> dict:
             watch.append(c)
             log.info(f"Promoted {c['symbol']} from IGNORE to WATCH (data boosting)")
 
-    # WATCH – מקסימום 3, רק הטובים ביותר
     watch = sorted(watch, key=lambda x: x.get("flow_score",0)+x.get("pre_score",0), reverse=True)[:3]
 
     has_quality = bool(buy or prepare or arm)
