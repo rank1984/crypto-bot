@@ -7,7 +7,6 @@ from datetime import datetime, timezone, timedelta
 from utils.logger import get_logger
 
 log = get_logger(__name__)
-
 DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
 
 
@@ -62,45 +61,25 @@ def init_shadow_db():
         ''')
 
         new_columns = [
-            ("pnl_pct", "REAL"),
-            ("max_profit_pct", "REAL"),
-            ("max_drawdown_pct", "REAL"),
-            ("trade_state", "TEXT"),
-            ("exit_price", "REAL"),
-            ("trigger_price", "REAL"),
-            ("duration_minutes", "INTEGER"),
-            ("outcome_trigger_hit", "INTEGER"),
-            ("outcome_tp1_hit", "INTEGER"),
-            ("outcome_tp2_hit", "INTEGER"),
-            ("outcome_sl_hit", "INTEGER"),
-            ("outcome_max_up_pct", "REAL"),
-            ("outcome_max_down_pct", "REAL"),
-            ("outcome_checked", "INTEGER"),
-            ("outcome_status", "TEXT"),
-            ("first_tp_hit_time", "REAL"),
-            ("last_update_time", "TEXT"),
-            ("outcome_mfe", "REAL"),
-            ("outcome_mae", "REAL"),
-            ("time_to_trigger_min", "REAL"),
-            ("time_to_tp1_min", "REAL"),
-            ("outcome_tp2_min", "REAL"),
-            ("time_to_sl_min", "REAL"),
-            ("outcome_highest_price", "REAL"),
-            ("outcome_lowest_price", "REAL"),
-            ("pnl_r", "REAL"),
-            ("mfe_r", "REAL"),
-            ("mae_r", "REAL"),
-            ("exit_time", "TEXT"),
-            ("direction", "TEXT DEFAULT 'LONG'"),
-            ("shadow_tags", "TEXT DEFAULT '[]'"),
-            ("shadow_rs", "TEXT")
+            ("pnl_pct", "REAL"), ("max_profit_pct", "REAL"), ("max_drawdown_pct", "REAL"),
+            ("trade_state", "TEXT"), ("exit_price", "REAL"), ("trigger_price", "REAL"),
+            ("duration_minutes", "INTEGER"), ("outcome_trigger_hit", "INTEGER"),
+            ("outcome_tp1_hit", "INTEGER"), ("outcome_tp2_hit", "INTEGER"),
+            ("outcome_sl_hit", "INTEGER"), ("outcome_max_up_pct", "REAL"),
+            ("outcome_max_down_pct", "REAL"), ("outcome_checked", "INTEGER"),
+            ("outcome_status", "TEXT"), ("first_tp_hit_time", "REAL"),
+            ("last_update_time", "TEXT"), ("outcome_mfe", "REAL"), ("outcome_mae", "REAL"),
+            ("time_to_trigger_min", "REAL"), ("time_to_tp1_min", "REAL"),
+            ("outcome_tp2_min", "REAL"), ("time_to_sl_min", "REAL"),
+            ("outcome_highest_price", "REAL"), ("outcome_lowest_price", "REAL"),
+            ("pnl_r", "REAL"), ("mfe_r", "REAL"), ("mae_r", "REAL"),
+            ("exit_time", "TEXT"), ("direction", "TEXT DEFAULT 'LONG'"),
+            ("shadow_tags", "TEXT DEFAULT '[]'"), ("shadow_rs", "TEXT")
         ]
-
         for col, typ in new_columns:
             _add_column_if_not_exists(c, "shadow_trades", col, typ)
 
     log.info("Shadow DB initialized for Trade Tracking & Learning Pipeline")
-
     try:
         export_shadow_csv()
     except Exception as e:
@@ -113,22 +92,14 @@ def _shadow_tags(coin: dict) -> str:
         rs_val = float(coin.get("rs_1h", 0) or 0)
     except (TypeError, ValueError):
         rs_val = 0.0
-
-    if rs_val < 0.5:
-        tags.append("shadow_rs_low")
-    else:
-        tags.append("shadow_rs_ok")
+    tags.append("shadow_rs_low" if rs_val < 0.5 else "shadow_rs_ok")
 
     regime = coin.get("btc_regime", "")
     try:
         mh = float(coin.get("market_health", 0) or 0)
     except (TypeError, ValueError):
         mh = 0.0
-
-    if regime != "TREND_UP" or mh < 55:
-        tags.append("shadow_regime_bad")
-    else:
-        tags.append("shadow_regime_ok")
+    tags.append("shadow_regime_bad" if (regime != "TREND_UP" or mh < 55) else "shadow_regime_ok")
 
     hour = datetime.now(timezone.utc).hour
     if hour in [0, 1, 6, 9, 11, 13, 19, 21]:
@@ -143,16 +114,18 @@ def _shadow_rs_value(rs: float) -> str:
 
 def save_shadow_signal(coin: dict, signal: str):
     symbol = coin.get("symbol", "UNKNOWN")
+    # בדיקת כפילות – אם יש כבר עסקה פעילה, לא מוסיפים
     try:
         with _conn() as c:
-            active = c.execute("""
+            exists = c.execute("""
                 SELECT id FROM shadow_trades
-                WHERE symbol = ? AND trade_state = 'ACTIVE'
+                WHERE symbol = ? AND outcome_status != 'FINAL'
+                ORDER BY id DESC LIMIT 1
             """, (symbol,)).fetchone()
-            if active:
+            if exists:
                 return
     except Exception as e:
-        log.warning(f"Active check failed in save_shadow_signal: {e}")
+        log.warning(f"Duplicate check failed: {e}")
 
     ts = datetime.now(timezone.utc).isoformat()
     tags = _shadow_tags(coin)
@@ -169,30 +142,12 @@ def save_shadow_signal(coin: dict, signal: str):
                     probability, market_health, news_score, btc_regime, funding, shadow_tags, shadow_rs
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
-                ts,
-                symbol,
-                signal,
-                coin.get("entry_setup", ""),
-                coin.get("entry_price", coin.get("price", 0)),
-                coin.get("trigger_price", 0),
-                coin.get("entry_tp1", 0),
-                coin.get("entry_tp2", 0),
-                coin.get("entry_sl", 0),
-                coin.get("ai_score", 0),
-                coin.get("flow_score", 0),
-                coin.get("pre_score", 0),
-                coin.get("oi_change", 0),
-                coin.get("rs_1h", 0),
-                compressed,
-                signal,
-                coin.get("entry_reason", ""),
-                coin.get("probability", 0),
-                coin.get("market_health", 50),
-                coin.get("news_score", 50),
-                coin.get("btc_regime", ""),
-                funding,
-                tags,
-                shadow_rs
+                ts, symbol, signal, coin.get("entry_setup", ""), coin.get("entry_price", coin.get("price", 0)),
+                coin.get("trigger_price", 0), coin.get("entry_tp1", 0), coin.get("entry_tp2", 0), coin.get("entry_sl", 0),
+                coin.get("ai_score", 0), coin.get("flow_score", 0), coin.get("pre_score", 0),
+                coin.get("oi_change", 0), coin.get("rs_1h", 0), compressed, signal,
+                coin.get("entry_reason", ""), coin.get("probability", 0), coin.get("market_health", 50),
+                coin.get("news_score", 50), coin.get("btc_regime", ""), funding, tags, shadow_rs
             ))
         export_shadow_csv()
     except Exception as e:
@@ -206,12 +161,12 @@ def record_trade(coin: dict, signal):
     symbol = coin.get("symbol", "UNKNOWN")
     try:
         with _conn() as c:
-            existing = c.execute("""
+            exists = c.execute("""
                 SELECT id FROM shadow_trades
-                WHERE symbol = ? AND trade_state = 'ACTIVE'
+                WHERE symbol = ? AND outcome_status != 'FINAL'
+                ORDER BY id DESC LIMIT 1
             """, (symbol,)).fetchone()
-            if existing:
-                log.debug(f"Skipping duplicate active trade for {symbol}")
+            if exists:
                 return
     except Exception as e:
         log.warning(f"Duplicate check failed: {e}")
@@ -232,31 +187,13 @@ def record_trade(coin: dict, signal):
                     probability, market_health, news_score, btc_regime, funding, trade_state, shadow_tags, shadow_rs
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
-                ts,
-                symbol,
-                signal.decision,
-                getattr(signal, "setup_type", ""),
-                getattr(signal, "entry", 0.0),
-                coin.get("trigger_price", 0.0),
-                getattr(signal, "tp1", 0.0),
-                getattr(signal, "tp2", 0.0),
-                getattr(signal, "sl", 0.0),
-                coin.get("ai_score", 0),
-                coin.get("flow_score", 0),
-                coin.get("pre_score", 0),
-                coin.get("oi_change", 0),
-                coin.get("rs_1h", 0),
-                compressed,
-                initial_status,
-                getattr(signal, "reason", ""),
-                coin.get("probability", 0),
-                coin.get("market_health", 50),
-                coin.get("news_score", 50),
-                coin.get("btc_regime", ""),
-                funding,
-                'ACTIVE',
-                tags,
-                shadow_rs
+                ts, symbol, signal.decision, getattr(signal, "setup_type", ""),
+                getattr(signal, "entry", 0.0), coin.get("trigger_price", 0.0),
+                getattr(signal, "tp1", 0.0), getattr(signal, "tp2", 0.0), getattr(signal, "sl", 0.0),
+                coin.get("ai_score", 0), coin.get("flow_score", 0), coin.get("pre_score", 0),
+                coin.get("oi_change", 0), coin.get("rs_1h", 0), compressed, initial_status,
+                getattr(signal, "reason", ""), coin.get("probability", 0), coin.get("market_health", 50),
+                coin.get("news_score", 50), coin.get("btc_regime", ""), funding, 'ACTIVE', tags, shadow_rs
             ))
         log.info(f"Recorded shadow trade for {symbol} ({signal.decision})")
         export_shadow_csv()
@@ -272,15 +209,9 @@ def update_shadow_exit(symbol: str, exit_reason: str, pnl: float, duration_minut
         with _conn() as c:
             c.execute('''
                 UPDATE shadow_trades
-                SET status = 'CLOSED 🏁',
-                    exit_reason = ?,
-                    pnl = ?,
-                    pnl_pct = ?,
-                    duration_minutes = ?,
-                    max_profit_pct = ?,
-                    max_drawdown_pct = ?,
-                    trade_state = ?,
-                    exit_price = ?
+                SET status = 'CLOSED 🏁', exit_reason = ?, pnl = ?, pnl_pct = ?,
+                    duration_minutes = ?, max_profit_pct = ?, max_drawdown_pct = ?,
+                    trade_state = ?, exit_price = ?
                 WHERE symbol = ? AND status != 'CLOSED 🏁'
             ''', (exit_reason, pnl, pnl_pct, duration_minutes, max_profit_pct,
                   max_drawdown_pct, trade_state, exit_price, symbol))
@@ -313,58 +244,28 @@ def export_shadow_csv():
                 "Shadow RS", "Shadow Tags"
             ])
 
-            log.info(f"Exporting {len(trades)} shadow trades")
-
             for t in trades:
                 t = dict(t)
                 dt_utc = datetime.fromisoformat(t["ts"]) if t.get("ts") else None
                 dt_str = (dt_utc + timedelta(hours=3)).strftime("%H:%M:%S") if dt_utc else ""
-
                 writer.writerow([
-                    dt_str,
-                    t.get("symbol", ""),
-                    t.get("decision", ""),
-                    t.get("setup", ""),
-                    t.get("entry_price", 0),
-                    t.get("trigger_price", 0),
-                    t.get("tp1", 0),
-                    t.get("tp2", 0),
-                    t.get("sl", 0),
-                    t.get("ai_score", 0),
-                    t.get("final_score", 0) if "final_score" in t else 0,
-                    t.get("probability", 0),
-                    t.get("flow_score", 0),
-                    t.get("pre_score", 0),
-                    t.get("oi_change", 0),
-                    t.get("funding", 0),
-                    t.get("rs_1h", 0),
-                    t.get("is_compressed", 0),
-                    t.get("market_health", 50),
-                    t.get("news_score", 50),
-                    t.get("btc_regime", ""),
-                    t.get("status", ""),
-                    t.get("reason", ""),
-                    t.get("exit_reason", ""),
-                    t.get("pnl", 0),
-                    t.get("pnl_pct", 0),
-                    t.get("pnl_r", 0),
-                    t.get("max_profit_pct", 0),
-                    t.get("max_drawdown_pct", 0),
-                    t.get("trade_state", ""),
-                    t.get("exit_price", 0),
-                    t.get("duration_minutes", 0),
-                    t.get("outcome_trigger_hit", 0),
-                    t.get("outcome_tp1_hit", 0),
-                    t.get("outcome_tp2_hit", 0),
-                    t.get("outcome_sl_hit", 0),
-                    t.get("outcome_max_up_pct", 0),
-                    t.get("outcome_max_down_pct", 0),
-                    t.get("outcome_mfe", 0),
-                    t.get("outcome_mae", 0),
-                    t.get("outcome_checked", 0),
-                    t.get("outcome_status", ""),
-                    t.get("shadow_rs", "UNKNOWN"),
-                    t.get("shadow_tags", "")
+                    dt_str, t.get("symbol", ""), t.get("decision", ""), t.get("setup", ""),
+                    t.get("entry_price", 0), t.get("trigger_price", 0), t.get("tp1", 0),
+                    t.get("tp2", 0), t.get("sl", 0), t.get("ai_score", 0),
+                    t.get("final_score", 0) if "final_score" in t else 0, t.get("probability", 0),
+                    t.get("flow_score", 0), t.get("pre_score", 0), t.get("oi_change", 0),
+                    t.get("funding", 0), t.get("rs_1h", 0), t.get("is_compressed", 0),
+                    t.get("market_health", 50), t.get("news_score", 50), t.get("btc_regime", ""),
+                    t.get("status", ""), t.get("reason", ""), t.get("exit_reason", ""),
+                    t.get("pnl", 0), t.get("pnl_pct", 0), t.get("pnl_r", 0),
+                    t.get("max_profit_pct", 0), t.get("max_drawdown_pct", 0), t.get("trade_state", ""),
+                    t.get("exit_price", 0), t.get("duration_minutes", 0),
+                    t.get("outcome_trigger_hit", 0), t.get("outcome_tp1_hit", 0),
+                    t.get("outcome_tp2_hit", 0), t.get("outcome_sl_hit", 0),
+                    t.get("outcome_max_up_pct", 0), t.get("outcome_max_down_pct", 0),
+                    t.get("outcome_mfe", 0), t.get("outcome_mae", 0),
+                    t.get("outcome_checked", 0), t.get("outcome_status", ""),
+                    t.get("shadow_rs", "UNKNOWN"), t.get("shadow_tags", "")
                 ])
         log.info(f"CSV Exported: {os.path.abspath(filepath)}")
     except Exception as e:
