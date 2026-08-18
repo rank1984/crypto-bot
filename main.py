@@ -322,70 +322,71 @@ def run_scan() -> None:
                     trade.quality = quality
 
     # ── 7. הודעה מאוחדת ברורה בעברית ─────────────────────────────
-lines = []
-lines.append("📊 תמונת מצב מהירה")
-lines.append(f"שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
-cb_status = circuit_breaker.status()
-lines.append(f"מפסק: {cb_status}")
-lines.append("")
-
-# טבלת 5 מובילים
-lines.append("🏆 5 המובילים:")
-lines.append("┌────────────┬──────┬──────────┬────────┐")
-lines.append("│ מטבע       │ AI   │ הסתברות │ מרחק   │")
-lines.append("├────────────┼──────┼──────────┼────────┤")
-for c in top[:5]:
-    sym = c['symbol'].replace('USDT', '')[:10].ljust(10)
-    ai = str(c.get('ai_score', 0)).rjust(4)
-    prob = f"{c.get('probability', 0):.0f}%".rjust(8)
-    dist = f"{c.get('trigger_distance_pct', 0):.2f}%".rjust(6)
-    lines.append(f"│ {sym} │ {ai} │ {prob} │ {dist} │")
-lines.append("└────────────┴──────┴──────────┴────────┘")
-lines.append("")
-
-# קטגוריות
-buy_list = filtered.get("buy", [])
-if buy_list:
-    lines.append("🟢 קנייה מומלצת:")
-    for c in buy_list:
-        lines.append(f"  {c['symbol']}")
-        lines.append(f"    כניסה: {c.get('entry_price', 0):.4f}")
-        lines.append(f"    סטופ: {c.get('entry_sl', 0):.4f}")
-        lines.append(f"    יעד1: {c.get('entry_tp1', 0):.4f}")
-        lines.append(f"    יעד2: {c.get('entry_tp2', 0):.4f}")
-    lines.append("")
-else:
-    lines.append("🟢 אין קנייה כרגע.")
+    lines = []
+    lines.append("📊 תמונת מצב מהירה")
+    lines.append(f"שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
+    cb_status = circuit_breaker.status()
+    lines.append(f"מפסק: {cb_status}")
     lines.append("")
 
-prepare_list = filtered.get("prepare", [])
-if prepare_list:
-    lines.append("🟡 הכנה (PREPARE) – הצטברות טובה, חסר טריגר:")
-    for c in prepare_list[:3]:
-        lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f} Prob:{c.get('probability',0):.0f}%")
+    # טבלת 5 מובילים
+    lines.append("🏆 5 המובילים:")
+    lines.append("┌────────────┬──────┬──────────┬────────┐")
+    lines.append("│ מטבע       │ AI   │ הסתברות │ מרחק   │")
+    lines.append("├────────────┼──────┼──────────┼────────┤")
+    for c in top[:5]:
+        sym = c['symbol'].replace('USDT', '')[:10].ljust(10)
+        ai = str(c.get('ai_score', 0)).rjust(4)
+        prob = f"{c.get('probability', 0):.0f}%".rjust(8)
+        dist = f"{c.get('trigger_distance_pct', 0):.2f}%".rjust(6)
+        lines.append(f"│ {sym} │ {ai} │ {prob} │ {dist} │")
+    lines.append("└────────────┴──────┴──────────┴────────┘")
     lines.append("")
 
-arm_list = filtered.get("arm", [])
-if arm_list:
-    lines.append("🟠 במעקב צמוד (ARM) – קרוב לפריצה:")
-    for c in arm_list[:3]:
-        lines.append(f"  {c['symbol']} מרחק:{c.get('trigger_distance_pct',0):.2f}%")
-    lines.append("")
+    # קטגוריות
+    buy_list = filtered.get("buy", [])
+    if buy_list:
+        lines.append("🟢 קנייה מומלצת:")
+        for c in buy_list:
+            lines.append(f"  {c['symbol']}")
+            lines.append(f"    כניסה: {c.get('entry_price', 0):.4f}")
+            lines.append(f"    סטופ: {c.get('entry_sl', 0):.4f}")
+            lines.append(f"    יעד1: {c.get('entry_tp1', 0):.4f}")
+            lines.append(f"    יעד2: {c.get('entry_tp2', 0):.4f}")
+        lines.append("")
+    else:
+        lines.append("🟢 אין קנייה כרגע.")
+        lines.append("")
 
-watch_list = filtered.get("watch", [])
-if watch_list:
-    lines.append("🟡 במעקב (WATCH):")
-    for c in watch_list[:3]:
-        lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f} Prob:{c.get('probability',0):.0f}%")
-    lines.append("")
+    prepare_list = filtered.get("prepare", [])
+    if prepare_list:
+        lines.append("🟡 הכנה (PREPARE) – הצטברות טובה, חסר טריגר:")
+        for c in prepare_list[:3]:
+            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f} Prob:{c.get('probability',0):.0f}%")
+        lines.append("")
 
-lines.append("🔹 מה לעשות:")
-lines.append("• 🟢 קנייה – בצע קנייה ידנית אם הכניסה עדיין בתוקף.")
-lines.append("• 🟡 הכנה/מעקב – המתן לפריצה ברורה.")
-lines.append("• 📊 אם השוק חלש (מתחת 50) – עדיף לא לקנות.")
-lines.append("• 🛡 מפסק ACTIVE = מותר לסחור. BLOCKED = אין כניסות חדשות.")
+    arm_list = filtered.get("arm", [])
+    if arm_list:
+        lines.append("🟠 במעקב צמוד (ARM) – קרוב לפריצה:")
+        for c in arm_list[:3]:
+            lines.append(f"  {c['symbol']} מרחק:{c.get('trigger_distance_pct',0):.2f}%")
+        lines.append("")
 
-send_simple_message("\n".join(lines)) 
+    watch_list = filtered.get("watch", [])
+    if watch_list:
+        lines.append("🟡 במעקב (WATCH):")
+        for c in watch_list[:3]:
+            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f} Prob:{c.get('probability',0):.0f}%")
+        lines.append("")
+
+    lines.append("🔹 מה לעשות:")
+    lines.append("• 🟢 קנייה – בצע קנייה ידנית אם הכניסה עדיין בתוקף.")
+    lines.append("• 🟡 הכנה/מעקב – המתן לפריצה ברורה.")
+    lines.append("• 📊 אם השוק חלש (מתחת 50) – עדיף לא לקנות.")
+    lines.append("• 🛡 מפסק ACTIVE = מותר לסחור. BLOCKED = אין כניסות חדשות.")
+
+    send_simple_message("\n".join(lines))
+
     # ── 8. Learning & Shadow ──────────────────────────────────────────────────
     try:
         from learning.recorder import record_scan
