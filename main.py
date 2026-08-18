@@ -64,10 +64,14 @@ init_replay_db()
 IS_GITHUB_ACTIONS = os.getenv("GITHUB_ACTIONS") == "true"
 
 # ── Live Monitor ──────────────────────────────────────────────────────────────
+# מפעילים את Monitor רק אם זו הרצה מקומית, ולא ב-GitHub Actions
 live_monitor = None
 if not IS_GITHUB_ACTIONS:
     live_monitor = LiveMonitor(trade_mgr, send_simple_message)
     live_monitor.start()
+
+# ── Global WebSocket Monitors Dictionary ──────────────────────────────────────
+ws_monitors = {}
 
 
 def _trade_open_message(trade) -> str:
@@ -325,10 +329,7 @@ def run_scan() -> None:
         ai = f"{c.get('ai_score', 0):.0f}".rjust(4)
         prob = f"{c.get('probability', 0):.0f}%".rjust(6)
         dist_val = c.get('trigger_distance_pct')
-        if dist_val is None:
-            dist = "—"
-        else:
-            dist = f"{dist_val:.2f}%"
+        dist = "—" if dist_val is None else f"{dist_val:.2f}%"
         lines.append(f"{sym}  {ai}  {prob}  {dist}")
     lines.append("")
 
@@ -357,7 +358,9 @@ def run_scan() -> None:
     if arm_list:
         lines.append("🟠 במעקב צמוד (ARM) – קרוב לפריצה:")
         for c in arm_list[:3]:
-            lines.append(f"  {c['symbol']} מרחק:{c.get('trigger_distance_pct',0):.2f}%" if c.get('trigger_distance_pct') is not None else f"  {c['symbol']} מרחק:—")
+            dist_val = c.get('trigger_distance_pct')
+            dist = f"{dist_val:.2f}%" if dist_val is not None else "—"
+            lines.append(f"  {c['symbol']} מרחק:{dist}")
         lines.append("")
 
     watch_list = filtered.get("watch", [])
@@ -382,21 +385,29 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Learning recorder skipped: {e}")
 
-    # ── 9. Export ML Learning Dataset ─────────────────────────────────────────
+    # ── 9. Outcome Tracking (מקור אמת יחיד) ─────────────────────────────────
+    try:
+        from tools.outcome_tracker import update_outcomes
+        updated = update_outcomes()
+        log.info(f"Outcome tracker updated {updated} trades")
+    except Exception as e:
+        log.error(f"Outcome tracker error: {e}", exc_info=True)
+
+    # ── 10. Export ML Learning Dataset ────────────────────────────────────────
     try:
         from tools.export_learning_dataset import export_ml_dataset
         export_ml_dataset()
     except Exception as e:
-        log.debug(f"ML Dataset export error: {e}")
+        log.error(f"ML Dataset export error: {e}", exc_info=True)
 
-    # ── 10. Dashboards (לוג בלבד, לא שליחה) ─────────────────────────────────
+    # ── 11. Learning Dashboard (לוג בלבד, לא טלגרם) ─────────────────────────
     try:
         from tools.learning_dashboard import run_dashboard
         lr = run_dashboard()
         if lr:
             log.info(lr)
     except Exception as e:
-        log.debug(f"Learning dashboard error: {e}")
+        log.error(f"Learning dashboard error: {e}", exc_info=True)
 
     if original_max is not None:
         trade_mgr.max_trades = original_max
