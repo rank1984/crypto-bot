@@ -1,69 +1,80 @@
 """
-CRYPTO-BOT Elite — Learning Dashboard v4 (Net EV, CI, Profit Factor)
+CRYPTO-BOT Elite — Export Clean Learning Dataset (BUY FINAL with full features)
 """
-import sqlite3, math, os
+import os
+import sqlite3
+import pandas as pd
 from utils.logger import get_logger
 
-log = get_logger("learning_dashboard")
+log = get_logger("dataset_exporter")
 DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
+OUTPUT_CSV = "data/learning_dataset.csv"
 
-def _mean_ci(vals, z=1.96):
-    n = len(vals)
-    if n < 2: return None, None
-    m = sum(vals)/n
-    se = math.sqrt(sum((x-m)**2 for x in vals)/(n-1))/math.sqrt(n) if n>1 else 0
-    return m, (m - z*se, m + z*se)
 
-def run_dashboard():
+def export_ml_dataset():
+    if not os.path.exists(DB_PATH):
+        log.error(f"Database file {DB_PATH} not found.")
+        return
+
     conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
 
-    # בסיסי
-    total = cur.execute("SELECT COUNT(*) as cnt FROM shadow_trades WHERE outcome_status='FINAL' AND decision='BUY'").fetchone()["cnt"]
-    if total < 5:
-        log.info(f"Dashboard: need >5 trades, have {total}")
-        return ""
+    query = """
+        SELECT
+            id,
+            ts,
+            symbol,
+            decision,
+            setup,
+            entry_price,
+            trigger_price,
+            tp1,
+            tp2,
+            sl,
+            ai_score,
+            flow_score,
+            pre_score,
+            oi_change,
+            rs_1h,
+            is_compressed,
+            probability,
+            market_health,
+            news_score,
+            btc_regime,
+            funding,
+            outcome_tp1_hit,
+            outcome_tp2_hit,
+            outcome_sl_hit,
+            outcome_mfe,
+            outcome_mae,
+            pnl_pct,
+            pnl_r,
+            mfe_r,
+            mae_r,
+            exit_reason,
+            exit_price,
+            duration_minutes,
+            shadow_rs,
+            shadow_tags
+        FROM shadow_trades
+        WHERE outcome_status = 'FINAL'
+          AND decision = 'BUY'
+          AND outcome_checked = 1
+          AND pnl_pct IS NOT NULL
+        ORDER BY id ASC
+    """
 
-    tp1_rate = cur.execute("SELECT AVG(outcome_tp1_hit) FROM shadow_trades WHERE outcome_status='FINAL' AND decision='BUY'").fetchone()[0]
-    mfe_vals = [r[0] for r in cur.execute("SELECT outcome_mfe FROM shadow_trades WHERE outcome_status='FINAL' AND decision='BUY' AND outcome_mfe IS NOT NULL")]
-    mae_vals = [r[0] for r in cur.execute("SELECT outcome_mae FROM shadow_trades WHERE outcome_status='FINAL' AND decision='BUY' AND outcome_mae IS NOT NULL")]
-    pnl_vals = [r[0] for r in cur.execute("SELECT pnl_pct FROM shadow_trades WHERE outcome_status='FINAL' AND decision='BUY' AND pnl_pct IS NOT NULL")]
+    df = pd.read_sql_query(query, conn)
+    conn.close()
 
-    avg_mfe, ci_mfe = _mean_ci(mfe_vals)
-    avg_mae, ci_mae = _mean_ci(mae_vals)
-    avg_pnl, ci_pnl = _mean_ci(pnl_vals)
+    if df.empty:
+        log.warning("No checked BUY FINAL trades with PnL found.")
+        return
 
-    # Net EV (with cost model)
-    COST = 0.2  # slippage+commission 0.2%
-    gross_ev = tp1_rate * (avg_mfe or 0) - (1 - tp1_rate) * abs(avg_mae or 0)
-    net_ev = gross_ev - COST
+    # target labels
+    df["target_tp1"] = df["outcome_tp1_hit"].astype(int)
+    df["target_win"] = (df["pnl_pct"] > 0).astype(int)
 
-    # Profit Factor
-    wins = [x for x in pnl_vals if x > 0]
-    losses = [abs(x) for x in pnl_vals if x < 0]
-    pf = sum(wins)/sum(losses) if sum(losses) > 0 else float('inf')
+    os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
+    df.to_csv(OUTPUT_CSV, index=False)
 
-    # RS ranges
-    rs_ranges = cur.execute("""
-        SELECT CASE WHEN rs_1h<0 THEN '<0' WHEN rs_1h<0.5 THEN '0-0.5' WHEN rs_1h<1 THEN '0.5-1' ELSE '>1' END as rng,
-               COUNT(*), AVG(outcome_tp1_hit)
-        FROM shadow_trades WHERE outcome_status='FINAL' AND decision='BUY'
-        GROUP BY rng ORDER BY MIN(rs_1h)
-    """).fetchall()
-
-    lines = ["=" * 45, "   LEARNING DASHBOARD (Net EV)", "=" * 45]
-    lines.append(f"Trades: {total}  TP1 Rate: {tp1_rate*100:.1f}%")
-    if avg_mfe: lines.append(f"Avg MFE: {avg_mfe:.1f}%  (95%CI {ci_mfe[0]:.1f}-{ci_mfe[1]:.1f})")
-    if avg_mae: lines.append(f"Avg MAE: {avg_mae:.1f}%  (95%CI {ci_mae[0]:.1f}-{ci_mae[1]:.1f})")
-    if avg_pnl: lines.append(f"Avg PnL: {avg_pnl:.2f}%  (95%CI {ci_pnl[0]:.2f}-{ci_pnl[1]:.2f})")
-    lines.append(f"Gross EV: {gross_ev:.2f}%  |  Net EV (cost {COST}%): {net_ev:.2f}%")
-    lines.append(f"Profit Factor: {pf:.2f}")
-    lines.append("RS ranges:")
-    for r in rs_ranges:
-        lines.append(f"  {r[0]:8s}: n={r[1]:3d}  TP1={r[2]*100:.0f}%")
-    lines.append("=" * 45)
-
-    report = "\n".join(lines)
-    log.info(report)
-    return report
+    log.info(f"ML Dataset exported to {OUTPUT_CSV} ({len(df)} BUY FINAL samples)")
