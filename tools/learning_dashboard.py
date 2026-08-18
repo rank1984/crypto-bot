@@ -1,6 +1,3 @@
-"""
-CRYPTO-BOT Elite — Learning Dashboard v5 (Realized EV, CI, Profit Factor)
-"""
 import sqlite3, math, os
 from utils.logger import get_logger
 
