@@ -1,6 +1,3 @@
-"""
-CRYPTO-BOT Elite — Export Clean Learning Dataset (BUY FINAL with full features)
-"""
 import os
 import sqlite3
 import pandas as pd
@@ -25,13 +22,13 @@ def export_ml_dataset():
             ai_score, flow_score, pre_score, oi_change, rs_1h,
             is_compressed, probability, market_health, news_score,
             btc_regime, funding,
-            outcome_tp1_hit, outcome_tp2_hit, outcome_sl_hit,
+            outcome_trigger_hit, outcome_tp1_hit, outcome_tp2_hit, outcome_sl_hit,
             outcome_mfe, outcome_mae, pnl_pct, pnl_r, mfe_r, mae_r,
             exit_reason, exit_price, duration_minutes,
             shadow_rs, shadow_tags
         FROM shadow_trades
-        WHERE outcome_status = 'FINAL'
-          AND decision = 'BUY'
+        WHERE decision = 'BUY'
+          AND outcome_status = 'FINAL'
           AND outcome_checked = 1
           AND pnl_pct IS NOT NULL
         ORDER BY id ASC
