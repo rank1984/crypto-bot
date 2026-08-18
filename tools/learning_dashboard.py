@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Learning Dashboard v5 (Net EV, CI, Profit Factor)
+CRYPTO-BOT Elite — Learning Dashboard v5 (Realized EV, CI, Profit Factor)
 """
 import sqlite3, math, os
 from utils.logger import get_logger
@@ -42,8 +42,8 @@ def run_dashboard():
     avg_pnl, ci_pnl = _mean_ci(pnl_vals)
 
     COST = 0.2
-    gross_ev = avg_pnl or 0
-    net_ev = gross_ev - COST
+    realized_ev = avg_pnl or 0.0
+    net_ev = realized_ev - COST
 
     wins = [x for x in pnl_vals if x > 0]
     losses = [abs(x) for x in pnl_vals if x < 0]
@@ -62,12 +62,12 @@ def run_dashboard():
         GROUP BY rng ORDER BY MIN(rs_1h)
     """).fetchall()
 
-    lines = ["=" * 45, "   LEARNING DASHBOARD (Net EV)", "=" * 45]
+    lines = ["=" * 45, "   LEARNING DASHBOARD (Realized EV)", "=" * 45]
     lines.append(f"Trades: {total}  TP1 Rate: {tp1_rate*100:.1f}%")
     if avg_mfe is not None: lines.append(f"Avg MFE: {avg_mfe:.1f}%  (95%CI {ci_mfe[0]:.1f}-{ci_mfe[1]:.1f})")
     if avg_mae is not None: lines.append(f"Avg MAE: {avg_mae:.1f}%  (95%CI {ci_mae[0]:.1f}-{ci_mae[1]:.1f})")
     if avg_pnl is not None: lines.append(f"Avg PnL: {avg_pnl:.2f}%  (95%CI {ci_pnl[0]:.2f}-{ci_pnl[1]:.2f})")
-    lines.append(f"Gross EV: {gross_ev:.2f}%  |  Net EV (cost {COST}%): {net_ev:.2f}%")
+    lines.append(f"Realized EV: {realized_ev:.2f}%  |  Net EV (cost {COST}%): {net_ev:.2f}%")
     if pf is None:
         lines.append("Profit Factor: N/A")
     else:
