@@ -1,9 +1,8 @@
 """
 CRYPTO-BOT Elite — Circuit Breaker
-
 מפסיק מסחר ב:
     - 3 הפסדים רצופים
-    - Drawdown יומי 5%
+    - Daily Loss Limit של 2R
     - Market Health < 25
     - High Impact Event
 """
@@ -12,30 +11,35 @@ from utils.logger import get_logger
 
 log = get_logger("circuit_breaker")
 
+DAILY_LOSS_LIMIT_R = 2.0  # עצירה אחרי הפסד יומי של 2R
+
+
 class CircuitBreaker:
-    def __init__(self):
+    def __init__(self, daily_loss_limit_r: float = DAILY_LOSS_LIMIT_R):
         self.consecutive_losses = 0
-        self.daily_pnl = 0.0
+        self.daily_pnl_r = 0.0          # 🆕 במקום daily_pnl בדולרים
+        self.daily_loss_limit_r = daily_loss_limit_r
         self.daily_start = datetime.now()
         self.last_trade_time = None
         self.trading_blocked = False
         self.block_reason = ""
         self.block_until = None
 
-    def update_on_close(self, pnl: float, market_health: float):
+    def update_on_close(self, pnl_r: float, market_health: float):
         """
         נקרא אחרי כל סגירת עסקה.
+        pnl_r = כמה R הרווחת/הפסדת בעסקה הזו (pnl_dollar / risk_per_trade_dollar)
         """
         # בדיקת יום חדש
         if datetime.now().date() > self.daily_start.date():
-            self.daily_pnl = 0.0
+            self.daily_pnl_r = 0.0
             self.daily_start = datetime.now()
             self.consecutive_losses = 0
 
-        self.daily_pnl += pnl
+        self.daily_pnl_r += pnl_r
 
         # 3 הפסדים רצופים
-        if pnl < 0:
+        if pnl_r < 0:
             self.consecutive_losses += 1
         else:
             self.consecutive_losses = 0
@@ -43,9 +47,9 @@ class CircuitBreaker:
         if self.consecutive_losses >= 3:
             self.block("3 consecutive losses", hours=12)
 
-        # Drawdown יומי 5%
-        if self.daily_pnl < -5.0:  # נניח 5% מתיק 500$ = 25$
-            self.block("Daily drawdown >5%", until_tomorrow=True)
+        # 🆕 Daily Loss Limit ב-R (במקום דולר קבוע)
+        if self.daily_pnl_r <= -self.daily_loss_limit_r:
+            self.block(f"Daily loss limit reached ({self.daily_pnl_r:.2f}R)", until_tomorrow=True)
 
         # Market Health נמוך
         if market_health < 25:
@@ -73,4 +77,4 @@ class CircuitBreaker:
     def status(self) -> str:
         if self.trading_blocked:
             return f"BLOCKED: {self.block_reason} until {self.block_until}"
-        return "ACTIVE"
+        return f"ACTIVE (today: {self.daily_pnl_r:.2f}R)"
