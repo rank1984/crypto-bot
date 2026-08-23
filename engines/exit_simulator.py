@@ -22,7 +22,7 @@ def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, timeout_hours=4
     ACTIVE -> TP1_HIT -> BREAKEVEN -> TP2_HIT -> RUNNER -> EXIT
     
     מחזיר: 
-    (pnl_pct, exit_events, ambiguous_bar, entry_candle_ambiguous, mfe_pct, mae_pct)
+    (pnl_pct, exit_events, ambiguous_bar, mfe_pct, mae_pct)
     """
     position = 1.0
     current_sl = sl
@@ -36,7 +36,6 @@ def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, timeout_hours=4
     lowest_since_entry = entry_price
     
     ambiguous_bar = 0
-    entry_candle_ambiguous = 0
     exit_events = []
     
     # נוודא ש-df מסודר ויש לנו חלון ריצה לחישובים דמויי TradeManager
@@ -51,11 +50,6 @@ def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, timeout_hours=4
             highest_since_entry = high
         if low < lowest_since_entry:
             lowest_since_entry = low
-            
-        # בדיקת Entry Candle Ambiguity
-        # אם שעת הנר פלוס 5 דקות כוללת את שעת הכניסה - זהו נר הכניסה
-        if idx == 0 and bar_time <= entry_ts < bar_time + pd.Timedelta(minutes=5):
-            entry_candle_ambiguous = 1
             
         hit_sl_now = current_sl > 0 and low <= current_sl
         hit_tp1_now = (not tp1_done) and tp1 > 0 and high >= tp1
@@ -143,4 +137,4 @@ def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, timeout_hours=4
     mfe_pct = (highest_since_entry - entry_price) / entry_price * 100
     mae_pct = (lowest_since_entry - entry_price) / entry_price * 100
 
-    return round(realized_pnl_weighted, 3), exit_events, ambiguous_bar, entry_candle_ambiguous, mfe_pct, mae_pct
+    return round(realized_pnl_weighted, 3), exit_events, ambiguous_bar, mfe_pct, mae_pct
