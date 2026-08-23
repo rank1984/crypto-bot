@@ -6,7 +6,7 @@ tools/ensure_open_trade_candles.py
 """
 import os
 import sqlite3
-from engines.market_data import get_candles
+from scanner.market_data import get_candles   # ✅ תוקן – נתיב אמיתי (לפי find)
 from utils.logger import get_logger
 
 log = get_logger("ensure_open_trade_candles")
