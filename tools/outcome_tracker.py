@@ -1,7 +1,7 @@
 """
 CRYPTO-BOT Elite — Outcome Tracker v8.5
 Single Source of Truth for trade outcomes.
-Uses tools.exit_simulator to perfectly mirror live trading limits and exits.
+Uses engines.exit_simulator to perfectly mirror live trading limits and exits.
 """
 
 import os
@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from utils.logger import get_logger
 from storage.candle_cache import get_candles_range
-from tools.exit_simulator import simulate_trade_path   # ✅ תיקון נתיב
+from engines.exit_simulator import simulate_trade_path  # ✅ תיקון: הקובץ נמצא תחת engines
 
 log = get_logger("outcome_tracker")
 
@@ -51,6 +51,9 @@ def update_outcomes():
     updated = 0
     no_candles = 0
 
+    # ✅ now_ts – משמש לבדיקת Timeout אמיתי ב-exit_simulator
+    now_ts = pd.Timestamp(datetime.now(timezone.utc), tz="UTC")
+
     for row in rows:
         try:
             symbol = row["symbol"]
@@ -80,7 +83,7 @@ def update_outcomes():
             
             entry_ts = pd.Timestamp(t0, tz="UTC")
             
-            # ✅ פילטר בטוח – ללא Look-Ahead
+            # ✅ פילטר בטוח – ללא Look‑Ahead
             df = df[df["time"] >= entry_ts].copy()
             
             if df.empty:
@@ -102,7 +105,6 @@ def update_outcomes():
             # ==========================================================
             # סימולציה – מקבלת 6 ערכים (כולל is_closed)
             # ==========================================================
-            now_ts = pd.Timestamp(datetime.now(timezone.utc), tz="UTC")
             pnl_pct, exit_events, ambiguous_bar, mfe_pct, mae_pct, is_closed = simulate_trade_path(
                 df=df, entry_price=entry, sl=sl, tp1=tp1, tp2=tp2,
                 entry_ts=entry_ts, now_ts=now_ts, timeout_hours=TIMEOUT_HOURS
@@ -115,7 +117,7 @@ def update_outcomes():
 
             first_outcome_type = exit_events[0][0] if exit_events else None
 
-            # ✅ חדש: status נקבע לפי is_closed, לא לפי סכום המשקלים
+            # ✅ is_closed קובע אם זו עסקה FINAL או עדיין ACTIVE
             new_status = "FINAL" if is_closed else "ACTIVE"
 
             tp1_hit = 1 if any(ev[0] == "TP1" for ev in exit_events) else 0
