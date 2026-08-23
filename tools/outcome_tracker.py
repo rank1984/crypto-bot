@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Outcome Tracker v8.1
+CRYPTO-BOT Elite — Outcome Tracker v8.2
 Single Source of Truth for trade outcomes.
 Uses engines.exit_simulator to perfectly mirror live trading limits and exits.
 """
@@ -33,6 +33,13 @@ def update_outcomes():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
+    # פונקציית עזר גמישה – מונעת קריסה אם עמודה חסרה (מסיבות סנכרון)
+    def safe_get(row, key, default=0):
+        try:
+            return row[key]
+        except (IndexError, KeyError):
+            return default
+
     # רק עסקאות פעילות או בהמתנה
     rows = cur.execute("""
         SELECT * FROM shadow_trades
@@ -40,8 +47,8 @@ def update_outcomes():
         ORDER BY id
     """).fetchall()
 
-    executed_count = sum(1 for r in rows if r["was_executed"])
-    log.info(f"Outcome tracker V8.1: {len(rows)} open outcomes ({executed_count} manually executed)")
+    executed_count = sum(1 for r in rows if safe_get(r, "was_executed", 0))
+    log.info(f"Outcome tracker V8.2: {len(rows)} open outcomes ({executed_count} manually executed)")
 
     updated = 0
     no_candles = 0
@@ -105,8 +112,7 @@ def update_outcomes():
             tp2_hit = 1 if any(ev[0] == "TP2" for ev in exit_events) else 0
             sl_hit = 1 if any(ev[0] == "SL" for ev in exit_events) else 0
 
-            # עדכון DB
-            # שים לב: הוספתי entry_candle_ambiguous שאותו תיצור כעמודה חדשה 
+            # עדכון DB (כל העמודות קיימות כעת בזכות התיקון ב-shadow_mode.py)
             cur.execute("""
                 UPDATE shadow_trades
                 SET
@@ -124,7 +130,7 @@ def update_outcomes():
                 first_outcome_type, ambiguous_bar, entry_ambiguous,
                 datetime.utcnow().isoformat(),
                 pnl_pct, pnl_r, mfe_r, mae_r,
-                "simulated_v8.1",
+                "simulated_v8.2",
                 row["id"]
             ))
 
@@ -136,8 +142,9 @@ def update_outcomes():
     conn.commit()
     conn.close()
 
-    log.info(f"Outcome tracker V8.1 complete: {updated}/{len(rows)} updated")
+    log.info(f"Outcome tracker V8.2 complete: {updated}/{len(rows)} updated")
     return updated
+
 
 if __name__ == "__main__":
     update_outcomes()
