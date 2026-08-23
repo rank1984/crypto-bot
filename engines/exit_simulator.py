@@ -16,13 +16,13 @@ except ImportError:
     update_trailing_stop_atr = None
 
 
-def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, timeout_hours=48):
+def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, now_ts, timeout_hours=48):
     """
     מדמה בדיוק את שלבי ה-TradeManager:
     ACTIVE -> TP1_HIT -> BREAKEVEN -> TP2_HIT -> RUNNER -> EXIT
     
     מחזיר: 
-    (pnl_pct, exit_events, ambiguous_bar, mfe_pct, mae_pct)
+    (pnl_pct, exit_events, ambiguous_bar, mfe_pct, mae_pct, is_closed)
     """
     position = 1.0
     current_sl = sl
@@ -37,6 +37,7 @@ def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, timeout_hours=4
     
     ambiguous_bar = 0
     exit_events = []
+    is_closed = False
     
     # נוודא ש-df מסודר ויש לנו חלון ריצה לחישובים דמויי TradeManager
     df = df.sort_values("time").reset_index(drop=True)
@@ -68,6 +69,7 @@ def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, timeout_hours=4
             exit_events.append(("SL", sl_pct, position, bar_time))
             position = 0.0
             state = "CLOSED"
+            is_closed = True
             break
             
         # --- TP1 EVENT ---
@@ -90,7 +92,6 @@ def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, timeout_hours=4
             state = "RUNNER"
             
         # --- TRAILING STOP LOGIC ---
-        # שחזור ההיגיון המקורב או חיבור למנוע ה-ATR
         current_pnl_pct = (close - entry_price) / entry_price * 100
         atr_multiplier = 3.0
         
@@ -105,18 +106,16 @@ def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, timeout_hours=4
         elif current_pnl_pct >= 10:
             atr_multiplier = 2.0
             
-        # חישוב חלון לאחור אם יש מספיק נרות עבור update_trailing_stop_atr
         if update_trailing_stop_atr and idx >= 15:
             df_5m_window = df.iloc[max(0, idx-15) : idx+1]
             new_sl = update_trailing_stop_atr(df_5m_window, current_sl, atr_multiplier)
             if new_sl and new_sl > current_sl:
                 current_sl = new_sl
         elif state == "RUNNER":
-            # Fallback במקרה ואין ATR (כפי שהיה ב-Outcome Tracker הקודם)
-            trail_level = highest_since_entry * (1 - (atr_multiplier * 0.01)) # המרה גסה
+            trail_level = highest_since_entry * (1 - (atr_multiplier * 0.01))
             current_sl = max(current_sl, trail_level)
 
-        # --- TIMEOUT CHECK ---
+        # --- TIMEOUT CHECK (אמיתי, לפי זמן הנר) ---
         hours_elapsed = (bar_time - entry_ts).total_seconds() / 3600
         if hours_elapsed >= timeout_hours:
             timeout_pct = (close - entry_price) / entry_price * 100
@@ -124,17 +123,27 @@ def simulate_trade_path(df, entry_price, sl, tp1, tp2, entry_ts, timeout_hours=4
             exit_events.append(("TIMEOUT", timeout_pct, position, bar_time))
             position = 0.0
             state = "CLOSED"
+            is_closed = True
             break
 
-    # יציאה בסוף הנתונים אם עדיין נשאר משהו פתוח
+    # אם יצאנו מהלולאה מבלי ש-SL/TP/TIMEOUT סגרו את כל הפוזיציה
     else:
         if position > 0:
             last_close = float(df["close"].iloc[-1])
-            timeout_pct = (last_close - entry_price) / entry_price * 100
-            realized_pnl_weighted += timeout_pct * position
-            exit_events.append(("END_OF_DATA", timeout_pct, position, df.iloc[-1]["time"]))
+            unrealized_pct = (last_close - entry_price) / entry_price * 100
+            hours_since_entry = (now_ts - entry_ts).total_seconds() / 3600
+            
+            if hours_since_entry >= timeout_hours:
+                # Timeout אמיתי – סוגרים
+                realized_pnl_weighted += unrealized_pct * position
+                exit_events.append(("TIMEOUT", unrealized_pct, position, df.iloc[-1]["time"]))
+                is_closed = True
+            else:
+                # רק נגמרו הנרות – העסקה עדיין פתוחה
+                exit_events.append(("STILL_OPEN", unrealized_pct, position, df.iloc[-1]["time"]))
+                is_closed = False
 
     mfe_pct = (highest_since_entry - entry_price) / entry_price * 100
     mae_pct = (lowest_since_entry - entry_price) / entry_price * 100
 
-    return round(realized_pnl_weighted, 3), exit_events, ambiguous_bar, mfe_pct, mae_pct
+    return round(realized_pnl_weighted, 3), exit_events, ambiguous_bar, mfe_pct, mae_pct, is_closed
