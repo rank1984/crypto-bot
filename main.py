@@ -400,6 +400,13 @@ def run_scan() -> None:
     except Exception as e:
         log.error(f"Outcome tracker error: {e}", exc_info=True)
 
+    # ── 10b. Backfill RS/AI buckets (לאחר עדכון התוצאות) ─────────────────────
+    try:
+        from tools.backfill_buckets import backfill
+        backfill()
+    except Exception as e:
+        log.error(f"Backfill error: {e}", exc_info=True)
+
     # ── 11. Export ML Learning Dataset ─────────────────────────────────────────
     try:
         from tools.export_learning_dataset import export_ml_dataset
