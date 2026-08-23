@@ -385,7 +385,14 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Learning recorder skipped: {e}")
 
-    # ── 9. Outcome Tracking (מקור אמת יחיד) ─────────────────────────────────
+    # ── 9. הבטחת נרות לכל העסקאות הפתוחות (לפני outcome tracker) ────────────
+    try:
+        from tools.ensure_open_trade_candles import ensure_candles_for_open_trades
+        ensure_candles_for_open_trades()
+    except Exception as e:
+        log.error(f"Ensure candles error: {e}", exc_info=True)
+
+    # ── 10. Outcome Tracking (מקור אמת יחיד) ──────────────────────────────────
     try:
         from tools.outcome_tracker import update_outcomes
         updated = update_outcomes()
@@ -393,14 +400,14 @@ def run_scan() -> None:
     except Exception as e:
         log.error(f"Outcome tracker error: {e}", exc_info=True)
 
-    # ── 10. Export ML Learning Dataset ────────────────────────────────────────
+    # ── 11. Export ML Learning Dataset ─────────────────────────────────────────
     try:
         from tools.export_learning_dataset import export_ml_dataset
         export_ml_dataset()
     except Exception as e:
         log.error(f"ML Dataset export error: {e}", exc_info=True)
 
-    # ── 11. Learning Dashboard (לוג בלבד) ─────────────────────────────────────
+    # ── 12. Learning Dashboard (לוג בלבד) ─────────────────────────────────────
     try:
         from tools.learning_dashboard import run_dashboard
         lr = run_dashboard()
