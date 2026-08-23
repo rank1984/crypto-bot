@@ -1,7 +1,7 @@
 """
-CRYPTO-BOT Elite — Outcome Tracker v8.4
+CRYPTO-BOT Elite — Outcome Tracker v8.5
 Single Source of Truth for trade outcomes.
-Uses engines.exit_simulator to perfectly mirror live trading limits and exits.
+Uses tools.exit_simulator to perfectly mirror live trading limits and exits.
 """
 
 import os
@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from utils.logger import get_logger
 from storage.candle_cache import get_candles_range
-from engines.exit_simulator import simulate_trade_path
+from tools.exit_simulator import simulate_trade_path   # ✅ תיקון נתיב
 
 log = get_logger("outcome_tracker")
 
@@ -46,7 +46,7 @@ def update_outcomes():
     """).fetchall()
 
     executed_count = sum(1 for r in rows if safe_get(r, "was_executed", 0))
-    log.info(f"Outcome tracker V8.4: {len(rows)} open outcomes ({executed_count} manually executed)")
+    log.info(f"Outcome tracker V8.5: {len(rows)} open outcomes ({executed_count} manually executed)")
 
     updated = 0
     no_candles = 0
@@ -80,31 +80,32 @@ def update_outcomes():
             
             entry_ts = pd.Timestamp(t0, tz="UTC")
             
-            # ✅ תיקון: חוזרים לפילטר הבטוח (ללא Look‑Ahead)
+            # ✅ פילטר בטוח – ללא Look‑Ahead
             df = df[df["time"] >= entry_ts].copy()
             
             if df.empty:
                 continue
 
             # ==========================================================
-            # ✅ אבחון entry_candle_ambiguous (מחושב בנפרד, לא משפיע על הסימולציה)
+            # אבחון entry_candle_ambiguous (מחושב בנפרד, לא משפיע על הסימולציה)
             # ==========================================================
             entry_candle_ambiguous = 0
             df_diag = get_candles_range(symbol, ts_str)
             if df_diag is not None and not df_diag.empty:
                 df_diag["time"] = pd.to_datetime(df_diag["time"], utc=True, errors="coerce")
                 floored = entry_ts.floor('5min')
-                # אם שעת הכניסה אינה בדיוק על פתיחת נר (כלומר, יש חלקי נר לפני הכניסה)
                 if floored < entry_ts:
                     match = df_diag[df_diag["time"] == floored]
                     if not match.empty:
                         entry_candle_ambiguous = 1
 
             # ==========================================================
-            # סימולציה – מקבלת 5 ערכים (ללא entry_candle_ambiguous)
+            # סימולציה – מקבלת 6 ערכים (כולל is_closed)
             # ==========================================================
-            pnl_pct, exit_events, ambiguous_bar, mfe_pct, mae_pct = simulate_trade_path(
-                df=df, entry_price=entry, sl=sl, tp1=tp1, tp2=tp2, entry_ts=entry_ts, timeout_hours=TIMEOUT_HOURS
+            now_ts = pd.Timestamp(datetime.now(timezone.utc), tz="UTC")
+            pnl_pct, exit_events, ambiguous_bar, mfe_pct, mae_pct, is_closed = simulate_trade_path(
+                df=df, entry_price=entry, sl=sl, tp1=tp1, tp2=tp2,
+                entry_ts=entry_ts, now_ts=now_ts, timeout_hours=TIMEOUT_HOURS
             )
 
             risk_pct = round(abs(entry - sl) / entry * 100, 4) if sl > 0 and entry > 0 else None
@@ -113,10 +114,9 @@ def update_outcomes():
             mae_r = round(abs(mae_pct) / risk_pct, 3) if risk_pct else None
 
             first_outcome_type = exit_events[0][0] if exit_events else None
-            is_final = first_outcome_type in ("SL", "TIMEOUT", "END_OF_DATA")
-            new_status = "FINAL" if is_final else "ACTIVE"
-            if len(exit_events) > 0 and sum(ev[2] for ev in exit_events) >= 0.99:
-                new_status = "FINAL"
+
+            # ✅ חדש: status נקבע לפי is_closed, לא לפי סכום המשקלים
+            new_status = "FINAL" if is_closed else "ACTIVE"
 
             tp1_hit = 1 if any(ev[0] == "TP1" for ev in exit_events) else 0
             tp2_hit = 1 if any(ev[0] == "TP2" for ev in exit_events) else 0
@@ -139,7 +139,7 @@ def update_outcomes():
                 first_outcome_type, ambiguous_bar, entry_candle_ambiguous,
                 datetime.utcnow().isoformat(),
                 pnl_pct, pnl_r, mfe_r, mae_r,
-                "simulated_v8.4",
+                "simulated_v8.5",
                 row["id"]
             ))
 
@@ -151,7 +151,7 @@ def update_outcomes():
     conn.commit()
     conn.close()
 
-    log.info(f"Outcome tracker V8.4 complete: {updated}/{len(rows)} updated")
+    log.info(f"Outcome tracker V8.5 complete: {updated}/{len(rows)} updated")
     return updated
 
 
