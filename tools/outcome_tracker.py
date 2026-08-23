@@ -80,7 +80,7 @@ def update_outcomes():
             
             entry_ts = pd.Timestamp(t0, tz="UTC")
             
-            # ✅ פילטר בטוח – ללא Look‑Ahead
+            # ✅ פילטר בטוח – ללא Look-Ahead
             df = df[df["time"] >= entry_ts].copy()
             
             if df.empty:
