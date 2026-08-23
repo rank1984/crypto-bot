@@ -24,7 +24,6 @@ def _add_column_if_not_exists(cursor, table, column, col_type):
         pass
 
 
-# ✅ גרסה מפורטת עם 4 קטגוריות (כמו במקור)
 def _rs_bucket(rs_val) -> str:
     try:
         rs = float(rs_val or 0)
@@ -40,7 +39,6 @@ def _rs_bucket(rs_val) -> str:
         return "RS>1"
 
 
-# ✅ גרסה מפורטת עם 5 קטגוריות (סקאלת 0-100)
 def _ai_bucket(ai_score) -> str:
     try:
         ai = float(ai_score or 0)
@@ -122,7 +120,7 @@ def init_shadow_db():
             ("ambiguous_bar", "INTEGER DEFAULT 0"),
             ("entry_candle_ambiguous", "INTEGER DEFAULT 0"),
             ("pnl_pct_method", "TEXT"),
-            ("entry_slippage_pct", "REAL"),  # ✅ נוסף לסנכרון slippage
+            ("entry_slippage_pct", "REAL"),
         ]
         for col, typ in new_columns:
             _add_column_if_not_exists(c, "shadow_trades", col, typ)
@@ -278,7 +276,7 @@ def update_open_trades():
 
 
 # =============================================
-# ✅ פונקציות מתוקנות לתאימות עם telegram_commands.py
+# פונקציות לתאימות עם telegram_commands.py
 # =============================================
 
 def mark_buy_intent(symbol: str):
