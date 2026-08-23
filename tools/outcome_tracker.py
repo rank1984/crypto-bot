@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Outcome Tracker v8.5
+CRYPTO-BOT Elite — Outcome Tracker v8.6
 Single Source of Truth for trade outcomes.
 Uses engines.exit_simulator to perfectly mirror live trading limits and exits.
 """
@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from utils.logger import get_logger
 from storage.candle_cache import get_candles_range
-from engines.exit_simulator import simulate_trade_path  # ✅ תיקון: הקובץ נמצא תחת engines
+from engines.exit_simulator import simulate_trade_path
 
 log = get_logger("outcome_tracker")
 
@@ -46,13 +46,13 @@ def update_outcomes():
     """).fetchall()
 
     executed_count = sum(1 for r in rows if safe_get(r, "was_executed", 0))
-    log.info(f"Outcome tracker V8.5: {len(rows)} open outcomes ({executed_count} manually executed)")
+    log.info(f"Outcome tracker V8.6: {len(rows)} open outcomes ({executed_count} manually executed)")
 
     updated = 0
     no_candles = 0
 
-    # ✅ now_ts – משמש לבדיקת Timeout אמיתי ב-exit_simulator
-    now_ts = pd.Timestamp(datetime.now(timezone.utc), tz="UTC")
+    # ✅ תיקון: יצירת Timestamp UTC ללא התנגשות timezone
+    now_ts = pd.Timestamp.now('UTC')
 
     for row in rows:
         try:
@@ -90,7 +90,7 @@ def update_outcomes():
                 continue
 
             # ==========================================================
-            # אבחון entry_candle_ambiguous (מחושב בנפרד, לא משפיע על הסימולציה)
+            # אבחון entry_candle_ambiguous (מחושב בנפרד)
             # ==========================================================
             entry_candle_ambiguous = 0
             df_diag = get_candles_range(symbol, ts_str)
@@ -141,7 +141,7 @@ def update_outcomes():
                 first_outcome_type, ambiguous_bar, entry_candle_ambiguous,
                 datetime.utcnow().isoformat(),
                 pnl_pct, pnl_r, mfe_r, mae_r,
-                "simulated_v8.5",
+                "simulated_v8.6",
                 row["id"]
             ))
 
@@ -153,7 +153,7 @@ def update_outcomes():
     conn.commit()
     conn.close()
 
-    log.info(f"Outcome tracker V8.5 complete: {updated}/{len(rows)} updated")
+    log.info(f"Outcome tracker V8.6 complete: {updated}/{len(rows)} updated")
     return updated
 
 
