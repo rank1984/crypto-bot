@@ -1,163 +1,261 @@
-import sqlite3, math, os
+"""
+learning_dashboard.py — Realized EV Dashboard with Data Quality & Statistical Validation
+"""
+import os
+import sqlite3
+import pandas as pd
+import numpy as np
+from datetime import datetime, timezone
 from utils.logger import get_logger
+from scipy import stats
 
 log = get_logger("learning_dashboard")
 DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
 
-BASE_WHERE = "outcome_status='FINAL' AND decision='BUY' AND outcome_checked=1"
+
+def _mean_ci(data, confidence=0.95):
+    """רווח סמך לממוצע"""
+    if len(data) == 0:
+        return None, None, None
+    arr = np.array(data)
+    mean = np.mean(arr)
+    sem = stats.sem(arr) if len(arr) > 1 else 0
+    if sem == 0:
+        return mean, mean, mean
+    ci = stats.t.interval(confidence, len(arr)-1, loc=mean, scale=sem)
+    return mean, ci[0], ci[1]
 
 
-def _mean_ci(vals, z=1.96):
-    n = len(vals)
-    if n < 2:
-        return None, None
-    m = sum(vals) / n
-    se = math.sqrt(sum((x - m) ** 2 for x in vals) / (n - 1)) / math.sqrt(n) if n > 1 else 0
-    return m, (m - z * se, m + z * se)
+def _format_ci(ci_tuple):
+    if ci_tuple is None:
+        return "N/A"
+    mean, low, high = ci_tuple
+    return f"{mean:.2f}%  (95%CI {low:.2f}-{high:.2f})"
 
 
-def _segment_stats(cur, group_col, extra_where="", order_by=None):
-    """
-    מחזיר per-segment: n, TP1 rate, Win rate, Avg PnL, Avg R, EV, Profit Factor
-    """
-    where = f"{BASE_WHERE} AND pnl_pct IS NOT NULL"
-    if extra_where:
-        where += f" AND {extra_where}"
-
-    rows = cur.execute(f"""
-        SELECT {group_col} as seg, pnl_pct, pnl_r, outcome_tp1_hit
-        FROM shadow_trades
-        WHERE {where}
-    """).fetchall()
-
-    groups = {}
-    for r in rows:
-        seg = r["seg"] if r["seg"] is not None else "UNKNOWN"
-        groups.setdefault(seg, []).append(r)
-
-    results = []
-    for seg, items in groups.items():
-        n = len(items)
-        pnl_vals = [i["pnl_pct"] for i in items]
-        r_vals = [i["pnl_r"] for i in items if i["pnl_r"] is not None]
-        tp1_rate = sum(i["outcome_tp1_hit"] for i in items) / n if n else 0
-        win_rate = sum(1 for p in pnl_vals if p > 0) / n if n else 0
-        avg_pnl = sum(pnl_vals) / n if n else 0
-        avg_r = sum(r_vals) / len(r_vals) if r_vals else None
-
-        wins = [p for p in pnl_vals if p > 0]
-        losses = [abs(p) for p in pnl_vals if p < 0]
-        pf = (sum(wins) / sum(losses)) if losses and sum(losses) > 0 else None
-
-        results.append({
-            "segment": seg, "n": n, "tp1_rate": tp1_rate, "win_rate": win_rate,
-            "avg_pnl": avg_pnl, "avg_r": avg_r, "pf": pf,
-        })
-
-    if order_by:
-        results.sort(key=lambda x: order_by(x["segment"]))
-    return results
-
-
-def _fmt_segment_line(label, s):
-    pf_str = f"{s['pf']:.2f}" if s["pf"] is not None else "N/A"
-    r_str = f"{s['avg_r']:.2f}R" if s["avg_r"] is not None else "n/a"
-    return (f"  {label:12s}: n={s['n']:3d}  TP1={s['tp1_rate']*100:5.1f}%  "
-            f"Win={s['win_rate']*100:5.1f}%  AvgPnL={s['avg_pnl']:6.2f}%  "
-            f"AvgR={r_str:>7s}  PF={pf_str}")
-
-
-def run_dashboard():
+def run_dashboard(verbose=True):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    total = cur.execute(f"SELECT COUNT(*) as cnt FROM shadow_trades WHERE {BASE_WHERE}").fetchone()["cnt"]
+    # ============================================================
+    # 1. שליפת נתונים בסיסיים
+    # ============================================================
+    rows = cur.execute("""
+        SELECT 
+            id, symbol, decision, setup, 
+            entry_price, tp1, tp2, sl,
+            ai_score, rs_1h,
+            outcome_status, outcome_checked,
+            outcome_tp1_hit, outcome_tp2_hit, outcome_sl_hit,
+            pnl_pct, pnl_r,
+            outcome_mfe, outcome_mae,
+            was_executed, execution_timestamp,
+            ambiguous_bar, entry_candle_ambiguous,
+            rs_bucket, ai_bucket,
+            ts
+        FROM shadow_trades 
+        WHERE outcome_status = 'FINAL' AND outcome_checked = 1
+        ORDER BY id
+    """).fetchall()
 
-    if total < 5:
-        log.info(f"Dashboard: need >5 checked FINAL trades, have {total}")
-        return ""
+    if not rows:
+        log.warning("No FINAL trades found")
+        return
 
-    tp1_rate = cur.execute(f"SELECT AVG(outcome_tp1_hit) FROM shadow_trades WHERE {BASE_WHERE}").fetchone()[0]
+    df = pd.DataFrame([dict(r) for r in rows])
 
-    mfe_vals = [r[0] for r in cur.execute(f"SELECT outcome_mfe FROM shadow_trades WHERE {BASE_WHERE} AND outcome_mfe IS NOT NULL")]
-    mae_vals = [r[0] for r in cur.execute(f"SELECT outcome_mae FROM shadow_trades WHERE {BASE_WHERE} AND outcome_mae IS NOT NULL")]
-    pnl_vals = [r[0] for r in cur.execute(f"SELECT pnl_pct FROM shadow_trades WHERE {BASE_WHERE} AND pnl_pct IS NOT NULL")]
-    r_vals = [r[0] for r in cur.execute(f"SELECT pnl_r FROM shadow_trades WHERE {BASE_WHERE} AND pnl_r IS NOT NULL")]
+    # ============================================================
+    # 2. Data Quality Metrics
+    # ============================================================
+    total = len(df)
+    ambiguous_bar_count = df['ambiguous_bar'].sum() if 'ambiguous_bar' in df else 0
+    entry_ambiguous_count = df['entry_candle_ambiguous'].sum() if 'entry_candle_ambiguous' in df else 0
+    executed_count = df['was_executed'].sum() if 'was_executed' in df else 0
+    executed_but_no_time = len(df[(df['was_executed'] == 1) & (df['execution_timestamp'].isna())]) if 'execution_timestamp' in df else 0
+    no_execution_data = total - executed_count
 
-    avg_mfe, ci_mfe = _mean_ci(mfe_vals)
-    avg_mae, ci_mae = _mean_ci(mae_vals)
-    avg_pnl, ci_pnl = _mean_ci(pnl_vals)
-    avg_r = sum(r_vals) / len(r_vals) if r_vals else None
+    # ============================================================
+    # 3. פילוח לפי RS Buckets + CI
+    # ============================================================
+    rs_buckets = df.groupby('rs_bucket').agg(
+        n=('id', 'count'),
+        tp1_rate=('outcome_tp1_hit', lambda x: (x.sum() / len(x) * 100) if len(x) > 0 else 0),
+        win_rate=('pnl_pct', lambda x: (sum(1 for v in x if v > 0) / len(x) * 100) if len(x) > 0 else 0),
+        avg_pnl=('pnl_pct', 'mean'),
+        avg_r=('pnl_r', 'mean'),
+        pf=('pnl_pct', lambda x: -sum(v for v in x if v < 0) / sum(v for v in x if v > 0) if sum(v for v in x if v > 0) > 0 else 0)
+    ).reset_index()
 
-    COST = 0.2
-    realized_ev = avg_pnl or 0.0
-    net_ev = realized_ev - COST
+    # הוספת CI ל-AvgPnL
+    rs_ci = []
+    for bucket in rs_buckets['rs_bucket']:
+        data = df[df['rs_bucket'] == bucket]['pnl_pct'].dropna().tolist()
+        ci = _mean_ci(data)
+        rs_ci.append(ci)
+    rs_buckets['ci'] = rs_ci
 
-    wins = [x for x in pnl_vals if x > 0]
-    losses = [abs(x) for x in pnl_vals if x < 0]
-    pf = (sum(wins) / sum(losses)) if losses and sum(losses) > 0 else None
+    # ============================================================
+    # 4. פילוח לפי AI Buckets + CI
+    # ============================================================
+    ai_buckets = df.groupby('ai_bucket').agg(
+        n=('id', 'count'),
+        tp1_rate=('outcome_tp1_hit', lambda x: (x.sum() / len(x) * 100) if len(x) > 0 else 0),
+        win_rate=('pnl_pct', lambda x: (sum(1 for v in x if v > 0) / len(x) * 100) if len(x) > 0 else 0),
+        avg_pnl=('pnl_pct', 'mean'),
+        avg_r=('pnl_r', 'mean'),
+        pf=('pnl_pct', lambda x: -sum(v for v in x if v < 0) / sum(v for v in x if v > 0) if sum(v for v in x if v > 0) > 0 else 0)
+    ).reset_index()
 
-    # 🆕 Ambiguous bar warning
-    ambiguous_count = cur.execute(f"SELECT COUNT(*) FROM shadow_trades WHERE {BASE_WHERE} AND ambiguous_bar=1").fetchone()[0]
+    ai_ci = []
+    for bucket in ai_buckets['ai_bucket']:
+        data = df[df['ai_bucket'] == bucket]['pnl_pct'].dropna().tolist()
+        ci = _mean_ci(data)
+        ai_ci.append(ci)
+    ai_buckets['ci'] = ai_ci
 
-    lines = ["=" * 60, "   LEARNING DASHBOARD (Realized EV — Simulated Partial Exits)", "=" * 60]
-    lines.append(f"Trades: {total}  TP1 Rate: {tp1_rate*100:.1f}%")
-    if avg_mfe is not None: lines.append(f"Avg MFE: {avg_mfe:.1f}%  (95%CI {ci_mfe[0]:.1f}-{ci_mfe[1]:.1f})")
-    if avg_mae is not None: lines.append(f"Avg MAE: {avg_mae:.1f}%  (95%CI {ci_mae[0]:.1f}-{ci_mae[1]:.1f})")
-    if avg_pnl is not None: lines.append(f"Avg PnL: {avg_pnl:.2f}%  (95%CI {ci_pnl[0]:.2f}-{ci_pnl[1]:.2f})")
-    if avg_r is not None: lines.append(f"Avg R: {avg_r:.2f}R")
-    lines.append(f"Realized EV: {realized_ev:.2f}%  |  Net EV (cost {COST}%): {net_ev:.2f}%")
-    lines.append(f"Profit Factor: {pf:.2f}" if pf is not None else "Profit Factor: N/A")
-    if ambiguous_count:
-        lines.append(f"⚠️  Ambiguous bars (TP&SL same candle, SL assumed first): {ambiguous_count}/{total}")
+    # ============================================================
+    # 5. פילוח לפי Setup Type + CI
+    # ============================================================
+    setup_buckets = df.groupby('setup').agg(
+        n=('id', 'count'),
+        tp1_rate=('outcome_tp1_hit', lambda x: (x.sum() / len(x) * 100) if len(x) > 0 else 0),
+        win_rate=('pnl_pct', lambda x: (sum(1 for v in x if v > 0) / len(x) * 100) if len(x) > 0 else 0),
+        avg_pnl=('pnl_pct', 'mean'),
+        avg_r=('pnl_r', 'mean'),
+        pf=('pnl_pct', lambda x: -sum(v for v in x if v < 0) / sum(v for v in x if v > 0) if sum(v for v in x if v > 0) > 0 else 0)
+    ).reset_index()
 
-    # 🆕 RS Bucket — עכשיו עם EV/PF/Win מלא, לא רק TP1
-    rs_order = {"RS<0": 0, "RS_0_0.5": 1, "RS_0.5_1": 2, "RS>1": 3}
-    lines.append("\nRS Buckets:")
-    for s in _segment_stats(cur, "rs_bucket", order_by=lambda x: rs_order.get(x, 99)):
-        lines.append(_fmt_segment_line(s["segment"], s))
+    setup_ci = []
+    for setup in setup_buckets['setup']:
+        data = df[df['setup'] == setup]['pnl_pct'].dropna().tolist()
+        ci = _mean_ci(data)
+        setup_ci.append(ci)
+    setup_buckets['ci'] = setup_ci
 
-    # 🆕 AI Bucket
-    ai_order = {"AI_0_20": 0, "AI_20_40": 1, "AI_40_60": 2, "AI_60_80": 3, "AI_80_100": 4}
-    lines.append("\nAI Score Buckets:")
-    for s in _segment_stats(cur, "ai_bucket", order_by=lambda x: ai_order.get(x, 99)):
-        lines.append(_fmt_segment_line(s["segment"], s))
+    # ============================================================
+    # 6. סטטיסטיקה כללית (עם CI)
+    # ============================================================
+    all_pnl = df['pnl_pct'].dropna().tolist()
+    all_mfe = df['outcome_mfe'].dropna().tolist()
+    all_mae = df['outcome_mae'].dropna().tolist()
+    all_r = df['pnl_r'].dropna().tolist()
 
-    # 🆕 Setup
-    lines.append("\nSetup Type:")
-    for s in _segment_stats(cur, "setup", order_by=lambda x: x):
-        lines.append(_fmt_segment_line(s["segment"], s))
+    pnl_ci = _mean_ci(all_pnl)
+    mfe_ci = _mean_ci(all_mfe)
+    mae_ci = _mean_ci(all_mae)
+    r_ci = _mean_ci(all_r)
 
-    # 🆕 Model EV vs Human EV (executed בפועל בלבד)
-    executed_pnl = [r[0] for r in cur.execute(
-        f"SELECT pnl_pct FROM shadow_trades WHERE {BASE_WHERE} AND pnl_pct IS NOT NULL AND was_executed=1"
-    )]
-    slippage_vals = [r[0] for r in cur.execute(
-        f"SELECT entry_slippage_pct FROM shadow_trades WHERE {BASE_WHERE} AND was_executed=1 AND entry_slippage_pct IS NOT NULL"
-    )]
-    delay_vals = [r[0] for r in cur.execute(
-        f"SELECT execution_delay_sec FROM shadow_trades WHERE {BASE_WHERE} AND was_executed=1 AND execution_delay_sec IS NOT NULL"
-    )]
-    skipped = cur.execute(f"SELECT COUNT(*) FROM shadow_trades WHERE {BASE_WHERE} AND was_executed=0").fetchone()[0]
+    # ============================================================
+    # 7. הדפסה
+    # ============================================================
+    print("=" * 60)
+    print("   LEARNING DASHBOARD (Realized EV — V8.6 with Data Quality)")
+    print("=" * 60)
 
-    lines.append("\nModel EV vs Human Execution:")
-    lines.append(f"  Model EV (all signals):      {realized_ev:.2f}%  (n={total})")
-    if executed_pnl:
-        human_ev = sum(executed_pnl) / len(executed_pnl)
-        lines.append(f"  Human EV (executed only):    {human_ev:.2f}%  (n={len(executed_pnl)})")
+    print(f"\n📊 General Statistics (n={total})")
+    print(f"  TP1 Rate: {df['outcome_tp1_hit'].mean()*100:.1f}%")
+    print(f"  Avg MFE: {_format_ci(mfe_ci)}")
+    print(f"  Avg MAE: {_format_ci(mae_ci)}")
+    print(f"  Avg PnL: {_format_ci(pnl_ci)}")
+    print(f"  Avg R:    {_format_ci(r_ci)}")
+    print(f"  Realized EV: {pnl_ci[0]:.2f}%  |  Net EV (cost 0.2%): {pnl_ci[0]-0.2:.2f}%")
+    print(f"  Profit Factor: { -sum(v for v in all_pnl if v < 0) / sum(v for v in all_pnl if v > 0) if sum(v for v in all_pnl if v > 0) > 0 else 0:.2f}")
+
+    print("\n" + "=" * 60)
+    print("   DATA QUALITY")
+    print("=" * 60)
+    print(f"  Total FINAL trades:          {total}")
+    print(f"  Ambiguous bars (TP & SL same candle): {ambiguous_bar_count}  ({ambiguous_bar_count/total*100:.1f}%)")
+    print(f"  Entry candle ambiguous:      {entry_ambiguous_count}  ({entry_ambiguous_count/total*100:.1f}%)")
+    print(f"  Executed manually:            {executed_count}  ({executed_count/total*100:.1f}%)")
+    print(f"  Executed but missing timestamp: {executed_but_no_time}  ({executed_but_no_time/total*100:.1f}%)")
+    print(f"  No execution data:           {no_execution_data}  ({no_execution_data/total*100:.1f}%)")
+
+    print("\n" + "=" * 60)
+    print("   RS Buckets (with 95% CI for Avg PnL)")
+    print("=" * 60)
+    print(f"{'Bucket':<12} {'n':>4} {'TP1%':>6} {'Win%':>6} {'AvgPnL':>8} {'CI (95%)':>16} {'AvgR':>6} {'PF':>6}")
+    print("-" * 70)
+    for _, row in rs_buckets.iterrows():
+        ci = row['ci']
+        ci_str = f"{ci[0]:.2f}%  [{ci[1]:.2f}-{ci[2]:.2f}]" if ci[0] is not None else "N/A"
+        print(f"{row['rs_bucket']:<12} {row['n']:>4} {row['tp1_rate']:>6.1f} {row['win_rate']:>6.1f} {row['avg_pnl']:>8.2f} {ci_str:>16} {row['avg_r']:>6.2f} {row['pf']:>6.2f}")
+
+    print("\n" + "=" * 60)
+    print("   AI Score Buckets (with 95% CI for Avg PnL)")
+    print("=" * 60)
+    print(f"{'Bucket':<12} {'n':>4} {'TP1%':>6} {'Win%':>6} {'AvgPnL':>8} {'CI (95%)':>16} {'AvgR':>6} {'PF':>6}")
+    print("-" * 70)
+    for _, row in ai_buckets.iterrows():
+        ci = row['ci']
+        ci_str = f"{ci[0]:.2f}%  [{ci[1]:.2f}-{ci[2]:.2f}]" if ci[0] is not None else "N/A"
+        print(f"{row['ai_bucket']:<12} {row['n']:>4} {row['tp1_rate']:>6.1f} {row['win_rate']:>6.1f} {row['avg_pnl']:>8.2f} {ci_str:>16} {row['avg_r']:>6.2f} {row['pf']:>6.2f}")
+
+    print("\n" + "=" * 60)
+    print("   Setup Type (with 95% CI for Avg PnL)")
+    print("=" * 60)
+    print(f"{'Setup':<14} {'n':>4} {'TP1%':>6} {'Win%':>6} {'AvgPnL':>8} {'CI (95%)':>16} {'AvgR':>6} {'PF':>6}")
+    print("-" * 70)
+    for _, row in setup_buckets.iterrows():
+        ci = row['ci']
+        ci_str = f"{ci[0]:.2f}%  [{ci[1]:.2f}-{ci[2]:.2f}]" if ci[0] is not None else "N/A"
+        print(f"{row['setup']:<14} {row['n']:>4} {row['tp1_rate']:>6.1f} {row['win_rate']:>6.1f} {row['avg_pnl']:>8.2f} {ci_str:>16} {row['avg_r']:>6.2f} {row['pf']:>6.2f}")
+
+    # ============================================================
+    # 8. מקור העסקאות – ישנות/חדשות (לפי חיתוך 2025-01-01)
+    # ============================================================
+    df['ts'] = pd.to_datetime(df['ts'], utc=True)
+    cutoff = pd.Timestamp('2025-01-01', tz='UTC')
+    old = df[df['ts'] < cutoff]
+    new = df[df['ts'] >= cutoff]
+    print("\n" + "=" * 60)
+    print("   Source of Trades (cutoff: 2025-01-01)")
+    print("=" * 60)
+    print(f"  Old trades (pre-2025): {len(old)}  ({len(old)/total*100:.1f}%)")
+    print(f"  New trades (2025+):   {len(new)}  ({len(new)/total*100:.1f}%)")
+    if len(old) > 0:
+        old_ev = old['pnl_pct'].mean()
+        old_pf = -old[old['pnl_pct']<0]['pnl_pct'].sum() / old[old['pnl_pct']>0]['pnl_pct'].sum() if old[old['pnl_pct']>0]['pnl_pct'].sum() > 0 else 0
+        print(f"    Old EV: {old_ev:.2f}%  |  Old PF: {old_pf:.2f}")
+    if len(new) > 0:
+        new_ev = new['pnl_pct'].mean()
+        new_pf = -new[new['pnl_pct']<0]['pnl_pct'].sum() / new[new['pnl_pct']>0]['pnl_pct'].sum() if new[new['pnl_pct']>0]['pnl_pct'].sum() > 0 else 0
+        print(f"    New EV: {new_ev:.2f}%  |  New PF: {new_pf:.2f}")
+
+    # ============================================================
+    # 9. השוואת RS>1 – ישנות מול חדשות
+    # ============================================================
+    print("\n" + "=" * 60)
+    print("   RS>1 Performance Split (Old vs New)")
+    print("=" * 60)
+    rs1_old = old[old['rs_bucket'] == 'RS>1']
+    rs1_new = new[new['rs_bucket'] == 'RS>1']
+    if len(rs1_old) > 0:
+        print(f"  RS>1 old: n={len(rs1_old)}  TP1={rs1_old['outcome_tp1_hit'].mean()*100:.1f}%  EV={rs1_old['pnl_pct'].mean():.2f}%")
     else:
-        lines.append("  Human EV: no executed trades tracked yet (waiting on /buy /done data)")
-    if slippage_vals:
-        avg_slip = sum(slippage_vals) / len(slippage_vals)
-        lines.append(f"  Avg Entry Slippage:           {avg_slip:+.3f}%")
-    if delay_vals:
-        avg_delay = sum(delay_vals) / len(delay_vals)
-        lines.append(f"  Avg Execution Delay:          {avg_delay:.0f} sec")
-    lines.append(f"  Skipped signals:              {skipped}/{total}")
+        print("  RS>1 old: no trades")
+    if len(rs1_new) > 0:
+        print(f"  RS>1 new: n={len(rs1_new)}  TP1={rs1_new['outcome_tp1_hit'].mean()*100:.1f}%  EV={rs1_new['pnl_pct'].mean():.2f}%")
+    else:
+        print("  RS>1 new: no trades")
 
-    lines.append("=" * 60)
+    # ============================================================
+    # 10. התראת Ambiguous Bars
+    # ============================================================
+    if ambiguous_bar_count / total > 0.15:
+        print("\n" + "!" * 60)
+        print("⚠️  WARNING: Ambiguous bars > 15% — consider checking candle resolution / entry logic")
+        print("!" * 60)
 
-    report = "\n".join(lines)
-    log.info(report)
-    return report
+    if entry_ambiguous_count / total > 0.20:
+        print("\n" + "!" * 60)
+        print("⚠️  WARNING: Entry candle ambiguous > 20% — consider adjusting entry alignment")
+        print("!" * 60)
+
+    conn.close()
+    return df
+
+
+if __name__ == "__main__":
+    run_dashboard()
