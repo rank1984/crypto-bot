@@ -74,7 +74,22 @@ def init_shadow_db():
             ("outcome_highest_price", "REAL"), ("outcome_lowest_price", "REAL"),
             ("pnl_r", "REAL"), ("mfe_r", "REAL"), ("mae_r", "REAL"),
             ("exit_time", "TEXT"), ("direction", "TEXT DEFAULT 'LONG'"),
-            ("shadow_tags", "TEXT DEFAULT '[]'"), ("shadow_rs", "TEXT")
+            ("shadow_tags", "TEXT DEFAULT '[]'"), ("shadow_rs", "TEXT"),
+            # ═══════════════════════════════════════════════════════
+            # תוספות V8 – 12 עמודות חדשות לתיקון ה-Outcome Tracker
+            # ═══════════════════════════════════════════════════════
+            ("was_executed", "INTEGER DEFAULT 0"),
+            ("execution_timestamp", "TEXT"),
+            ("actual_fill_price", "REAL"),
+            ("execution_delay_sec", "REAL"),
+            ("skip_reason", "TEXT"),
+            ("buy_intent_time", "TEXT"),
+            ("rs_bucket", "TEXT"),
+            ("ai_bucket", "TEXT"),
+            ("first_outcome_type", "TEXT"),
+            ("ambiguous_bar", "INTEGER DEFAULT 0"),
+            ("entry_candle_ambiguous", "INTEGER DEFAULT 0"),  # 👈 נוסף כי משתמשים בו ב-UPDATE
+            ("pnl_pct_method", "TEXT"),
         ]
         for col, typ in new_columns:
             _add_column_if_not_exists(c, "shadow_trades", col, typ)
