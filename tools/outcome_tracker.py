@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Outcome Tracker v8.2
+CRYPTO-BOT Elite — Outcome Tracker v8.4
 Single Source of Truth for trade outcomes.
 Uses engines.exit_simulator to perfectly mirror live trading limits and exits.
 """
@@ -33,14 +33,12 @@ def update_outcomes():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    # פונקציית עזר גמישה – מונעת קריסה אם עמודה חסרה (מסיבות סנכרון)
     def safe_get(row, key, default=0):
         try:
             return row[key]
         except (IndexError, KeyError):
             return default
 
-    # רק עסקאות פעילות או בהמתנה
     rows = cur.execute("""
         SELECT * FROM shadow_trades
         WHERE outcome_status IN ('PENDING', 'ACTIVE') AND entry_price > 0
@@ -48,7 +46,7 @@ def update_outcomes():
     """).fetchall()
 
     executed_count = sum(1 for r in rows if safe_get(r, "was_executed", 0))
-    log.info(f"Outcome tracker V8.2: {len(rows)} open outcomes ({executed_count} manually executed)")
+    log.info(f"Outcome tracker V8.4: {len(rows)} open outcomes ({executed_count} manually executed)")
 
     updated = 0
     no_candles = 0
@@ -82,15 +80,30 @@ def update_outcomes():
             
             entry_ts = pd.Timestamp(t0, tz="UTC")
             
-            # 🔴 TIKUN: עיגול למטה ל-5 דקות כדי להכניס את נר הכניסה!
-            floored_entry_ts = entry_ts.floor('5min')
-            df = df[df["time"] >= floored_entry_ts].copy()
+            # ✅ תיקון: חוזרים לפילטר הבטוח (ללא Look‑Ahead)
+            df = df[df["time"] >= entry_ts].copy()
             
             if df.empty:
                 continue
 
-            # 🔴 סימולציית האמת שולטת על התוצאה (MFE/MAE יחושבו רק עד היציאה)
-            pnl_pct, exit_events, ambiguous_bar, entry_ambiguous, mfe_pct, mae_pct = simulate_trade_path(
+            # ==========================================================
+            # ✅ אבחון entry_candle_ambiguous (מחושב בנפרד, לא משפיע על הסימולציה)
+            # ==========================================================
+            entry_candle_ambiguous = 0
+            df_diag = get_candles_range(symbol, ts_str)
+            if df_diag is not None and not df_diag.empty:
+                df_diag["time"] = pd.to_datetime(df_diag["time"], utc=True, errors="coerce")
+                floored = entry_ts.floor('5min')
+                # אם שעת הכניסה אינה בדיוק על פתיחת נר (כלומר, יש חלקי נר לפני הכניסה)
+                if floored < entry_ts:
+                    match = df_diag[df_diag["time"] == floored]
+                    if not match.empty:
+                        entry_candle_ambiguous = 1
+
+            # ==========================================================
+            # סימולציה – מקבלת 5 ערכים (ללא entry_candle_ambiguous)
+            # ==========================================================
+            pnl_pct, exit_events, ambiguous_bar, mfe_pct, mae_pct = simulate_trade_path(
                 df=df, entry_price=entry, sl=sl, tp1=tp1, tp2=tp2, entry_ts=entry_ts, timeout_hours=TIMEOUT_HOURS
             )
 
@@ -99,20 +112,16 @@ def update_outcomes():
             mfe_r = round(mfe_pct / risk_pct, 3) if risk_pct else None
             mae_r = round(abs(mae_pct) / risk_pct, 3) if risk_pct else None
 
-            # חילוץ מידע מאירועי היציאה
             first_outcome_type = exit_events[0][0] if exit_events else None
             is_final = first_outcome_type in ("SL", "TIMEOUT", "END_OF_DATA")
-            
-            # אם הגענו לסוף ולמעשה נשארנו עם שיירים (Runner) בסטטוס END_OF_DATA שטרם נסגר טכנית
             new_status = "FINAL" if is_final else "ACTIVE"
-            if len(exit_events) > 0 and sum(ev[2] for ev in exit_events) >= 0.99: # הפוזיציה כולה נסגרה
+            if len(exit_events) > 0 and sum(ev[2] for ev in exit_events) >= 0.99:
                 new_status = "FINAL"
 
             tp1_hit = 1 if any(ev[0] == "TP1" for ev in exit_events) else 0
             tp2_hit = 1 if any(ev[0] == "TP2" for ev in exit_events) else 0
             sl_hit = 1 if any(ev[0] == "SL" for ev in exit_events) else 0
 
-            # עדכון DB (כל העמודות קיימות כעת בזכות התיקון ב-shadow_mode.py)
             cur.execute("""
                 UPDATE shadow_trades
                 SET
@@ -127,10 +136,10 @@ def update_outcomes():
                 tp1_hit, tp2_hit, sl_hit,
                 mfe_pct, abs(mae_pct), mfe_pct, mae_pct,
                 new_status, 1 if new_status == "FINAL" else 0,
-                first_outcome_type, ambiguous_bar, entry_ambiguous,
+                first_outcome_type, ambiguous_bar, entry_candle_ambiguous,
                 datetime.utcnow().isoformat(),
                 pnl_pct, pnl_r, mfe_r, mae_r,
-                "simulated_v8.2",
+                "simulated_v8.4",
                 row["id"]
             ))
 
@@ -142,7 +151,7 @@ def update_outcomes():
     conn.commit()
     conn.close()
 
-    log.info(f"Outcome tracker V8.2 complete: {updated}/{len(rows)} updated")
+    log.info(f"Outcome tracker V8.4 complete: {updated}/{len(rows)} updated")
     return updated
 
 
