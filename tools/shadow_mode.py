@@ -24,6 +24,7 @@ def _add_column_if_not_exists(cursor, table, column, col_type):
         pass
 
 
+# ✅ 4 קטגוריות RS (סקאלת 0-1+)
 def _rs_bucket(rs_val) -> str:
     try:
         rs = float(rs_val or 0)
@@ -39,6 +40,7 @@ def _rs_bucket(rs_val) -> str:
         return "RS>1"
 
 
+# ✅ 5 קטגוריות AI (סקאלת 0-100)
 def _ai_bucket(ai_score) -> str:
     try:
         ai = float(ai_score or 0)
@@ -185,7 +187,7 @@ def save_shadow_signal(coin: dict, signal: str):
                     ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
                     probability, market_health, news_score, btc_regime, funding,
                     shadow_tags, shadow_rs, rs_bucket, ai_bucket
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts, symbol, signal, coin.get("entry_setup", ""), coin.get("entry_price", coin.get("price", 0)),
                 coin.get("trigger_price", 0), coin.get("entry_tp1", 0), coin.get("entry_tp2", 0), coin.get("entry_sl", 0),
@@ -228,13 +230,14 @@ def record_trade(coin: dict, signal):
 
     try:
         with _conn() as c:
+            # ✅ תיקון: 27 עמודות = 27 placeholders = 27 ערכים
             c.execute('''
                 INSERT INTO shadow_trades (
                     ts, symbol, decision, setup, entry_price, trigger_price, tp1, tp2, sl,
                     ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
                     probability, market_health, news_score, btc_regime, funding, trade_state,
                     shadow_tags, shadow_rs, rs_bucket, ai_bucket
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts, symbol, signal.decision, getattr(signal, "setup_type", ""),
                 getattr(signal, "entry", 0.0), coin.get("trigger_price", 0.0),
@@ -276,11 +279,11 @@ def update_open_trades():
 
 
 # =============================================
-# פונקציות לתאימות עם telegram_commands.py
+# פונקציות לפקודות טלגרם (תואמות ל-telegram_commands.py)
 # =============================================
 
 def mark_buy_intent(symbol: str):
-    """נקרא מ-/buy — מסמן רק את רגע לחיצת הקנייה, לא נוגע ב-entry_price המקורי."""
+    """נקרא מ-/buy — מסמן רק את רגע לחיצת הקנייה, לא נוגע ב-entry_price."""
     symbol = symbol.upper().strip()
     candidates = [symbol] if symbol.endswith("USDT") else [symbol, f"{symbol}USDT"]
     now = datetime.now(timezone.utc)
@@ -305,7 +308,7 @@ def mark_buy_intent(symbol: str):
 
 def confirm_manual_execution(symbol: str, actual_fill_price: float,
                               executed: bool = True, skip_reason: str = None):
-    """נקרא מ-/done או /skip — לפי symbol, כמו שהודעות הטלגרם בפועל שולחות."""
+    """נקרא מ-/done או /skip — לפי symbol."""
     symbol = symbol.upper().strip()
     candidates = [symbol] if symbol.endswith("USDT") else [symbol, f"{symbol}USDT"]
     now = datetime.now(timezone.utc)
@@ -326,7 +329,6 @@ def confirm_manual_execution(symbol: str, actual_fill_price: float,
                 log.warning(f"confirm_manual_execution: no open signal found for {symbol}")
                 return
 
-            # עיכוב נמדד מ-buy_intent_time אם קיים (מדויק יותר), אחרת מ-ts (זמן האות)
             ref_ts = row["buy_intent_time"] or row["ts"]
             ref_dt = datetime.fromisoformat(ref_ts)
             delay_sec = (now - ref_dt).total_seconds()
