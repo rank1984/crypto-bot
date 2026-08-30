@@ -123,6 +123,10 @@ def init_shadow_db():
             ("entry_candle_ambiguous", "INTEGER DEFAULT 0"),
             ("pnl_pct_method", "TEXT"),
             ("entry_slippage_pct", "REAL"),
+            # עמודות התראות יציאה
+            ("tp1_alert_sent", "INTEGER DEFAULT 0"),
+            ("tp2_alert_sent", "INTEGER DEFAULT 0"),
+            ("sl_alert_sent", "INTEGER DEFAULT 0"),
         ]
         for col, typ in new_columns:
             _add_column_if_not_exists(c, "shadow_trades", col, typ)
@@ -307,7 +311,7 @@ def mark_buy_intent(symbol: str):
 
 
 def confirm_manual_execution(symbol: str, actual_fill_price: float,
-                              executed: bool = True, skip_reason: str = None):
+                             executed: bool = True, skip_reason: str = None):
     """נקרא מ-/done או /skip — לפי symbol."""
     symbol = symbol.upper().strip()
     candidates = [symbol] if symbol.endswith("USDT") else [symbol, f"{symbol}USDT"]
@@ -371,46 +375,14 @@ def export_shadow_csv():
     filepath = "shadow_results.csv"
     try:
         with _conn() as c:
-            trades = c.execute("SELECT * FROM shadow_trades ORDER BY id DESC").fetchall()
-
-        with open(filepath, mode='w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                "Time (Israel)", "Coin", "Decision", "Setup", "Entry", "Trigger Price", "TP1", "TP2", "SL",
-                "AI Score", "Final Score", "Probability", "Flow", "Pre", "OI", "Funding", "RS",
-                "Compression", "Market Health", "News Score", "BTC Regime",
-                "Status", "Reason", "Exit Reason", "PnL", "PnL%", "PnL R",
-                "Max Profit%", "Max DD%", "Trade State", "Exit Price", "Duration (m)",
-                "Trigger Hit", "TP1 Hit", "TP2 Hit", "SL Hit",
-                "Max Up%", "Max Down%", "MFE%", "MAE%", "Outcome Checked", "Outcome Status",
-                "Shadow RS", "Shadow Tags", "RS Bucket", "AI Bucket", "Slippage%"
-            ])
-
-            for t in trades:
-                t = dict(t)
-                dt_utc = datetime.fromisoformat(t["ts"]) if t.get("ts") else None
-                dt_str = (dt_utc + timedelta(hours=3)).strftime("%H:%M:%S") if dt_utc else ""
-                writer.writerow([
-                    dt_str, t.get("symbol", ""), t.get("decision", ""), t.get("setup", ""),
-                    t.get("entry_price", 0), t.get("trigger_price", 0), t.get("tp1", 0),
-                    t.get("tp2", 0), t.get("sl", 0), t.get("ai_score", 0),
-                    t.get("final_score", 0) if "final_score" in t else 0, t.get("probability", 0),
-                    t.get("flow_score", 0), t.get("pre_score", 0), t.get("oi_change", 0),
-                    t.get("funding", 0), t.get("rs_1h", 0), t.get("is_compressed", 0),
-                    t.get("market_health", 50), t.get("news_score", 50), t.get("btc_regime", ""),
-                    t.get("status", ""), t.get("reason", ""), t.get("exit_reason", ""),
-                    t.get("pnl", 0), t.get("pnl_pct", 0), t.get("pnl_r", 0),
-                    t.get("max_profit_pct", 0), t.get("max_drawdown_pct", 0), t.get("trade_state", ""),
-                    t.get("exit_price", 0), t.get("duration_minutes", 0),
-                    t.get("outcome_trigger_hit", 0), t.get("outcome_tp1_hit", 0),
-                    t.get("outcome_tp2_hit", 0), t.get("outcome_sl_hit", 0),
-                    t.get("outcome_max_up_pct", 0), t.get("outcome_max_down_pct", 0),
-                    t.get("outcome_mfe", 0), t.get("outcome_mae", 0),
-                    t.get("outcome_checked", 0), t.get("outcome_status", ""),
-                    t.get("shadow_rs", "UNKNOWN"), t.get("shadow_tags", ""),
-                    t.get("rs_bucket", ""), t.get("ai_bucket", ""),
-                    t.get("entry_slippage_pct", "")
-                ])
-        log.info(f"CSV Exported: {os.path.abspath(filepath)}")
+            trades = c.execute("SELECT * FROM shadow_trades").fetchall()
+            if not trades:
+                return
+            keys = trades[0].keys()
+            with open(filepath, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(keys)
+                for t in trades:
+                    writer.writerow([t[k] for k in keys])
     except Exception as e:
-        log.error(f"Error exporting shadow CSV: {e}")
+        log.error(f"export_shadow_csv failed: {e}")
