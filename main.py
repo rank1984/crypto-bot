@@ -322,7 +322,7 @@ def run_scan() -> None:
     lines.append("")
 
     lines.append("🏆 דירוג 5 מובילים:")
-    lines.append("מטבע        AI   הסתברות   מרחק לטריגר")
+    lines.append("מטבע     AI   הסתברות   מרחק לטריגר")
     lines.append("-" * 44)
     for c in top[:5]:
         sym = c['symbol'].replace('USDT', '')[:12].ljust(12)
@@ -391,6 +391,13 @@ def run_scan() -> None:
         ensure_candles_for_open_trades()
     except Exception as e:
         log.error(f"Ensure candles error: {e}", exc_info=True)
+
+    # ── 9b. בדיקה ושליחת התראות יציאה (TP/SL) ───────────────────────────────────
+    try:
+        from tools.exit_alerts import check_exit_alerts
+        check_exit_alerts()
+    except Exception as e:
+        log.error(f"Exit alerts error: {e}", exc_info=True)
 
     # ── 10. Outcome Tracking (מקור אמת יחיד) ──────────────────────────────────
     try:
