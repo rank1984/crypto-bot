@@ -420,6 +420,17 @@ def run_scan() -> None:
         lr = run_dashboard()
         if lr:
             log.info(lr)
+
+        import sqlite3
+        conn = sqlite3.connect(os.getenv("DB_PATH", "data/shadow.db"))
+        method_counts = conn.execute("""
+            SELECT pnl_pct_method, COUNT(*) 
+            FROM shadow_trades
+            WHERE decision='BUY' AND outcome_status='FINAL' AND outcome_checked=1
+            GROUP BY pnl_pct_method
+        """).fetchall()
+        log.info(f"pnl_pct_method breakdown: {method_counts}")
+        conn.close()
     except Exception as e:
         log.error(f"Learning dashboard error: {e}", exc_info=True)
 
