@@ -22,13 +22,145 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Run scan
+      - name: Run scan (main pipeline)
         run: python main.py --once
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DB_PATH: ${{ secrets.DB_PATH }}
-          # אם יש משתנים נוספים – הוסף אותם כאן
+          # ✅ תיקון: אם הסוד ריק → השתמש בברירת מחדל
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+
+      # ================================================================
+      #  PHASE 1 – DATA PROVENANCE AUDIT (אחרי הריצה הראשית)
+      # ================================================================
+
+      - name: Audit pnl_pct_method
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "
+          import sqlite3, os
+          DB_PATH = os.getenv('DB_PATH', 'data/shadow.db')
+          conn = sqlite3.connect(DB_PATH)
+          cur = conn.cursor()
+          cur.execute('''
+              SELECT
+                  COALESCE(pnl_pct_method, 'NULL') AS method,
+                  COUNT(*) AS n
+              FROM shadow_trades
+              WHERE decision='BUY'
+                AND outcome_status='FINAL'
+                AND outcome_checked=1
+              GROUP BY pnl_pct_method
+              ORDER BY n DESC
+          ''')
+          print('===== Audit: pnl_pct_method =====')
+          for row in cur.fetchall():
+              print(f'{row[0]:25} : {row[1]}')
+          conn.close()
+          "
+
+      - name: Audit V8 fields (pnl_r, mfe_r, mae_r, outcome_type)
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "
+          import sqlite3, os
+          DB_PATH = os.getenv('DB_PATH', 'data/shadow.db')
+          conn = sqlite3.connect(DB_PATH)
+          cur = conn.cursor()
+          cur.execute('''
+              SELECT
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN pnl_r IS NOT NULL THEN 1 ELSE 0 END) AS has_pnl_r,
+                  SUM(CASE WHEN mfe_r IS NOT NULL THEN 1 ELSE 0 END) AS has_mfe_r,
+                  SUM(CASE WHEN mae_r IS NOT NULL THEN 1 ELSE 0 END) AS has_mae_r,
+                  SUM(CASE WHEN first_outcome_type IS NOT NULL THEN 1 ELSE 0 END) AS has_outcome_type
+              FROM shadow_trades
+              WHERE decision='BUY'
+                AND outcome_status='FINAL'
+                AND outcome_checked=1
+          ''')
+          row = cur.fetchone()
+          print('===== Audit: V8-derived fields =====')
+          print(f'Total FINAL: {row[0]}')
+          print(f'  with pnl_r: {row[1]} ({row[1]*100/row[0]:.1f}%)' if row[0] > 0 else '  with pnl_r: 0')
+          print(f'  with mfe_r: {row[2]} ({row[2]*100/row[0]:.1f}%)' if row[0] > 0 else '  with mfe_r: 0')
+          print(f'  with mae_r: {row[3]} ({row[3]*100/row[0]:.1f}%)' if row[0] > 0 else '  with mae_r: 0')
+          print(f'  with first_outcome_type: {row[4]} ({row[4]*100/row[0]:.1f}%)' if row[0] > 0 else '  with first_outcome_type: 0')
+          conn.close()
+          "
+
+      - name: Reconcile DB vs CSV (342 vs 343)
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "
+          import sqlite3, os, pandas as pd
+          DB_PATH = os.getenv('DB_PATH', 'data/shadow.db')
+          conn = sqlite3.connect(DB_PATH)
+          cur = conn.cursor()
+          cur.execute('''
+              SELECT id, symbol FROM shadow_trades
+              WHERE decision='BUY'
+                AND outcome_status='FINAL'
+                AND outcome_checked=1
+          ''')
+          db_rows = [(r[0], r[1]) for r in cur.fetchall()]
+          conn.close()
+          db_ids = [r[0] for r in db_rows]
+
+          try:
+              df = pd.read_csv('shadow_results.csv')
+              csv_symbols = set(df[df['Decision']=='BUY']['Coin'].astype(str).str.replace('USDT', '').tolist())
+          except:
+              csv_symbols = set()
+
+          db_symbols = set([r[1].replace('USDT', '') for r in db_rows])
+
+          print('===== Reconciliation: DB FINAL vs CSV BUY =====')
+          print(f'DB FINAL count: {len(db_ids)}')
+          print(f'CSV BUY count:  {len(csv_symbols)}')
+          print(f'In DB but not CSV: {db_symbols - csv_symbols}')
+          print(f'In CSV but not DB: {csv_symbols - db_symbols}')
+          "
+
+      # ================================================================
+      #  PHASE 2 – LEGACY REBUILD (אם יש Legacy)
+      # ================================================================
+      # הערה: reset_legacy_finals.py ירוץ רק אם נמצא Legacy.
+      # אם אין Legacy – הוא לא יעשה כלום.
+
+      - name: Reset legacy FINAL trades (if any)
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "
+          from tools.reset_legacy_finals import reset_legacy_finals
+          reset_legacy_finals()
+          "
+
+      - name: Re-run outcome tracker (after reset)
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "from tools.outcome_tracker import update_outcomes; print(update_outcomes())"
+
+      - name: Re-export ML dataset
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "from tools.export_learning_dataset import export_ml_dataset; export_ml_dataset()"
+
+      - name: Re-run dashboard (after rebuild)
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "from tools.learning_dashboard import run_dashboard; print(run_dashboard())"
+
+      # ================================================================
+      #  PHASE 3 – ARTIFACTS (תמיד להעלות)
+      # ================================================================
 
       - name: Upload shadow results
         if: always()
@@ -38,7 +170,6 @@ jobs:
           path: |
             shadow_results.csv
             data/learning_dataset.csv
-            analysis_report.txt
 
       - name: Upload dashboard output
         if: always()
