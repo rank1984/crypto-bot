@@ -1,75 +1,50 @@
-name: 🚀 CRYPTO-BOT
+name: CRYPTO-BOT Scan
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:               # 🔹 הפעלה ידנית מכפתור
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: '0 * * * *'            # 🔹 כל שעה עגולה (00:00, 01:00, ...)
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
-    
-    permissions:
-      contents: write
-      
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          
+          python-version: '3.12'
+
       - name: Install dependencies
-        run: pip install -r requirements.txt
-        
-      - name: Run bot
-        env:
-          TELEGRAM_TOKEN:  ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run scan
         run: python main.py --once
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DB_PATH: ${{ secrets.DB_PATH }}
+          # אם יש משתנים נוספים – הוסף אותם כאן
 
-      - name: 📊 Shadow Rules Analysis
-        run: PYTHONPATH=. python tools/shadow_rules_analysis.py
-
-      - name: 📊 Run Institutional Analysis
-        run: |
-          pip install pandas matplotlib scikit-learn
-          python tools/institutional_analysis.py
-
-      - name: 📄 Upload Analysis Report
-        uses: actions/upload-artifact@v4
+      - name: Upload shadow results
         if: always()
-        with:
-          name: analysis-report
-          path: |
-            analysis_report.txt
-            calibration_curve.png
-          retention-days: 7
-
-      - name: 🚀 Commit and Push Shadow Results
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
-          if [ -f shadow_results.csv ]; then
-            git add data/shadow.db shadow_results.csv
-            git diff --cached --quiet || git commit -m "📈 Auto-update shadow results [skip ci]"
-            git pull --rebase -X ours origin main || true
-            git push origin main
-          else
-            echo "shadow_results.csv not found, skipping commit."
-          fi
-
-      - name: 💾 Save Shadow Mode CSV Logs (Artifact Backup)
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: shadow-results
-          path: shadow_results.csv
-          if-no-files-found: warn
-          retention-days: 3
+          path: |
+            shadow_results.csv
+            data/learning_dataset.csv
+            analysis_report.txt
+
+      - name: Upload dashboard output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-output
+          path: |
+            analysis_report.txt
+            shadow_results.csv
