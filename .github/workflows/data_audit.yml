@@ -1,0 +1,54 @@
+name: Data Availability Audit
+
+on:
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Run Data Availability Audit
+        run: |
+          python -c "
+          import sqlite3, os
+          from scanner.market_data import get_candles
+          import pandas as pd
+          import numpy as np
+
+          DB_PATH = os.getenv('DB_PATH', 'data/shadow.db')
+          conn = sqlite3.connect(DB_PATH)
+          cur = conn.cursor()
+
+          cur.execute('''
+              SELECT DISTINCT symbol FROM shadow_trades
+              WHERE outcome_status IN ('FINAL', 'ACTIVE', 'PENDING')
+              ORDER BY RANDOM() LIMIT 10
+          ''')
+          symbols = [r[0] for r in cur.fetchall()]
+          conn.close()
+
+          print('=== Data Availability Audit ===')
+          print(f'Symbols sampled: {len(symbols)}')
+          print()
+
+          for symbol in symbols:
+              print(f'--- {symbol} ---')
+              for tf in ['1d', '4h']:
+                  try:
+                      df = get_candles(symbol, tf, limit=200)
+                      if df is not None and not df.empty:
+                          n = len(df)
+                          oldest = df['time'].iloc[0] if 'time' in df.columns else 'unknown'
+                          newest = df['time'].iloc[-1] if 'time' in df.columns else 'unknown'
+                          print(f'  {tf}: {n} candles, from {oldest} to {newest}')
+                      else:
+                          print(f'  {tf}: NO DATA')
+                  except Exception as e:
+                      print(f'  {tf}: ERROR - {e}')
+              print()
+          "
