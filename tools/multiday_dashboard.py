@@ -21,8 +21,7 @@ def _mean_ci(values, confidence=0.95):
     data = np.array(values)
     mean = np.mean(data)
     sem = np.std(data, ddof=1) / np.sqrt(len(data))
-    # Use t-distribution approximation
-    z = 1.96 if len(data) >= 30 else 2.0  # conservative for small samples
+    z = 1.96 if len(data) >= 30 else 2.0
     ci = z * sem
     return mean, mean - ci, mean + ci
 
@@ -33,7 +32,14 @@ def run_multiday_dashboard():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    # Fetch all signals with outcomes (non-null outcome_type)
+    # Check if table exists
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='multiday_signals'")
+    if not cur.fetchone():
+        log.info("Multi-Day table not found – no data yet.")
+        conn.close()
+        return None
+
+    # Fetch all signals with outcomes
     rows = cur.execute("""
         SELECT * FROM multiday_signals
         WHERE outcome_type IS NOT NULL AND outcome_type != 'PENDING'
@@ -50,7 +56,6 @@ def run_multiday_dashboard():
 
     n = len(df)
 
-    # Basic metrics for each horizon
     horizons = {
         "24h": {"mfe": "mfe_24h", "mae": "mae_24h", "pnl": "pnl_24h"},
         "48h": {"mfe": "mfe_48h", "mae": "mae_48h", "pnl": "pnl_48h"},
@@ -76,12 +81,10 @@ def run_multiday_dashboard():
         output.append(f"--- {name} ---")
         output.append(f"  Avg PnL: {mean_pnl:.2f}%  (95% CI: {low_pnl:.2f}% – {high_pnl:.2f}%)")
         output.append(f"  Win Rate: {win_rate:.1f}%")
-        # Profit Factor
         profit = pnl_vals[pnl_vals > 0].sum()
         loss = abs(pnl_vals[pnl_vals < 0].sum())
         pf = profit / loss if loss > 0 else float('inf')
         output.append(f"  Profit Factor: {pf:.2f}")
-        # MFE / MAE
         if cols["mfe"] in df.columns and cols["mae"] in df.columns:
             mfe_vals = df[cols["mfe"]].dropna().values
             mae_vals = df[cols["mae"]].dropna().values
@@ -91,7 +94,6 @@ def run_multiday_dashboard():
                 output.append(f"  Avg MFE: {avg_mfe:.2f}%  |  Avg MAE: {avg_mae:.2f}%")
         output.append("")
 
-    # Segmentation by Setup
     output.append("--- By Setup Type ---")
     for setup, group in df.groupby("setup_type"):
         if group.empty:
@@ -103,7 +105,6 @@ def run_multiday_dashboard():
 
     output.append("")
 
-    # Segmentation by Stage
     output.append("--- By Stage ---")
     for stage, group in df.groupby("stage"):
         if group.empty:
@@ -115,7 +116,6 @@ def run_multiday_dashboard():
 
     output.append("")
 
-    # By Exhaustion bucket
     if "exhaustion_score" in df.columns:
         df["exhaustion_bucket"] = pd.cut(
             df["exhaustion_score"],
@@ -133,7 +133,6 @@ def run_multiday_dashboard():
 
         output.append("")
 
-    # Outcome types
     output.append("--- Outcome Types ---")
     for outcome, group in df.groupby("outcome_type"):
         n_g = len(group)
