@@ -416,13 +416,13 @@ def run_scan() -> None:
 
     try:
         from scanner.multiday_engine import run_multiday_scan
-        signals = run_multiday_scan()
+        # ✅ העברת ה-Universe שכבר נבנה (חוסך קריאה מיותרת)
+        signals = run_multiday_scan(symbols)
         if signals:
             log.info(f"Multi-Day scan generated {len(signals)} research signals (Shadow mode)")
     except Exception as e:
         log.error(f"Multi-Day scan error: {e}", exc_info=True)
 
-    # Optional: show Multi-Day dashboard (only if not in GitHub Actions or if log level is verbose)
     try:
         from tools.multiday_dashboard import run_multiday_dashboard
         md_dash = run_multiday_dashboard()
