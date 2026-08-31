@@ -4,6 +4,7 @@ Multi-Day Strategy Engine – Shadow/Research mode only.
 Identifies EARLY/DEVELOPING setups on 1D/4H timeframes.
 """
 
+import sqlite3
 import pandas as pd
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
@@ -13,7 +14,7 @@ from scanner.dynamic_universe import build_dynamic_universe
 from scanner.multiday_features import compute_all_features
 from scanner.multiday_risk import build_risk_params
 from utils.logger import get_logger
-from storage.sqlite_db import get_conn
+from storage.sqlite_db import DB_PATH
 
 log = get_logger("multiday_engine")
 
@@ -29,7 +30,7 @@ TIMEFRAME_4H = "4h"
 def ensure_multiday_table():
     """Create multiday_signals table if it doesn't exist."""
     try:
-        conn = get_conn()
+        conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS multiday_signals (
@@ -270,7 +271,7 @@ def run_multiday_scan():
 
 def save_multiday_signals(signals: List[Dict]):
     """Save signals to multiday_signals table."""
-    conn = get_conn()
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     # Ensure table exists before saving
