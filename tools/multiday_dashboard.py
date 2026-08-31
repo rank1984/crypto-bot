@@ -15,7 +15,6 @@ DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
 
 
 def _mean_ci(values, confidence=0.95):
-    """Calculate mean and 95% confidence interval."""
     if len(values) == 0:
         return 0.0, 0.0, 0.0
     data = np.array(values)
@@ -27,19 +26,16 @@ def _mean_ci(values, confidence=0.95):
 
 
 def run_multiday_dashboard():
-    """Generate and print Multi-Day research dashboard."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    # Check if table exists
     cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='multiday_signals'")
     if not cur.fetchone():
         log.info("Multi-Day table not found – no data yet.")
         conn.close()
         return None
 
-    # Fetch all signals with outcomes
     rows = cur.execute("""
         SELECT * FROM multiday_signals
         WHERE outcome_type IS NOT NULL AND outcome_type != 'PENDING'
