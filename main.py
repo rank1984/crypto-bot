@@ -8,8 +8,7 @@ import signal
 import sys
 import time
 
-from notifier.sender import send_simple_message, send_telegram
-from tools.notification_state import should_send_watch_update
+from notifier.sender import send_simple_message
 from scanner.dynamic_universe import build_dynamic_universe
 from scanner.market_data import get_candles
 from scanner.ranking import rank_universe
@@ -21,7 +20,7 @@ from utils.logger import get_logger
 from scanner.event_engine import get_event_warning, trading_disabled
 from scanner.news_engine import get_market_health, get_news_score
 
-# ── Alt Data & Trending Engine ─────────────────────────────────────────
+# ── שדרוג א: ייבוא מנוע הטרנדינג של CoinGecko ─────────────────────────────────
 from engines.alt_data import get_coingecko_trending, trending_bonus
 
 # ── Circuit Breaker, Trade Quality, Trade Replay ──────────────────────────────
@@ -65,6 +64,7 @@ init_replay_db()
 IS_GITHUB_ACTIONS = os.getenv("GITHUB_ACTIONS") == "true"
 
 # ── Live Monitor ──────────────────────────────────────────────────────────────
+# מפעילים את Monitor רק אם זו הרצה מקומית, ולא ב-GitHub Actions
 live_monitor = None
 if not IS_GITHUB_ACTIONS:
     live_monitor = LiveMonitor(trade_mgr, send_simple_message)
@@ -167,7 +167,8 @@ def run_scan() -> None:
     result = rank_universe(symbols)
     top, _diag = result if isinstance(result, tuple) else (result, None)
     if not top:
-        log.warning("No coins passed scoring — skipping notification")
+        log.warning("No coins passed scoring — sending 'no signal' message")
+        send_simple_message("ℹ️ No opportunities found. Market is quiet.")
         return
 
     # ── חישוב Market Health מחדש ──────────────────────────────────────────────
@@ -312,20 +313,70 @@ def run_scan() -> None:
                 if trade:
                     trade.quality = quality
 
-    # ── 7. סינון ושליחת התראות טלגרם ─────────────────────────────────────────
-    buy_coins = filtered.get("buy", []) or [
-        c for c in top 
-        if c.get("decision") == "BUY" or c.get("final_decision") == "BUY"
-    ]
+    # ── 7. הודעה מאוחדת ברורה בעברית ─────────────────────────────────────────
+    lines = []
+    lines.append("📊 תמונת מצב מהירה")
+    lines.append(f"שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
+    cb_status = circuit_breaker.status()
+    lines.append(f"מפסק: {cb_status}")
+    lines.append("")
 
-    if buy_coins:
-        log.info(f"BUY signal found ({len(buy_coins)} coins). Sending Telegram alert.")
-        send_telegram(buy_coins, market_health=market_health, regime=regime)
-    elif top and should_send_watch_update(top[0]):
-        log.info("Significant WATCH update triggered. Sending Telegram alert.")
-        send_telegram(top, market_health=market_health, regime=regime)
+    lines.append("🏆 דירוג 5 מובילים:")
+    lines.append("מטבע        AI   הסתברות   מרחק לטריגר")
+    lines.append("-" * 44)
+    for c in top[:5]:
+        sym = c['symbol'].replace('USDT', '')[:12].ljust(12)
+        ai = f"{c.get('ai_score', 0):.0f}".rjust(4)
+        prob = f"{c.get('probability', 0):.0f}%".rjust(6)
+        dist_val = c.get('trigger_distance_pct')
+        dist = "—" if dist_val is None else f"{dist_val:.2f}%"
+        lines.append(f"{sym}  {ai}  {prob}  {dist}")
+    lines.append("")
+
+    buy_list = filtered.get("buy", [])
+    if buy_list:
+        lines.append("🟢 קנייה מומלצת:")
+        for c in buy_list:
+            lines.append(f"  {c['symbol']}")
+            lines.append(f"    כניסה: {c.get('entry_price', 0):.4f}")
+            lines.append(f"    סטופ: {c.get('entry_sl', 0):.4f}")
+            lines.append(f"    יעד1: {c.get('entry_tp1', 0):.4f}")
+            lines.append(f"    יעד2: {c.get('entry_tp2', 0):.4f}")
+        lines.append("")
     else:
-        log.info("No BUY and no significant WATCH change — skipping Telegram notification")
+        lines.append("🟢 אין קנייה כרגע.")
+        lines.append("")
+
+    prepare_list = filtered.get("prepare", [])
+    if prepare_list:
+        lines.append("🟡 הכנה (PREPARE) – הצטברות טובה, חסר טריגר:")
+        for c in prepare_list[:3]:
+            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f} Prob:{c.get('probability',0):.0f}%")
+        lines.append("")
+
+    arm_list = filtered.get("arm", [])
+    if arm_list:
+        lines.append("🟠 במעקב צמוד (ARM) – קרוב לפריצה:")
+        for c in arm_list[:3]:
+            dist_val = c.get('trigger_distance_pct')
+            dist = f"{dist_val:.2f}%" if dist_val is not None else "—"
+            lines.append(f"  {c['symbol']} מרחק:{dist}")
+        lines.append("")
+
+    watch_list = filtered.get("watch", [])
+    if watch_list:
+        lines.append("🟡 במעקב (WATCH):")
+        for c in watch_list[:3]:
+            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f} Prob:{c.get('probability',0):.0f}%")
+        lines.append("")
+
+    lines.append("🔹 מה לעשות:")
+    lines.append("• 🟢 קנייה – בצע קנייה ידנית אם הכניסה עדיין בתוקף.")
+    lines.append("• 🟡 הכנה/מעקב – המתן לפריצה ברורה.")
+    lines.append("• 📊 אם השוק חלש (מתחת 50) – עדיף לא לקנות.")
+    lines.append("• 🛡 מפסק ACTIVE = מותר לסחור. BLOCKED = אין כניסות חדשות.")
+
+    send_simple_message("\n".join(lines))
 
     # ── 8. Learning & Shadow ──────────────────────────────────────────────────
     try:
@@ -334,14 +385,14 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Learning recorder skipped: {e}")
 
-    # ── 9. הבטחת נרות לכל העסקאות הפתוחות ──────────────────────────────────────
+    # ── 9. הבטחת נרות לכל העסקאות הפתוחות (לפני outcome tracker) ────────────
     try:
         from tools.ensure_open_trade_candles import ensure_candles_for_open_trades
         ensure_candles_for_open_trades()
     except Exception as e:
         log.error(f"Ensure candles error: {e}", exc_info=True)
 
-    # ── 10. Outcome Tracking ──────────────────────────────────────────────────
+    # ── 10. Outcome Tracking (מקור אמת יחיד) ──────────────────────────────────
     try:
         from tools.outcome_tracker import update_outcomes
         updated = update_outcomes()
@@ -349,19 +400,36 @@ def run_scan() -> None:
     except Exception as e:
         log.error(f"Outcome tracker error: {e}", exc_info=True)
 
-    # ── 10a. בדיקה ושליחת התראות יציאה חיות ───────────────────────────────────
-    try:
-        from tools.shadow_mode import check_and_alert_exits
-        check_and_alert_exits()
-    except Exception as e:
-        log.error(f"Exit alerts error: {e}", exc_info=True)
-
-    # ── 10b. Backfill RS/AI buckets ───────────────────────────────────────────
+    # ── 10b. Backfill RS/AI buckets (לאחר עדכון התוצאות) ─────────────────────
     try:
         from tools.backfill_buckets import backfill
         backfill()
     except Exception as e:
         log.error(f"Backfill error: {e}", exc_info=True)
+
+    # ── 10c. Multi-Day Research (Shadow Mode) ────────────────────────────────
+    try:
+        from scanner.multiday_outcome import update_multiday_outcomes
+        update_multiday_outcomes()
+    except Exception as e:
+        log.error(f"Multi-Day outcome update error: {e}", exc_info=True)
+
+    try:
+        from scanner.multiday_engine import run_multiday_scan
+        signals = run_multiday_scan()
+        if signals:
+            log.info(f"Multi-Day scan generated {len(signals)} research signals (Shadow mode)")
+    except Exception as e:
+        log.error(f"Multi-Day scan error: {e}", exc_info=True)
+
+    # Optional: show Multi-Day dashboard (only if not in GitHub Actions or if log level is verbose)
+    try:
+        from tools.multiday_dashboard import run_multiday_dashboard
+        md_dash = run_multiday_dashboard()
+        if md_dash:
+            log.info(md_dash)
+    except Exception as e:
+        log.debug(f"Multi-Day dashboard skipped: {e}")
 
     # ── 11. Export ML Learning Dataset ─────────────────────────────────────────
     try:
@@ -370,23 +438,12 @@ def run_scan() -> None:
     except Exception as e:
         log.error(f"ML Dataset export error: {e}", exc_info=True)
 
-    # ── 12. Learning Dashboard ─────────────────────────────────────────────────
+    # ── 12. Learning Dashboard (לוג בלבד) ─────────────────────────────────────
     try:
         from tools.learning_dashboard import run_dashboard
         lr = run_dashboard()
         if lr:
             log.info(lr)
-
-        import sqlite3
-        conn = sqlite3.connect(os.getenv("DB_PATH", "data/shadow.db"))
-        method_counts = conn.execute("""
-            SELECT pnl_pct_method, COUNT(*) 
-            FROM shadow_trades
-            WHERE decision='BUY' AND outcome_status='FINAL' AND outcome_checked=1
-            GROUP BY pnl_pct_method
-        """).fetchall()
-        log.info(f"pnl_pct_method breakdown: {method_counts}")
-        conn.close()
     except Exception as e:
         log.error(f"Learning dashboard error: {e}", exc_info=True)
 
