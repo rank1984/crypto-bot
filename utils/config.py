@@ -44,9 +44,8 @@ USE_DYNAMIC_UNIVERSE  = os.getenv("USE_DYNAMIC_UNIVERSE", "true").lower() == "tr
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# Scanner loop
-SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", "300"))
-
+# במקום 300 (5 דקות)
+SCAN_INTERVAL_SECONDS = 3600   # 60 דקות = שעה
 TOP_N = int(os.getenv("TOP_N", "5"))
 
 TRADE_MODE = os.getenv("TRADE_MODE", "BALANCED")
