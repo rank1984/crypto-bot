@@ -18,17 +18,14 @@ from storage.sqlite_db import DB_PATH
 
 log = get_logger("multiday_engine")
 
-# Minimum history requirements
 MIN_1D_CANDLES = 60
 MIN_4H_CANDLES = 30
 
-# Timeframes
 TIMEFRAME_1D = "1d"
 TIMEFRAME_4H = "4h"
 
 
 def ensure_multiday_table():
-    """Create multiday_signals table if it doesn't exist."""
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
@@ -83,27 +80,21 @@ def ensure_multiday_table():
 
 
 def get_btc_reference():
-    """Fetch BTC 1D and 4H candles."""
     btc_1d = get_candles("BTCUSDT", TIMEFRAME_1D, limit=MIN_1D_CANDLES + 30)
     btc_4h = get_candles("BTCUSDT", TIMEFRAME_4H, limit=MIN_4H_CANDLES + 30)
     return btc_1d, btc_4h
 
 
 def detect_time_column(df: pd.DataFrame) -> str:
-    """
-    Detect which column contains the timestamp.
-    Returns column name or raises ValueError.
-    """
+    """Detect which column contains the timestamp."""
     for col in ["time", "timestamp", "date", "datetime", "open_time", "start_time"]:
         if col in df.columns:
             return col
-    raise ValueError(f"No time column found. Available columns: {list(df.columns)}")
+    log.error(f"Available columns: {list(df.columns)}")
+    raise ValueError(f"No time column found. Available: {list(df.columns)}")
 
 
 def classify_stage(features: dict) -> str:
-    """
-    Classify as EARLY / DEVELOPING / LATE / EXHAUSTED.
-    """
     exhaustion = features.get("exhaustion_score", 0)
     ret_24 = features.get("return_24h", 0)
     dist_breakout = features.get("distance_from_breakout", 0)
@@ -120,15 +111,13 @@ def classify_stage(features: dict) -> str:
 
 
 def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFrame) -> List[Dict]:
-    """Generate Multi-Day signals for given universe with caching."""
     signals = []
     now = datetime.now(timezone.utc)
 
-    # 🔥 Caches to avoid repeated API calls
     cache_1d = {}
     cache_4h = {}
 
-    # Detect time columns in BTC data
+    # detect BTC time columns
     try:
         time_col_btc_1d = detect_time_column(btc_1d)
         time_col_btc_4h = detect_time_column(btc_4h)
@@ -136,13 +125,11 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
         log.error(f"BTC data missing time column: {e}")
         return []
 
-    # Convert BTC timestamps to UTC
     btc_1d = btc_1d.copy()
     btc_4h = btc_4h.copy()
     btc_1d[time_col_btc_1d] = pd.to_datetime(btc_1d[time_col_btc_1d], utc=True)
     btc_4h[time_col_btc_4h] = pd.to_datetime(btc_4h[time_col_btc_4h], utc=True)
 
-    # BTC alignment: only closed candles
     now_floor_1d = pd.Timestamp(now).floor('D')
     now_floor_4h = pd.Timestamp(now).floor('4h')
 
@@ -151,7 +138,6 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
 
     for symbol in symbols:
         try:
-            # ---- Get 1D candles (with cache) ----
             if symbol in cache_1d:
                 df_1d = cache_1d[symbol]
             else:
@@ -159,7 +145,6 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
                 if df_1d is not None and not df_1d.empty:
                     cache_1d[symbol] = df_1d
 
-            # ---- Get 4H candles (with cache) ----
             if symbol in cache_4h:
                 df_4h = cache_4h[symbol]
             else:
@@ -175,7 +160,6 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
                 log.debug(f"{symbol}: insufficient history (1D={len(df_1d)}, 4H={len(df_4h)})")
                 continue
 
-            # ---- Detect time columns ----
             try:
                 time_col_1d = detect_time_column(df_1d)
                 time_col_4h = detect_time_column(df_4h)
@@ -183,13 +167,11 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
                 log.error(f"{symbol}: {e}")
                 continue
 
-            # ---- Clean timestamps ----
             df_1d = df_1d.copy()
             df_4h = df_4h.copy()
             df_1d[time_col_1d] = pd.to_datetime(df_1d[time_col_1d], utc=True)
             df_4h[time_col_4h] = pd.to_datetime(df_4h[time_col_4h], utc=True)
 
-            # ---- Remove current/open candle ----
             if df_1d[time_col_1d].iloc[-1] >= now_floor_1d:
                 df_1d = df_1d.iloc[:-1]
             if df_4h[time_col_4h].iloc[-1] >= now_floor_4h:
@@ -198,12 +180,9 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
             if len(df_1d) < MIN_1D_CANDLES or len(df_4h) < MIN_4H_CANDLES:
                 continue
 
-            # ---- Align BTC data ----
-            # BTC already aligned, but we need to ensure we have enough
             if len(btc_1d_aligned) < MIN_1D_CANDLES or len(btc_4h_aligned) < MIN_4H_CANDLES:
                 continue
 
-            # ---- Compute features ----
             features = compute_all_features(
                 df_1d.tail(MIN_1D_CANDLES),
                 df_4h.tail(MIN_4H_CANDLES),
@@ -211,7 +190,6 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
                 btc_4h_aligned
             )
 
-            # ---- Classify setup ----
             last_price = df_4h["close"].iloc[-1]
             ret_24 = features.get("return_24h", 0)
             rs_1d = features.get("rs_1d", 0)
@@ -228,15 +206,12 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
             if setup_type == "UNKNOWN":
                 continue
 
-            # ---- Risk parameters ----
             risk = build_risk_params(features, setup_type, last_price)
             if risk["risk_reward"] < 1.5:
                 continue
 
-            # ---- Stage ----
             stage = classify_stage(features)
 
-            # ---- Score ----
             score = (
                 features.get("trend_strength", 0) * 20 +
                 features.get("rs_1d", 0) / 10 * 15 +
@@ -249,7 +224,6 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
             if score < 50:
                 continue
 
-            # ---- Build signal ----
             signal = {
                 "symbol": symbol,
                 "timestamp": now.isoformat(),
@@ -282,29 +256,26 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
     return signals
 
 
-def run_multiday_scan():
-    """Main entry point for Multi-Day scanner."""
+def run_multiday_scan(universe: Optional[List[str]] = None):
+    """Main entry point for Multi-Day scanner. Can receive universe from caller."""
     log.info("Multi-Day scan started")
 
-    # Ensure table exists
     ensure_multiday_table()
 
-    # Build universe
-    symbols = build_dynamic_universe()
-    if not symbols:
-        log.warning("No universe available for Multi-Day scan")
-        return []
+    if universe is None:
+        universe = build_dynamic_universe()
+        if not universe:
+            log.warning("No universe available for Multi-Day scan")
+            return []
+    else:
+        log.info(f"Using provided universe of size {len(universe)}")
 
-    log.info(f"Universe size: {len(symbols)} symbols")
-
-    # BTC reference
     btc_1d, btc_4h = get_btc_reference()
     if btc_1d is None or btc_4h is None:
         log.error("BTC data not available – skipping Multi-Day scan")
         return []
 
-    # Generate signals
-    signals = generate_signals(symbols, btc_1d, btc_4h)
+    signals = generate_signals(universe, btc_1d, btc_4h)
 
     log.info(f"Multi-Day scan complete: {len(signals)} signals generated")
 
@@ -315,7 +286,6 @@ def run_multiday_scan():
 
 
 def save_multiday_signals(signals: List[Dict]):
-    """Save signals to multiday_signals table."""
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
