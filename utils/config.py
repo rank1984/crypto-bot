@@ -16,6 +16,7 @@ USE_DYNAMIC_UNIVERSE = True
 MAX_SYMBOLS = 150
 MIN_PRICE = 0.001
 MIN_DAILY_VOLUME = 1_000_000  # USD
+TOP_N = 5  # number of top coins to return
 
 # ============================================================
 # API & EXTERNAL SERVICES
@@ -45,7 +46,7 @@ CACHE_DIR = os.getenv("CACHE_DIR", "cache")
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", 300))  # 5 minutes
 
 # ============================================================
-# SCORING WEIGHTS (used by scanner/scoring.py)
+# SCORING WEIGHTS
 # ============================================================
 SCORE_WEIGHTS = {
     "ai_score": 0.30,
@@ -64,6 +65,15 @@ FRESHNESS_WEIGHTS = {
     "rs_1h": 0.15,
     "prob_boost": 0.10,
 }
+
+# ============================================================
+# SCORING THRESHOLDS
+# ============================================================
+MIN_AI_SCORE = 50.0
+MIN_FLOW_SCORE = 30.0
+MIN_PROBABILITY = 45.0
+MIN_RS_SCORE = 0.3
+MIN_MARKET_HEALTH = 50.0
 
 # ============================================================
 # TRADING PARAMETERS
@@ -100,3 +110,28 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 MULTIDAY_ENABLED = os.getenv("MULTIDAY_ENABLED", "true").lower() == "true"
 MIN_1D_CANDLES = 60
 MIN_4H_CANDLES = 30
+
+# ============================================================
+# EXIT / SIMULATION
+# ============================================================
+TIMEOUT_HOURS = 48
+EXIT_SLIPPAGE_PCT = 0.001  # 0.1% slippage for exit simulation
+
+# ============================================================
+# LIQUIDITY FILTERS
+# ============================================================
+MIN_LIQUIDITY_USD = 500_000
+MAX_SPREAD_PCT = 0.02  # 2% max spread
+
+# ============================================================
+# FEATURE FLAGS
+# ============================================================
+ENABLE_TRAILING_STOP = True
+ENABLE_PARTIAL_TAKE_PROFIT = True
+ENABLE_SYMPATHY_TRADES = True
+
+# ============================================================
+# BACKTEST / REPLAY
+# ============================================================
+REPLAY_START_DATE = "2025-01-01"
+REPLAY_END_DATE = "2025-12-31"
