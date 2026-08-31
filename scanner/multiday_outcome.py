@@ -1,7 +1,6 @@
 """
 scanner/multiday_outcome.py
 Multi-Day Outcome Tracker – computes 24h, 48h, 72h, 7d PnL/MFE/MAE.
-Uses point-in-time data only.
 """
 
 import sqlite3
@@ -15,7 +14,6 @@ log = get_logger("multiday_outcome")
 
 
 def ensure_multiday_table():
-    """Create multiday_signals table if it doesn't exist."""
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
@@ -70,15 +68,12 @@ def ensure_multiday_table():
 
 
 def update_multiday_outcomes():
-    """Update outcomes for all pending Multi-Day signals."""
-    # Ensure table exists
     ensure_multiday_table()
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    # Get signals that are still pending (outcome_type is NULL or 'PENDING')
     try:
         signals = cur.execute("""
             SELECT id, symbol, signal_timestamp, entry, stop, tp1, tp2
@@ -102,7 +97,6 @@ def update_multiday_outcomes():
             tp2 = float(row["tp2"])
             signal_ts = datetime.fromisoformat(row["signal_timestamp"])
 
-            # Get candles starting from signal time
             ts_str = signal_ts.strftime("%Y-%m-%d %H:%M:%S")
             df = get_candles(symbol, "4h", start=ts_str)
 
@@ -113,15 +107,9 @@ def update_multiday_outcomes():
             df["time"] = pd.to_datetime(df["time"], utc=True)
             df = df.sort_values("time").reset_index(drop=True)
 
-            # Compute outcomes for each horizon
-            horizons = {
-                "24h": 24,
-                "48h": 48,
-                "72h": 72,
-                "7d": 168  # 7 days * 24 hours
-            }
-
+            horizons = {"24h": 24, "48h": 48, "72h": 72, "7d": 168}
             outcomes = {}
+
             for name, hours in horizons.items():
                 cutoff = signal_ts + timedelta(hours=hours)
                 df_horizon = df[df["time"] <= cutoff]
@@ -133,33 +121,24 @@ def update_multiday_outcomes():
                 low = df_horizon["low"].min()
                 close = df_horizon["close"].iloc[-1]
 
-                mfe = (high - entry) / entry * 100
-                mae = (low - entry) / entry * 100
-                pnl = (close - entry) / entry * 100
+                outcomes[f"mfe_{name}"] = round((high - entry) / entry * 100, 2)
+                outcomes[f"mae_{name}"] = round((low - entry) / entry * 100, 2)
+                outcomes[f"pnl_{name}"] = round((close - entry) / entry * 100, 2)
 
-                outcomes[f"mfe_{name}"] = round(mfe, 2)
-                outcomes[f"mae_{name}"] = round(mae, 2)
-                outcomes[f"pnl_{name}"] = round(pnl, 2)
-
-            # Determine outcome type (first target hit, stop, timeout, still open)
             outcome_type = "STILL_OPEN"
             if not df.empty:
                 last_time = df["time"].iloc[-1]
                 hours_elapsed = (last_time - signal_ts).total_seconds() / 3600
-                if hours_elapsed >= 168:  # 7 days
+                if hours_elapsed >= 168:
                     outcome_type = "TIMEOUT"
                 else:
-                    # Check if TP1 or TP2 was hit
-                    high_series = df["high"]
-                    low_series = df["low"]
-                    if any(high_series >= tp1):
+                    if any(df["high"] >= tp1):
                         outcome_type = "TP1_HIT"
-                    if any(high_series >= tp2):
+                    elif any(df["high"] >= tp2):
                         outcome_type = "TP2_HIT"
-                    if any(low_series <= stop):
+                    elif any(df["low"] <= stop):
                         outcome_type = "STOP_HIT"
 
-            # Update database
             cur.execute("""
                 UPDATE multiday_signals
                 SET
