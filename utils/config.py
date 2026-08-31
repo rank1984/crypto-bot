@@ -45,6 +45,27 @@ CACHE_DIR = os.getenv("CACHE_DIR", "cache")
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", 300))  # 5 minutes
 
 # ============================================================
+# SCORING WEIGHTS (used by scanner/scoring.py)
+# ============================================================
+SCORE_WEIGHTS = {
+    "ai_score": 0.30,
+    "flow_score": 0.25,
+    "pre_score": 0.15,
+    "oi_change": 0.10,
+    "rs_1h": 0.10,
+    "prob_boost": 0.10,
+}
+
+FRESHNESS_WEIGHTS = {
+    "ai_score": 0.25,
+    "flow_score": 0.20,
+    "pre_score": 0.15,
+    "oi_change": 0.15,
+    "rs_1h": 0.15,
+    "prob_boost": 0.10,
+}
+
+# ============================================================
 # TRADING PARAMETERS
 # ============================================================
 MAX_TRADES = 2
