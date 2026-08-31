@@ -21,6 +21,22 @@ MIN_DAILY_VOLUME = 1_000_000  # USD
 # API & EXTERNAL SERVICES
 # ============================================================
 COINGECKO_BASE = os.getenv("COINGECKO_BASE", "https://api.coingecko.com/api/v3")
+KUCOIN_BASE = os.getenv("KUCOIN_BASE", "https://api.kucoin.com/api/v1")
+KUCOIN_FUTURES_BASE = os.getenv("KUCOIN_FUTURES_BASE", "https://api-futures.kucoin.com/api/v1")
+
+# ============================================================
+# MARKET DATA
+# ============================================================
+TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+CANDLES_PER_TF = {
+    "1m": 200,
+    "5m": 200,
+    "15m": 200,
+    "30m": 200,
+    "1h": 200,
+    "4h": 200,
+    "1d": 200,
+}
 
 # ============================================================
 # CACHE
@@ -58,7 +74,7 @@ DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # ============================================================
-# MULTI-DAY RESEARCH (optional)
+# MULTI-DAY RESEARCH
 # ============================================================
 MULTIDAY_ENABLED = os.getenv("MULTIDAY_ENABLED", "true").lower() == "true"
 MIN_1D_CANDLES = 60
