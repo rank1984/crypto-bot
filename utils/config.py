@@ -23,6 +23,12 @@ MIN_DAILY_VOLUME = 1_000_000  # USD
 COINGECKO_BASE = os.getenv("COINGECKO_BASE", "https://api.coingecko.com/api/v3")
 
 # ============================================================
+# CACHE
+# ============================================================
+CACHE_DIR = os.getenv("CACHE_DIR", "cache")
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", 300))  # 5 minutes
+
+# ============================================================
 # TRADING PARAMETERS
 # ============================================================
 MAX_TRADES = 2
@@ -45,9 +51,15 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # ============================================================
 DATA_DIR = "data"
 DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
-CACHE_DIR = "cache"
 
 # ============================================================
 # LOGGING
 # ============================================================
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# ============================================================
+# MULTI-DAY RESEARCH (optional)
+# ============================================================
+MULTIDAY_ENABLED = os.getenv("MULTIDAY_ENABLED", "true").lower() == "true"
+MIN_1D_CANDLES = 60
+MIN_4H_CANDLES = 30
