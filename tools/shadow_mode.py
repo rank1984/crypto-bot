@@ -386,3 +386,91 @@ def export_shadow_csv():
                     writer.writerow([t[k] for k in keys])
     except Exception as e:
         log.error(f"export_shadow_csv failed: {e}")
+
+
+# =============================================
+# Exit Alerts Logic (מנגנון התראות חי)
+# =============================================
+
+def check_and_alert_exits():
+    """
+    בודק עסקאות פעילות שבוצעו בפועל (was_executed=1) ומתריע במקרה של חציית TP/SL.
+    שולף מחירים בזמן אמת ושולח התראה לטלגרם פעם אחת בלבד.
+    """
+    try:
+        # ייבוא פנימי כדי למנוע מעגליות
+        from scanner.market_data import get_candles
+        from notifier.sender import send_simple_message
+    except ImportError as e:
+        log.error(f"Cannot import dependencies for check_and_alert_exits: {e}")
+        return
+
+    try:
+        with _conn() as c:
+            # שולפים רק עסקאות פעילות שבוצעו
+            trades = c.execute("""
+                SELECT id, symbol, direction, tp1, tp2, sl,
+                       tp1_alert_sent, tp2_alert_sent, sl_alert_sent
+                FROM shadow_trades
+                WHERE was_executed = 1
+                  AND trade_state = 'ACTIVE'
+            """).fetchall()
+
+            if not trades:
+                return
+
+            for trade in trades:
+                symbol = trade["symbol"]
+                
+                # משיכת מחיר עדכני למטבע (1m candle)
+                df = get_candles(symbol, "1m", limit=1)
+                if df is None or len(df) == 0:
+                    continue
+                    
+                current_price = float(df["close"].iloc[-1])
+                direction = trade["direction"] or "LONG"
+                t_id = trade["id"]
+
+                updates = []
+                alert_msg = None
+
+                # --- בדיקות לעסקאות LONG ---
+                if direction == "LONG":
+                    if trade["sl"] and current_price <= trade["sl"] and not trade["sl_alert_sent"]:
+                        alert_msg = f"🚨 <b>{symbol}</b> hit Stop Loss!\nPrice: {current_price:.4f}"
+                        updates.append("sl_alert_sent = 1")
+                    elif trade["tp2"] and current_price >= trade["tp2"] and not trade["tp2_alert_sent"]:
+                        alert_msg = f"🎯🎯 <b>{symbol}</b> hit TP2!\nPrice: {current_price:.4f}"
+                        updates.append("tp2_alert_sent = 1")
+                        # סגירת TP1 אם קפץ ישר ל-TP2
+                        if not trade["tp1_alert_sent"]:
+                            updates.append("tp1_alert_sent = 1")
+                    elif trade["tp1"] and current_price >= trade["tp1"] and not trade["tp1_alert_sent"]:
+                        alert_msg = f"🎯 <b>{symbol}</b> hit TP1!\nPrice: {current_price:.4f}"
+                        updates.append("tp1_alert_sent = 1")
+
+                # --- בדיקות לעסקאות SHORT ---
+                elif direction == "SHORT":
+                    if trade["sl"] and current_price >= trade["sl"] and not trade["sl_alert_sent"]:
+                        alert_msg = f"🚨 <b>{symbol}</b> hit Stop Loss!\nPrice: {current_price:.4f}"
+                        updates.append("sl_alert_sent = 1")
+                    elif trade["tp2"] and current_price <= trade["tp2"] and not trade["tp2_alert_sent"]:
+                        alert_msg = f"🎯🎯 <b>{symbol}</b> hit TP2!\nPrice: {current_price:.4f}"
+                        updates.append("tp2_alert_sent = 1")
+                        if not trade["tp1_alert_sent"]:
+                            updates.append("tp1_alert_sent = 1")
+                    elif trade["tp1"] and current_price <= trade["tp1"] and not trade["tp1_alert_sent"]:
+                        alert_msg = f"🎯 <b>{symbol}</b> hit TP1!\nPrice: {current_price:.4f}"
+                        updates.append("tp1_alert_sent = 1")
+
+                # --- שליחה ועדכון ---
+                if alert_msg and updates:
+                    send_simple_message(alert_msg)
+                    set_clause = ", ".join(updates)
+                    c.execute(f"UPDATE shadow_trades SET {set_clause} WHERE id = ?", (t_id,))
+                    log.info(f"Exit alert sent and DB updated for {symbol} (ID: {t_id}): {alert_msg}")
+
+            export_shadow_csv()
+
+    except Exception as e:
+        log.error(f"Failed in check_and_alert_exits: {e}", exc_info=True)
