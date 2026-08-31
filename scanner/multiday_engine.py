@@ -26,6 +26,61 @@ TIMEFRAME_1D = "1d"
 TIMEFRAME_4H = "4h"
 
 
+def ensure_multiday_table():
+    """Create multiday_signals table if it doesn't exist."""
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS multiday_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                signal_timestamp TEXT NOT NULL,
+                data_timestamp TEXT NOT NULL,
+                price REAL,
+                setup_type TEXT,
+                stage TEXT,
+                score REAL,
+                entry REAL,
+                stop REAL,
+                tp1 REAL,
+                tp2 REAL,
+                strategy_type TEXT,
+                strategy_version TEXT,
+                mode TEXT,
+                return_4h REAL,
+                return_24h REAL,
+                return_48h REAL,
+                return_72h REAL,
+                exhaustion_score REAL,
+                trend_strength REAL,
+                rs_1d REAL,
+                volume_expansion REAL,
+                distance_from_breakout REAL,
+                pullback_depth REAL,
+                mfe_24h REAL,
+                mae_24h REAL,
+                pnl_24h REAL,
+                mfe_48h REAL,
+                mae_48h REAL,
+                pnl_48h REAL,
+                mfe_72h REAL,
+                mae_72h REAL,
+                pnl_72h REAL,
+                mfe_7d REAL,
+                mae_7d REAL,
+                pnl_7d REAL,
+                outcome_type TEXT,
+                created_at TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+        log.debug("Multi-day table ensured")
+    except Exception as e:
+        log.error(f"Error creating multiday_signals table: {e}")
+
+
 def get_btc_reference():
     """Fetch BTC 1D and 4H candles."""
     btc_1d = get_candles("BTCUSDT", TIMEFRAME_1D, limit=MIN_1D_CANDLES + 30)
@@ -78,16 +133,13 @@ def generate_signals(symbols: List[str], btc_1d: pd.DataFrame, btc_4h: pd.DataFr
             df_4h["time"] = pd.to_datetime(df_4h["time"], utc=True)
 
             # Ensure last candle is closed (not current incomplete)
-            # If last candle time is today/tomorrow, skip or use only closed
-            last_1d_time = df_1d["time"].iloc[-1]
-            last_4h_time = df_4h["time"].iloc[-1]
             now_floor_1d = pd.Timestamp(now).floor('D')
             now_floor_4h = pd.Timestamp(now).floor('4h')
 
             # If last candle is not fully closed, drop it
-            if last_1d_time >= now_floor_1d:
+            if df_1d["time"].iloc[-1] >= now_floor_1d:
                 df_1d = df_1d.iloc[:-1]
-            if last_4h_time >= now_floor_4h:
+            if df_4h["time"].iloc[-1] >= now_floor_4h:
                 df_4h = df_4h.iloc[:-1]
 
             if len(df_1d) < MIN_1D_CANDLES or len(df_4h) < MIN_4H_CANDLES:
@@ -189,6 +241,9 @@ def run_multiday_scan():
     """Main entry point for Multi-Day scanner."""
     log.info("Multi-Day scan started")
 
+    # Ensure table exists before anything else
+    ensure_multiday_table()
+
     # Build universe (use same dynamic universe as Intraday)
     symbols = build_dynamic_universe()
     if not symbols:
@@ -218,50 +273,8 @@ def save_multiday_signals(signals: List[Dict]):
     conn = get_conn()
     cur = conn.cursor()
 
-    # Create table if not exists
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS multiday_signals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT NOT NULL,
-            signal_timestamp TEXT NOT NULL,
-            data_timestamp TEXT NOT NULL,
-            price REAL,
-            setup_type TEXT,
-            stage TEXT,
-            score REAL,
-            entry REAL,
-            stop REAL,
-            tp1 REAL,
-            tp2 REAL,
-            strategy_type TEXT,
-            strategy_version TEXT,
-            mode TEXT,
-            return_4h REAL,
-            return_24h REAL,
-            return_48h REAL,
-            return_72h REAL,
-            exhaustion_score REAL,
-            trend_strength REAL,
-            rs_1d REAL,
-            volume_expansion REAL,
-            distance_from_breakout REAL,
-            pullback_depth REAL,
-            mfe_24h REAL,
-            mae_24h REAL,
-            pnl_24h REAL,
-            mfe_48h REAL,
-            mae_48h REAL,
-            pnl_48h REAL,
-            mfe_72h REAL,
-            mae_72h REAL,
-            pnl_72h REAL,
-            mfe_7d REAL,
-            mae_7d REAL,
-            pnl_7d REAL,
-            outcome_type TEXT,
-            created_at TEXT
-        )
-    """)
+    # Ensure table exists before saving
+    ensure_multiday_table()
 
     for signal in signals:
         # Flatten features into columns
