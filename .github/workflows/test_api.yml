@@ -1,0 +1,10 @@
+name: Test KuCoin API
+
+on: workflow_dispatch
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -s "https://api.kucoin.com/api/v1/market/allTickers" | head -50
