@@ -8,7 +8,7 @@ import sqlite3
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 from utils.logger import get_logger
-from storage.sqlite_db import DB_PATH, get_conn
+from storage.sqlite_db import DB_PATH
 from scanner.market_data import get_candles
 
 log = get_logger("multiday_outcome")
@@ -17,7 +17,7 @@ log = get_logger("multiday_outcome")
 def ensure_multiday_table():
     """Create multiday_signals table if it doesn't exist."""
     try:
-        conn = get_conn()
+        conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS multiday_signals (
@@ -141,7 +141,7 @@ def update_multiday_outcomes():
                 outcomes[f"mae_{name}"] = round(mae, 2)
                 outcomes[f"pnl_{name}"] = round(pnl, 2)
 
-            # Determine outcome type
+            # Determine outcome type (first target hit, stop, timeout, still open)
             outcome_type = "STILL_OPEN"
             if not df.empty:
                 last_time = df["time"].iloc[-1]
@@ -149,6 +149,7 @@ def update_multiday_outcomes():
                 if hours_elapsed >= 168:  # 7 days
                     outcome_type = "TIMEOUT"
                 else:
+                    # Check if TP1 or TP2 was hit
                     high_series = df["high"]
                     low_series = df["low"]
                     if any(high_series >= tp1):
