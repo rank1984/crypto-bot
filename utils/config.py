@@ -7,14 +7,20 @@ import os
 # ============================================================
 # SCAN INTERVAL (seconds)
 # ============================================================
-# 3600 = 1 hour
-# 300  = 5 minutes (default)
-SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", 3600))
+SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", 3600))  # 1 hour
 
 # ============================================================
 # UNIVERSE
 # ============================================================
 USE_DYNAMIC_UNIVERSE = True
+MAX_SYMBOLS = 150
+MIN_PRICE = 0.001
+MIN_DAILY_VOLUME = 1_000_000  # USD
+
+# ============================================================
+# API & EXTERNAL SERVICES
+# ============================================================
+COINGECKO_BASE = os.getenv("COINGECKO_BASE", "https://api.coingecko.com/api/v3")
 
 # ============================================================
 # TRADING PARAMETERS
