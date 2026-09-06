@@ -243,4 +243,4 @@ def get_ticker_24h(symbol: str) -> dict | None:
         log.debug(f"KuCoin ticker error for {symbol}: {e}")
 
     log.warning(f"All ticker sources failed for {symbol}")
-    return None
+    return None 
