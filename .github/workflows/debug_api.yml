@@ -1,0 +1,34 @@
+name: 🔍 Debug API - KuCoin
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: 🔍 Test get_ticker_24h
+        run: |
+          python -c "
+          from scanner.market_data import get_ticker_24h
+          ticker = get_ticker_24h('BTCUSDT')
+          print('=== get_ticker_24h(BTCUSDT) ===')
+          print('ticker:', ticker)
+          if ticker:
+              print('quoteVolume:', ticker.get('quoteVolume'))
+              print('vol:', ticker.get('vol'))
+              print('last:', ticker.get('last'))
+              print('volValue:', ticker.get('volValue'))
+          else:
+              print('❌ get_ticker_24h returned None')
+          "
