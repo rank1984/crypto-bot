@@ -16,7 +16,7 @@ USE_DYNAMIC_UNIVERSE = True
 MAX_SYMBOLS = 150
 MIN_PRICE = 0.001
 MIN_DAILY_VOLUME = 1_000_000  # USD
-TOP_N = 5  # number of top coins to return
+TOP_N = 5
 
 # ============================================================
 # API & EXTERNAL SERVICES
@@ -115,13 +115,13 @@ MIN_4H_CANDLES = 30
 # EXIT / SIMULATION
 # ============================================================
 TIMEOUT_HOURS = 48
-EXIT_SLIPPAGE_PCT = 0.001  # 0.1% slippage for exit simulation
+EXIT_SLIPPAGE_PCT = 0.001
 
 # ============================================================
 # LIQUIDITY FILTERS
 # ============================================================
 MIN_LIQUIDITY_USD = 500_000
-MAX_SPREAD_PCT = 0.02  # 2% max spread
+MAX_SPREAD_PCT = 0.02
 
 # ============================================================
 # FEATURE FLAGS
