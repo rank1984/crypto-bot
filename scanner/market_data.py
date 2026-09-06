@@ -159,50 +159,48 @@ def get_all_timeframes(symbol: str) -> dict:
 # ============================================================
 def get_ticker_24h(symbol: str) -> dict | None:
     """
-    Fetch 24h ticker stats.
-    Primary: KuCoin (spot). Fallback: Binance.
-    Returns dict with at least 'quoteVolume' (USD volume) or None.
+    Fetch 24h ticker stats from KuCoin (primary) and Binance (fallback).
+    Returns dict with 'quoteVolume' (USD volume) and other fields.
     """
-    # ✅ נסיון 1: KuCoin (הכי אמין)
+    # 1. KuCoin (מועדף)
     try:
         kucoin_sym = symbol.replace("USDT", "-USDT")
-        r = requests.get(
-            f"{KUCOIN_BASE}/api/v1/market/stats",
-            params={"symbol": kucoin_sym},
-            headers=_HEADERS,
-            timeout=10
-        )
+        url = f"{KUCOIN_BASE}/api/v1/market/stats"
+        params = {"symbol": kucoin_sym}
+        r = requests.get(url, params=params, headers=_HEADERS, timeout=10)
         if r.status_code == 200:
             data = r.json()
             if data.get("code") == "200000":
                 stats = data.get("data", {})
                 if stats:
-                    return {
-                        "symbol": symbol,
-                        "vol": float(stats.get("vol", 0)),
-                        "last": float(stats.get("last", 0)),
-                        "quoteVolume": float(stats.get("volValue", 0)),  # ✅ KuCoin uses volValue
-                        "change": float(stats.get("changeRate", 0)),
-                        "changePrice": float(stats.get("changePrice", 0)),
-                        "high": float(stats.get("high", 0)),
-                        "low": float(stats.get("low", 0)),
-                        "open": float(stats.get("open", 0)),
-                        "averagePrice": float(stats.get("averagePrice", 0)),
-                    }
+                    # לוודא שיש volValue (נפח ב-USDT)
+                    vol_value = float(stats.get("volValue", 0))
+                    if vol_value > 0:
+                        return {
+                            "symbol": symbol,
+                            "vol": float(stats.get("vol", 0)),
+                            "last": float(stats.get("last", 0)),
+                            "quoteVolume": vol_value,
+                            "change": float(stats.get("changeRate", 0)),
+                            "changePrice": float(stats.get("changePrice", 0)),
+                            "high": float(stats.get("high", 0)),
+                            "low": float(stats.get("low", 0)),
+                            "open": float(stats.get("open", 0)),
+                            "averagePrice": float(stats.get("averagePrice", 0)),
+                        }
+                    else:
+                        log.debug(f"KuCoin volValue=0 for {symbol}, trying fallback")
     except Exception as e:
-        log.debug(f"KuCoin ticker failed for {symbol}: {e}")
+        log.debug(f"KuCoin ticker error for {symbol}: {e}")
 
-    # ✅ נסיון 2: Binance (fallback)
+    # 2. Binance (fallback)
     try:
-        r = requests.get(
-            f"https://api.binance.com/api/v3/ticker/24hr",
-            params={"symbol": symbol.upper()},
-            headers=_HEADERS,
-            timeout=5
-        )
+        url = "https://api.binance.com/api/v3/ticker/24hr"
+        params = {"symbol": symbol.upper()}
+        r = requests.get(url, params=params, headers=_HEADERS, timeout=5)
         if r.status_code == 200:
             data = r.json()
-            if data:
+            if data and data.get("quoteVolume"):
                 return {
                     "symbol": symbol,
                     "vol": float(data.get("volume", 0)),
@@ -216,7 +214,10 @@ def get_ticker_24h(symbol: str) -> dict | None:
                     "averagePrice": float(data.get("weightedAvgPrice", 0)),
                 }
     except Exception as e:
-        log.debug(f"Binance ticker failed for {symbol}: {e}")
+        log.debug(f"Binance ticker error for {symbol}: {e}")
+
+    log.warning(f"All ticker sources failed for {symbol}")
+    return None
 
     # ✅ אם הכל נכשל – מחזירים None
     log.warning(f"All ticker sources failed for {symbol}")
