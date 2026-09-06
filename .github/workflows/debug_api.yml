@@ -1,34 +1,32 @@
-name: 🔍 Debug API - KuCoin
-
-on:
-  workflow_dispatch:
-
-jobs:
-  debug:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: 🔍 Test get_ticker_24h
-        run: |
-          python -c "
-          from scanner.market_data import get_ticker_24h
-          ticker = get_ticker_24h('BTCUSDT')
-          print('=== get_ticker_24h(BTCUSDT) ===')
-          print('ticker:', ticker)
-          if ticker:
-              print('quoteVolume:', ticker.get('quoteVolume'))
-              print('vol:', ticker.get('vol'))
-              print('last:', ticker.get('last'))
-              print('volValue:', ticker.get('volValue'))
-          else:
-              print('❌ get_ticker_24h returned None')
-          "
+- name: 🔍 DEBUG - Direct API tests
+  run: |
+    echo "=== 1. KuCoin allTickers ==="
+    curl -s "https://api.kucoin.com/api/v1/market/allTickers" | head -200
+    
+    echo ""
+    echo "=== 2. KuCoin stats BTC-USDT ==="
+    curl -s "https://api.kucoin.com/api/v1/market/stats?symbol=BTC-USDT"
+    
+    echo ""
+    echo "=== 3. Binance 24hr BTCUSDT ==="
+    curl -s "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT"
+    
+    echo ""
+    echo "=== 4. Python requests to KuCoin ==="
+    python -c "
+import requests
+url = 'https://api.kucoin.com/api/v1/market/stats?symbol=BTC-USDT'
+r = requests.get(url, timeout=10)
+print('Status:', r.status_code)
+print('Response:', r.text[:500])
+"
+    
+    echo ""
+    echo "=== 5. Python requests to Binance ==="
+    python -c "
+import requests
+url = 'https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT'
+r = requests.get(url, timeout=10)
+print('Status:', r.status_code)
+print('Response:', r.text[:500])
+"
