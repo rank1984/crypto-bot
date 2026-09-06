@@ -15,7 +15,6 @@ log = get_logger(__name__)
 _HEADERS = {"User-Agent": "crypto-bot/1.0"}
 _DELAY = 0.05
 
-# מיפוי אינטרוולים סטנדרטיים לפורמט של KuCoin
 INTERVAL_MAP = {
     "1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min",
     "1h": "1hour", "2h": "2hour", "4h": "4hour", "8h": "8hour",
@@ -51,10 +50,6 @@ def _fetch_kucoin(symbol: str, interval: str, limit: int):
 
 
 def _fetch_coingecko_ohlcv(symbol: str) -> list | None:
-    """
-    Fallback: CoinGecko OHLCV
-    אזהרה: נפח המסחר בנתונים אלו הינו דמה (Dummy) ולא מתאים למדדי Flow.
-    """
     base = symbol.replace("USDT", "").lower()
     mapping = {
         "btc": "bitcoin", "eth": "ethereum", "sol": "solana",
@@ -155,7 +150,7 @@ def get_all_timeframes(symbol: str) -> dict:
 
 
 # ============================================================
-# ✅ תיקון קריטי – get_ticker_24h
+# ✅ get_ticker_24h – מתוקן
 # ============================================================
 def get_ticker_24h(symbol: str) -> dict | None:
     """
@@ -173,7 +168,6 @@ def get_ticker_24h(symbol: str) -> dict | None:
             if data.get("code") == "200000":
                 stats = data.get("data", {})
                 if stats:
-                    # לוודא שיש volValue (נפח ב-USDT)
                     vol_value = float(stats.get("volValue", 0))
                     if vol_value > 0:
                         return {
@@ -216,9 +210,5 @@ def get_ticker_24h(symbol: str) -> dict | None:
     except Exception as e:
         log.debug(f"Binance ticker error for {symbol}: {e}")
 
-    log.warning(f"All ticker sources failed for {symbol}")
-    return None
-
-    # ✅ אם הכל נכשל – מחזירים None
     log.warning(f"All ticker sources failed for {symbol}")
     return None
