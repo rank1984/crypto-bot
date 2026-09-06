@@ -45,6 +45,7 @@ def _recent_high_stats(df_5m: pd.DataFrame, lookback: int = 20) -> Tuple[float, 
 def scan_coin(symbol: str) -> Optional[dict]:
     dfs = get_all_timeframes(symbol)
     if not all(tf in dfs for tf in ["1min", "5min", "15min", "1hour"]):
+        log.info(f"DEBUG {symbol}: missing timeframe")
         return None
 
     df_1m = dfs["1min"]
@@ -61,7 +62,7 @@ def scan_coin(symbol: str) -> Optional[dict]:
 
     # RVOL filter — מסנן מטבעות ללא נפח בסיסי
     if vol["rvol"] < 0.8:
-        log.debug(f"{symbol}: RVOL {vol['rvol']:.2f} < 0.8 — filtered")
+        log.info(f"DEBUG {symbol}: RVOL {vol['rvol']:.2f} < 0.8 — filtered")
         return None
 
     # Hard filters
@@ -71,7 +72,7 @@ def scan_coin(symbol: str) -> Optional[dict]:
         rvol=vol["rvol"], rs_1h=rs["rs_1h"], momentum_1h=mom["momentum_1h"],
     )
     if not passed:
-        log.debug(f"{symbol}: hard_filter — {reason}")
+        log.info(f"DEBUG {symbol}: hard_filter — {reason}")
         return None
 
     high_price, high_age, pullback = _recent_high_stats(df_5m)
@@ -126,7 +127,7 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "breakout_score": bs,
         "final_score": score,
         "probability": round(score * 0.88, 1),
-        
+
         # flow
         "flow_score": flow["flow_score"],
         "flow_components": flow["components"],
@@ -135,13 +136,13 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "cvd_trend": flow["cvd_trend"],
         "oi_change": flow["oi_change"],
         "funding_rate": flow["funding_rate"],
-        
+
         # pre-breakout
         "pre_score": pre["pre_score"],
         "phase": pre["phase"],
         "phase_label": pre["phase_label"],
         "pre_components": pre["components"],
-        
+
         "is_sympathy": False,
         "leader": "",
         "regime": "",
@@ -198,7 +199,7 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
     sympathy_plays = find_sympathy_plays(leaders, symbols)
 
     results = []
-    cnt = {"rvol": 0, "hard": 0, "ok": 0, "err": 0}
+    cnt = {"rvol": 0, "hard": 0, "ok": 0, "err": 0, "missing": 0}
     _stats = ScanStats() if _HAS_DIAG else None
     if _stats:
         _stats.scanned = len(symbols)
@@ -211,6 +212,7 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
             r = scan_coin(sym)
             if r is None:
                 # scan_coin מטפל בסינון RVOL ו-Hard Filters באופן פנימי
+                # אבל אנחנו לא יודעים בדיוק למה – נספור רק בסוף לפי הלוגים
                 continue
 
             cnt["ok"] += 1
@@ -251,7 +253,7 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
             score += 8
 
         return score
-    
+
     results.sort(key=_rank_score, reverse=True)
 
     # Deduplication — וידוא שכל מטבע מופיע פעם אחת בלבד
@@ -266,7 +268,7 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
     for r in results:
         is_buy = r.get("entry_decision") == "BUY"
         passes_thresh = r.get("final_score", 0) >= min_threshold
-        
+
         if is_buy or passes_thresh:
             top.append(r)
         else:
