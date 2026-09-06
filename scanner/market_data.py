@@ -20,7 +20,6 @@ INTERVAL_MAP = {
     "1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min",
     "1h": "1hour", "2h": "2hour", "4h": "4hour", "8h": "8hour",
     "12h": "12hour", "1d": "1day", "1w": "1week",
-    # תמיכה בפורמט KuCoin המקורי אם כבר הועבר כזה:
     "1min": "1min", "5min": "5min", "15min": "15min", "1hour": "1hour"
 }
 
@@ -36,7 +35,6 @@ def _fetch_kucoin(symbol: str, interval: str, limit: int):
             params={
                 "symbol": kucoin_sym, 
                 "type": kucoin_interval,
-                # חישוב זמן התחלה במידת הצורך או הסתמכות על גבולות KuCoin
             },
             timeout=10,
         )
@@ -45,7 +43,6 @@ def _fetch_kucoin(symbol: str, interval: str, limit: int):
         if data.get("code") != "200000":
             return None
         
-        # חיתוך המערך לפי ה-limit המבוקש
         raw_data = data.get("data", [])
         return raw_data[:limit] if raw_data else []
     except Exception as e:
@@ -88,7 +85,7 @@ def _fetch_coingecko_ohlcv(symbol: str) -> list | None:
         for row in data:
             ts_sec = row[0] // 1000
             o, h, l, c = row[1], row[2], row[3], row[4]
-            vol = 0.0  # מוגדר כ-0 כדי למנוע זיהוי שווא של נפחי מסחר גבוהים
+            vol = 0.0
             result.append([str(ts_sec), str(o), str(c), str(h), str(l), str(vol), str(0)])
         return result
     except Exception as e:
@@ -114,10 +111,8 @@ def get_candles(symbol: str, interval: str, limit: int = CANDLES_PER_TF) -> pd.D
     if cached is not None:
         df = _to_df(cached)
     else:
-        # ניסיון טעינה מ-KuCoin
         raw = _fetch_kucoin(symbol, interval, limit)
 
-        # Fallback ל-CoinGecko רק במידה ו-KuCoin נכשל
         if not raw and interval in ("5m", "5min", "15m", "15min", "1h", "1hour"):
             log.debug(f"KuCoin failed {symbol}/{interval} — trying CoinGecko")
             raw = _fetch_coingecko_ohlcv(symbol)
@@ -129,7 +124,6 @@ def get_candles(symbol: str, interval: str, limit: int = CANDLES_PER_TF) -> pd.D
         time.sleep(_DELAY)
         df = _to_df(raw)
         
-    # שמירה ל-Candle Cache (עבור 5m / 5min)
     if interval in ("5m", "5min"):
         try:
             from storage.candle_cache import save_candles
@@ -150,7 +144,6 @@ def get_all_timeframes(symbol: str) -> dict:
         if df is not None and not df.empty and len(df) >= 5:
             result[tf] = df
 
-    # אם חסר timeframe — שכפול ה-TF הקרוב ביותר
     if result:
         available = list(result.keys())
         for tf in TIMEFRAMES:
@@ -161,9 +154,45 @@ def get_all_timeframes(symbol: str) -> dict:
     return result
 
 
+# ============================================================
+# ✅ תיקון קריטי – get_ticker_24h
+# ============================================================
 def get_ticker_24h(symbol: str) -> dict | None:
-    """מנסה Binance, נופל ל‑KuCoin."""
-    # נסיון Binance
+    """
+    Fetch 24h ticker stats.
+    Primary: KuCoin (spot). Fallback: Binance.
+    Returns dict with at least 'quoteVolume' (USD volume) or None.
+    """
+    # ✅ נסיון 1: KuCoin (הכי אמין)
+    try:
+        kucoin_sym = symbol.replace("USDT", "-USDT")
+        r = requests.get(
+            f"{KUCOIN_BASE}/api/v1/market/stats",
+            params={"symbol": kucoin_sym},
+            headers=_HEADERS,
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("code") == "200000":
+                stats = data.get("data", {})
+                if stats:
+                    return {
+                        "symbol": symbol,
+                        "vol": float(stats.get("vol", 0)),
+                        "last": float(stats.get("last", 0)),
+                        "quoteVolume": float(stats.get("volValue", 0)),  # ✅ KuCoin uses volValue
+                        "change": float(stats.get("changeRate", 0)),
+                        "changePrice": float(stats.get("changePrice", 0)),
+                        "high": float(stats.get("high", 0)),
+                        "low": float(stats.get("low", 0)),
+                        "open": float(stats.get("open", 0)),
+                        "averagePrice": float(stats.get("averagePrice", 0)),
+                    }
+    except Exception as e:
+        log.debug(f"KuCoin ticker failed for {symbol}: {e}")
+
+    # ✅ נסיון 2: Binance (fallback)
     try:
         r = requests.get(
             f"https://api.binance.com/api/v3/ticker/24hr",
@@ -172,23 +201,23 @@ def get_ticker_24h(symbol: str) -> dict | None:
             timeout=5
         )
         if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
+            data = r.json()
+            if data:
+                return {
+                    "symbol": symbol,
+                    "vol": float(data.get("volume", 0)),
+                    "last": float(data.get("lastPrice", 0)),
+                    "quoteVolume": float(data.get("quoteVolume", 0)),
+                    "change": float(data.get("priceChangePercent", 0)) / 100,
+                    "changePrice": float(data.get("priceChange", 0)),
+                    "high": float(data.get("highPrice", 0)),
+                    "low": float(data.get("lowPrice", 0)),
+                    "open": float(data.get("openPrice", 0)),
+                    "averagePrice": float(data.get("weightedAvgPrice", 0)),
+                }
+    except Exception as e:
+        log.debug(f"Binance ticker failed for {symbol}: {e}")
 
-    # Fallback ל‑KuCoin
-    try:
-        kucoin_sym = symbol.replace("USDT", "-USDT")
-        r = requests.get(
-            f"{KUCOIN_BASE}/api/v1/market/stats",
-            params={"symbol": kucoin_sym},
-            headers=_HEADERS,
-            timeout=5
-        )
-        if r.status_code == 200:
-            data = r.json().get("data", {})
-            return {"quoteVolume": data.get("volValue", 0)}
-    except Exception:
-        pass
-
+    # ✅ אם הכל נכשל – מחזירים None
+    log.warning(f"All ticker sources failed for {symbol}")
     return None
