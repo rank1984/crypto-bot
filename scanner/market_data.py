@@ -22,7 +22,6 @@ INTERVAL_MAP = {
     "1min": "1min", "5min": "5min", "15min": "15min", "1hour": "1hour"
 }
 
-# Binance interval mapping
 BINANCE_INTERVAL_MAP = {
     "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
     "1h": "1h", "2h": "2h", "4h": "4h", "8h": "8h",
@@ -32,7 +31,6 @@ BINANCE_INTERVAL_MAP = {
 
 
 def _fetch_binance_candles(symbol: str, interval: str, limit: int):
-    """Primary: Binance public API (no API key needed)."""
     binance_interval = BINANCE_INTERVAL_MAP.get(interval, interval)
     try:
         resp = requests.get(
@@ -47,7 +45,6 @@ def _fetch_binance_candles(symbol: str, interval: str, limit: int):
         data = resp.json()
         if not data:
             return None
-        # Binance format: [openTime, open, high, low, close, volume, closeTime, quoteVolume, ...]
         result = []
         for row in data:
             ts = int(row[0]) // 1000
@@ -62,7 +59,6 @@ def _fetch_binance_candles(symbol: str, interval: str, limit: int):
 
 
 def _fetch_kucoin_candles(symbol: str, interval: str, limit: int):
-    """Fallback: KuCoin."""
     kucoin_sym = symbol.replace("USDT", "-USDT")
     kucoin_interval = INTERVAL_MAP.get(interval, interval)
     try:
@@ -85,7 +81,6 @@ def _fetch_kucoin_candles(symbol: str, interval: str, limit: int):
 
 
 def _fetch_coingecko_ohlcv(symbol: str) -> list | None:
-    """Ultimate fallback: CoinGecko (only for major coins)."""
     base = symbol.replace("USDT", "").lower()
     mapping = {
         "btc": "bitcoin", "eth": "ethereum", "sol": "solana",
@@ -137,20 +132,16 @@ def _to_df(raw: list) -> pd.DataFrame:
 
 
 def get_candles(symbol: str, interval: str, limit: int = CANDLES_PER_TF) -> pd.DataFrame | None:
-    # Check cache first
     cached = cache_load(symbol, interval)
     if cached is not None:
         return _to_df(cached)
 
-    # Try Binance first
     raw = _fetch_binance_candles(symbol, interval, limit)
 
-    # If Binance fails, try KuCoin
     if not raw:
         log.debug(f"Binance failed for {symbol}/{interval}, trying KuCoin")
         raw = _fetch_kucoin_candles(symbol, interval, limit)
 
-    # If both fail, try CoinGecko (only for some intervals)
     if not raw and interval in ("5m", "5min", "15m", "15min", "1h", "1hour"):
         log.debug(f"KuCoin failed for {symbol}/{interval}, trying CoinGecko")
         raw = _fetch_coingecko_ohlcv(symbol)
@@ -163,7 +154,6 @@ def get_candles(symbol: str, interval: str, limit: int = CANDLES_PER_TF) -> pd.D
     time.sleep(_DELAY)
     df = _to_df(raw)
 
-    # Save to candle_cache for 5m
     if interval in ("5m", "5min"):
         try:
             from storage.candle_cache import save_candles
@@ -243,4 +233,84 @@ def get_ticker_24h(symbol: str) -> dict | None:
         log.debug(f"KuCoin ticker error for {symbol}: {e}")
 
     log.warning(f"All ticker sources failed for {symbol}")
-    return None 
+    return None
+
+
+# ============================================================
+# ✅ NEW: Bulk ticker – one request for all symbols
+# ============================================================
+def get_all_tickers_24h() -> dict:
+    """
+    Fetch 24h ticker stats for ALL symbols in one request.
+    Returns dict: {symbol: {quoteVolume, vol, last, ...}}
+    """
+    # Binance first (returns all tickers)
+    try:
+        r = requests.get(
+            "https://api.binance.com/api/v3/ticker/24hr",
+            headers=_HEADERS,
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            result = {}
+            for item in data:
+                symbol = item.get("symbol", "")
+                if symbol.endswith("USDT"):
+                    result[symbol] = {
+                        "symbol": symbol,
+                        "vol": float(item.get("volume", 0)),
+                        "last": float(item.get("lastPrice", 0)),
+                        "quoteVolume": float(item.get("quoteVolume", 0)),
+                        "change": float(item.get("priceChangePercent", 0)) / 100,
+                        "changePrice": float(item.get("priceChange", 0)),
+                        "high": float(item.get("highPrice", 0)),
+                        "low": float(item.get("lowPrice", 0)),
+                        "open": float(item.get("openPrice", 0)),
+                        "averagePrice": float(item.get("weightedAvgPrice", 0)),
+                    }
+            if result:
+                log.info(f"Bulk ticker Binance: HTTP 200, raw symbols={len(data)}, USDT symbols={len(result)}")
+                return result
+            else:
+                log.warning(f"Binance bulk ticker returned 0 USDT symbols (raw={len(data)})")
+    except Exception as e:
+        log.warning(f"Binance bulk ticker failed: {e}")
+
+    # KuCoin fallback (allTickers)
+    try:
+        r = requests.get(
+            f"{KUCOIN_BASE}/api/v1/market/allTickers",
+            headers=_HEADERS,
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("code") == "200000":
+                tickers = data.get("data", {}).get("ticker", [])
+                result = {}
+                for item in tickers:
+                    symbol = item.get("symbol", "").replace("-", "")
+                    if symbol.endswith("USDT"):
+                        result[symbol] = {
+                            "symbol": symbol,
+                            "vol": float(item.get("vol", 0)),
+                            "last": float(item.get("last", 0)),
+                            "quoteVolume": float(item.get("volValue", 0)),
+                            "change": float(item.get("changeRate", 0)),
+                            "changePrice": float(item.get("changePrice", 0)),
+                            "high": float(item.get("high", 0)),
+                            "low": float(item.get("low", 0)),
+                            "open": float(item.get("open", 0)),
+                            "averagePrice": float(item.get("averagePrice", 0)),
+                        }
+                if result:
+                    log.info(f"Bulk ticker KuCoin: HTTP 200, raw symbols={len(tickers)}, USDT symbols={len(result)}")
+                    return result
+                else:
+                    log.warning(f"KuCoin bulk ticker returned 0 USDT symbols (raw={len(tickers)})")
+    except Exception as e:
+        log.warning(f"KuCoin bulk ticker failed: {e}")
+
+    log.error("All bulk ticker sources failed – returning empty dict")
+    return {}
