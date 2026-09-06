@@ -147,28 +147,58 @@ def build_dynamic_universe(btc_1h_move: float = 0.0) -> list[str]:
         f"(OI:{len(oi_l)} Comp:{len(comp_l)} RS:{len(rs_l)} Base:{len(base)})"
     )
 
-    # ── Liquidity filter – with detailed diagnostics ──────────────
+    # ── Liquidity filter – bulk ticker ───────────────────────────
     try:
-        from scanner.market_data import get_ticker_24h
+        from scanner.market_data import get_all_tickers_24h
+
+        all_tickers = get_all_tickers_24h()
+
+        if not all_tickers:
+            log.error(
+                "LIQUIDITY DATA ERROR: bulk ticker returned no data. "
+                "Cannot distinguish API failure from illiquidity."
+            )
+            return []
+
         filtered = []
+        matched = 0
+        missing = 0
+        below_threshold = 0
+
         for sym in result:
-            ticker = get_ticker_24h(sym)
+            ticker = all_tickers.get(sym)
+
             if ticker is None:
-                log.warning(f"LIQUIDITY DEBUG {sym}: ticker=None")
+                missing += 1
                 continue
-            quote_vol = ticker.get("quoteVolume", 0)
+
+            matched += 1
+
+            quote_vol = float(ticker.get("quoteVolume", 0) or 0)
+
             if quote_vol <= 100_000:
-                log.warning(
-                    f"LIQUIDITY DEBUG {sym}: "
-                    f"quoteVolume={quote_vol} "
-                    f"vol={ticker.get('vol')} "
-                    f"last={ticker.get('last')}"
-                )
+                below_threshold += 1
                 continue
+
             filtered.append(sym)
+
         result = filtered
-        log.info(f"Dynamic Universe after liquidity filter: {len(result)} coins")
+
+        log.info(
+            f"Liquidity diagnostics: "
+            f"candidates={len(result) + missing + below_threshold} "
+            f"matched={matched} "
+            f"missing={missing} "
+            f"below_100k={below_threshold} "
+            f"passed={len(result)}"
+        )
+
+        log.info(
+            f"Dynamic Universe after liquidity filter: {len(result)} coins"
+        )
+
     except Exception as e:
-        log.warning(f"Liquidity filter skipped: {e}")
+        log.exception(f"LIQUIDITY DATA ERROR: {e}")
+        return []
 
     return result
