@@ -1,6 +1,6 @@
 """
 CRYPTO-BOT Elite — Market Data
-מקור ראשי: KuCoin. Fallback: CoinGecko OHLCV.
+מקור ראשי: KuCoin. Fallback: Binance (candles) + CoinGecko (OHLCV).
 """
 import time
 import pandas as pd
@@ -22,8 +22,16 @@ INTERVAL_MAP = {
     "1min": "1min", "5min": "5min", "15min": "15min", "1hour": "1hour"
 }
 
+# מיפוי אינטרוולים ל-Binance
+BINANCE_INTERVAL_MAP = {
+    "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+    "1h": "1h", "2h": "2h", "4h": "4h", "8h": "8h",
+    "12h": "12h", "1d": "1d", "1w": "1w",
+    "1min": "1m", "5min": "5m", "15min": "15m", "1hour": "1h"
+}
 
-def _fetch_kucoin(symbol: str, interval: str, limit: int):
+
+def _fetch_kucoin_candles(symbol: str, interval: str, limit: int):
     kucoin_sym = symbol.replace("USDT", "-USDT")
     kucoin_interval = INTERVAL_MAP.get(interval, interval)
     
@@ -40,12 +48,40 @@ def _fetch_kucoin(symbol: str, interval: str, limit: int):
         resp.raise_for_status()
         data = resp.json()
         if data.get("code") != "200000":
+            log.debug(f"KuCoin API error {symbol}/{interval}: {data.get('msg')}")
             return None
-        
         raw_data = data.get("data", [])
         return raw_data[:limit] if raw_data else []
     except Exception as e:
         log.debug(f"KuCoin failed {symbol}/{interval}: {e}")
+        return None
+
+
+def _fetch_binance_candles(symbol: str, interval: str, limit: int):
+    """Fallback: Binance public API (no API key needed)."""
+    binance_interval = BINANCE_INTERVAL_MAP.get(interval, interval)
+    try:
+        resp = requests.get(
+            "https://api.binance.com/api/v3/klines",
+            params={"symbol": symbol.upper(), "interval": binance_interval, "limit": limit},
+            headers=_HEADERS,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not data:
+            return None
+        # Binance format: [openTime, open, high, low, close, volume, closeTime, ...]
+        result = []
+        for row in data:
+            ts = int(row[0]) // 1000
+            o, h, l, c = row[1], row[2], row[3], row[4]
+            vol = row[5]
+            quote_vol = row[7] if len(row) > 7 else 0
+            result.append([str(ts), str(o), str(c), str(h), str(l), str(vol), str(quote_vol)])
+        return result
+    except Exception as e:
+        log.debug(f"Binance failed {symbol}/{interval}: {e}")
         return None
 
 
@@ -75,7 +111,6 @@ def _fetch_coingecko_ohlcv(symbol: str) -> list | None:
         data = r.json()
         if not data or not isinstance(data, list):
             return None
-            
         result = []
         for row in data:
             ts_sec = row[0] // 1000
@@ -105,20 +140,29 @@ def get_candles(symbol: str, interval: str, limit: int = CANDLES_PER_TF) -> pd.D
     cached = cache_load(symbol, interval)
     if cached is not None:
         df = _to_df(cached)
-    else:
-        raw = _fetch_kucoin(symbol, interval, limit)
+        return df
 
-        if not raw and interval in ("5m", "5min", "15m", "15min", "1h", "1hour"):
-            log.debug(f"KuCoin failed {symbol}/{interval} — trying CoinGecko")
-            raw = _fetch_coingecko_ohlcv(symbol)
+    # 1. KuCoin
+    raw = _fetch_kucoin_candles(symbol, interval, limit)
+    
+    # 2. Fallback to Binance (if KuCoin fails)
+    if not raw:
+        log.debug(f"KuCoin failed for {symbol}/{interval}, trying Binance")
+        raw = _fetch_binance_candles(symbol, interval, limit)
+    
+    # 3. Fallback to CoinGecko (only for 5m, 15m, 1h)
+    if not raw and interval in ("5m", "5min", "15m", "15min", "1h", "1hour"):
+        log.debug(f"Binance failed for {symbol}/{interval}, trying CoinGecko")
+        raw = _fetch_coingecko_ohlcv(symbol)
 
-        if not raw:
-            return None
+    if not raw:
+        log.warning(f"No data for {symbol}/{interval}")
+        return None
 
-        cache_save(symbol, interval, raw)
-        time.sleep(_DELAY)
-        df = _to_df(raw)
-        
+    cache_save(symbol, interval, raw)
+    time.sleep(_DELAY)
+    df = _to_df(raw)
+    
     if interval in ("5m", "5min"):
         try:
             from storage.candle_cache import save_candles
@@ -134,64 +178,54 @@ def get_candles(symbol: str, interval: str, limit: int = CANDLES_PER_TF) -> pd.D
 
 def get_all_timeframes(symbol: str) -> dict:
     result = {}
-    for tf in TIMEFRAMES:
-        df = get_candles(symbol, tf)
+    # נסה להביא את כל ה-timeframes, אבל אם אחד חסר – לא נכשל
+    for tf in ["1min", "5min", "15min", "1hour", "4hour", "1day"]:
+        df = get_candles(symbol, tf, limit=50)
         if df is not None and not df.empty and len(df) >= 5:
             result[tf] = df
-
-    if result:
-        available = list(result.keys())
-        for tf in TIMEFRAMES:
-            if tf not in result:
-                result[tf] = result[available[0]].copy()
-                log.debug(f"{symbol}: {tf} missing, using {available[0]} as proxy")
-
+        else:
+            log.debug(f"{symbol}: {tf} not available")
     return result
 
 
-# ============================================================
-# ✅ get_ticker_24h – מתוקן
-# ============================================================
 def get_ticker_24h(symbol: str) -> dict | None:
-    """
-    Fetch 24h ticker stats from KuCoin (primary) and Binance (fallback).
-    Returns dict with 'quoteVolume' (USD volume) and other fields.
-    """
-    # 1. KuCoin (מועדף)
+    # KuCoin
     try:
         kucoin_sym = symbol.replace("USDT", "-USDT")
-        url = f"{KUCOIN_BASE}/api/v1/market/stats"
-        params = {"symbol": kucoin_sym}
-        r = requests.get(url, params=params, headers=_HEADERS, timeout=10)
+        r = requests.get(
+            f"{KUCOIN_BASE}/api/v1/market/stats",
+            params={"symbol": kucoin_sym},
+            headers=_HEADERS,
+            timeout=5
+        )
         if r.status_code == 200:
             data = r.json()
             if data.get("code") == "200000":
                 stats = data.get("data", {})
-                if stats:
-                    vol_value = float(stats.get("volValue", 0))
-                    if vol_value > 0:
-                        return {
-                            "symbol": symbol,
-                            "vol": float(stats.get("vol", 0)),
-                            "last": float(stats.get("last", 0)),
-                            "quoteVolume": vol_value,
-                            "change": float(stats.get("changeRate", 0)),
-                            "changePrice": float(stats.get("changePrice", 0)),
-                            "high": float(stats.get("high", 0)),
-                            "low": float(stats.get("low", 0)),
-                            "open": float(stats.get("open", 0)),
-                            "averagePrice": float(stats.get("averagePrice", 0)),
-                        }
-                    else:
-                        log.debug(f"KuCoin volValue=0 for {symbol}, trying fallback")
+                if stats and stats.get("volValue"):
+                    return {
+                        "symbol": symbol,
+                        "vol": float(stats.get("vol", 0)),
+                        "last": float(stats.get("last", 0)),
+                        "quoteVolume": float(stats.get("volValue", 0)),
+                        "change": float(stats.get("changeRate", 0)),
+                        "changePrice": float(stats.get("changePrice", 0)),
+                        "high": float(stats.get("high", 0)),
+                        "low": float(stats.get("low", 0)),
+                        "open": float(stats.get("open", 0)),
+                        "averagePrice": float(stats.get("averagePrice", 0)),
+                    }
     except Exception as e:
         log.debug(f"KuCoin ticker error for {symbol}: {e}")
 
-    # 2. Binance (fallback)
+    # Binance fallback
     try:
-        url = "https://api.binance.com/api/v3/ticker/24hr"
-        params = {"symbol": symbol.upper()}
-        r = requests.get(url, params=params, headers=_HEADERS, timeout=5)
+        r = requests.get(
+            "https://api.binance.com/api/v3/ticker/24hr",
+            params={"symbol": symbol.upper()},
+            headers=_HEADERS,
+            timeout=5
+        )
         if r.status_code == 200:
             data = r.json()
             if data and data.get("quoteVolume"):
