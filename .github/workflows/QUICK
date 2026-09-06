@@ -1,0 +1,13 @@
+- name: 🧪 Quick test get_ticker_24h
+  run: |
+    python -c "
+from scanner.market_data import get_ticker_24h
+ticker = get_ticker_24h('BTCUSDT')
+print('ticker:', ticker)
+if ticker:
+    print('quoteVolume:', ticker.get('quoteVolume'))
+    print('vol:', ticker.get('vol'))
+    print('last:', ticker.get('last'))
+else:
+    print('❌ Still None')
+"
