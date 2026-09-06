@@ -147,21 +147,7 @@ def build_dynamic_universe(btc_1h_move: float = 0.0) -> list[str]:
         f"(OI:{len(oi_l)} Comp:{len(comp_l)} RS:{len(rs_l)} Base:{len(base)})"
     )
 
-    # ── Liquidity filter – TEMPORARILY DISABLED for debugging ──
-    # try:
-    #     from scanner.market_data import get_ticker_24h
-    #     filtered = []
-    #     for sym in result:
-    #         ticker = get_ticker_24h(sym)
-    #         if ticker:
-    #             vol = ticker.get("quoteVolume")
-    #             if vol is not None and float(vol) > 100_000:
-    #                 filtered.append(sym)
-    #     result = filtered
-    #     log.info(f"Dynamic Universe after liquidity filter: {len(result)} coins")
-    # except Exception as e:
-    #     log.warning(f"Liquidity filter skipped: {e}")
-
-    # 🟢 Liquidity filter disabled – returning all coins
-    log.info(f"Liquidity filter DISABLED – returning {len(result)} coins (debug mode)")
+    # ── Liquidity filter – DISABLED TEMPORARILY ──────────────────
+    # This will be restored once get_ticker_24h is fixed.
+    log.info(f"Liquidity filter DISABLED (debug mode) – returning {len(result)} coins")
     return result
