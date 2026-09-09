@@ -29,6 +29,11 @@ except ImportError:
 
 log = get_logger(__name__)
 
+# ============================================================
+# ✅ RVOL Configuration – Experimental
+# ============================================================
+MIN_RVOL = 0.4   # Temporary – will be tuned after data collection
+
 
 def _recent_high_stats(df_5m: pd.DataFrame, lookback: int = 20) -> Tuple[float, float, float]:
     if df_5m is None or len(df_5m) < 2:
@@ -45,7 +50,7 @@ def _recent_high_stats(df_5m: pd.DataFrame, lookback: int = 20) -> Tuple[float, 
 def scan_coin(symbol: str) -> Optional[dict]:
     dfs = get_all_timeframes(symbol)
     if not all(tf in dfs for tf in ["1min", "5min", "15min", "1hour"]):
-        log.info(f"DEBUG {symbol}: missing timeframe")
+        log.debug(f"{symbol}: missing timeframe")
         return None
 
     df_1m = dfs["1min"]
@@ -60,9 +65,10 @@ def scan_coin(symbol: str) -> Optional[dict]:
     ind = calc_indicators(df_5m, df_1h)
     rs = calc_relative_strength(df_1h)
 
-    # RVOL filter — מסנן מטבעות ללא נפח בסיסי
-    if vol["rvol"] < 0.8:
-        log.info(f"DEBUG {symbol}: RVOL {vol['rvol']:.2f} < 0.8 — filtered")
+    # ── RVOL filter with configurable threshold ────────────────
+    rvol = vol["rvol"]
+    if rvol < MIN_RVOL:
+        log.debug(f"{symbol}: RVOL {rvol:.2f} < {MIN_RVOL:.2f} — filtered")
         return None
 
     # Hard filters
@@ -72,7 +78,7 @@ def scan_coin(symbol: str) -> Optional[dict]:
         rvol=vol["rvol"], rs_1h=rs["rs_1h"], momentum_1h=mom["momentum_1h"],
     )
     if not passed:
-        log.info(f"DEBUG {symbol}: hard_filter — {reason}")
+        log.debug(f"{symbol}: hard_filter — {reason}")
         return None
 
     high_price, high_age, pullback = _recent_high_stats(df_5m)
@@ -205,19 +211,36 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
         _stats.scanned = len(symbols)
         _stats.regime = regime
 
+    # ── RVOL Statistics ───────────────────────────────────────────────
+    rvol_buckets = {
+        f"rvol_<{MIN_RVOL}": 0,
+        f"rvol_{MIN_RVOL:.1f}_to_0.6": 0,
+        "rvol_0.6_to_0.8": 0,
+        "rvol_>=0.8": 0,
+    }
+
     for i, sym in enumerate(symbols, 1):
         if i % 50 == 0:
             log.info(f"Scanning {i}/{len(symbols)}... ok={cnt['ok']} rvol_fail={cnt['rvol']} hard_fail={cnt['hard']}")
         try:
             r = scan_coin(sym)
             if r is None:
-                # scan_coin מטפל בסינון RVOL ו-Hard Filters באופן פנימי
-                # אבל אנחנו לא יודעים בדיוק למה – נספור רק בסוף לפי הלוגים
                 continue
 
             cnt["ok"] += 1
             if _stats and "flow_score" in r:
                 _stats.record_flow(r["flow_score"])
+
+            # Track RVOL buckets
+            rvol = r.get("rvol", 0)
+            if rvol < MIN_RVOL:
+                rvol_buckets[f"rvol_<{MIN_RVOL}"] += 1
+            elif rvol < 0.6:
+                rvol_buckets[f"rvol_{MIN_RVOL:.1f}_to_0.6"] += 1
+            elif rvol < 0.8:
+                rvol_buckets["rvol_0.6_to_0.8"] += 1
+            else:
+                rvol_buckets["rvol_>=0.8"] += 1
 
             s_bonus = sympathy_bonus(r, sympathy_plays)
             if s_bonus > 0:
@@ -235,13 +258,20 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
 
     log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters")
 
-    # ── דירוג מורכב מעודכן (מתן משקל גבוה ל-Flow ו-Pre) ───────────────────────
+    # ── RVOL Diagnostics ──────────────────────────────────────────────
+    log.info(
+        f"RVOL diagnostics: "
+        f"{' | '.join([f'{k}={v}' for k, v in rvol_buckets.items()])} "
+        f"passed={cnt['ok']}"
+    )
+
+    # ── Ranking ────────────────────────────────────────────────────────
     def _rank_score(x: dict) -> float:
         score = (
-            x.get("flow_score", 0) * 0.35 +   # הועלה מ-0.30
-            x.get("pre_score", 0) * 0.30 +    # הועלה מ-0.25
-            x.get("final_score", 0) * 0.15 +  # הורד מ-0.20
-            x.get("probability", 0) * 0.10    # הורד מ-0.15
+            x.get("flow_score", 0) * 0.35 +
+            x.get("pre_score", 0) * 0.30 +
+            x.get("final_score", 0) * 0.15 +
+            x.get("probability", 0) * 0.10
         )
 
         if x.get("entry_decision") == "BUY":
@@ -256,7 +286,7 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
 
     results.sort(key=_rank_score, reverse=True)
 
-    # Deduplication — וידוא שכל מטבע מופיע פעם אחת בלבד
+    # Deduplication
     seen, unique = set(), []
     for r in results:
         if r["symbol"] not in seen:
@@ -291,7 +321,7 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
     for coin in top:
         try:
             save_signal(
-                coin, 
+                coin,
                 regime=regime,
                 is_sympathy=coin.get("is_sympathy", False),
                 leader=coin.get("leader", "")
