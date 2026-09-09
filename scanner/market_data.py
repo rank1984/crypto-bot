@@ -30,6 +30,20 @@ BINANCE_INTERVAL_MAP = {
 }
 
 
+def _safe_float(value, default=0.0):
+    """Safe conversion to float – handles None, strings, ints."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+    return default
+
+
 def _fetch_binance_candles(symbol: str, interval: str, limit: int):
     binance_interval = BINANCE_INTERVAL_MAP.get(interval, interval)
     try:
@@ -179,7 +193,7 @@ def get_all_timeframes(symbol: str) -> dict:
 
 
 def get_ticker_24h(symbol: str) -> dict | None:
-    # KuCoin first (more reliable in GitHub Actions)
+    # KuCoin first
     try:
         kucoin_sym = symbol.replace("USDT", "-USDT")
         r = requests.get(
@@ -192,18 +206,18 @@ def get_ticker_24h(symbol: str) -> dict | None:
             data = r.json()
             if data.get("code") == "200000":
                 stats = data.get("data", {})
-                if stats and stats.get("volValue"):
+                if stats:
                     return {
                         "symbol": symbol,
-                        "vol": float(stats.get("vol", 0)),
-                        "last": float(stats.get("last", 0)),
-                        "quoteVolume": float(stats.get("volValue", 0)),
-                        "change": float(stats.get("changeRate", 0)),
-                        "changePrice": float(stats.get("changePrice", 0)),
-                        "high": float(stats.get("high", 0)),
-                        "low": float(stats.get("low", 0)),
-                        "open": float(stats.get("open", 0)),
-                        "averagePrice": float(stats.get("averagePrice", 0)),
+                        "vol": _safe_float(stats.get("vol")),
+                        "last": _safe_float(stats.get("last")),
+                        "quoteVolume": _safe_float(stats.get("volValue")),
+                        "change": _safe_float(stats.get("changeRate")),
+                        "changePrice": _safe_float(stats.get("changePrice")),
+                        "high": _safe_float(stats.get("high")),
+                        "low": _safe_float(stats.get("low")),
+                        "open": _safe_float(stats.get("open")),
+                        "averagePrice": _safe_float(stats.get("averagePrice")),
                     }
     except Exception as e:
         log.debug(f"KuCoin ticker error for {symbol}: {e}")
@@ -218,18 +232,18 @@ def get_ticker_24h(symbol: str) -> dict | None:
         )
         if r.status_code == 200:
             data = r.json()
-            if data and data.get("quoteVolume"):
+            if data:
                 return {
                     "symbol": symbol,
-                    "vol": float(data.get("volume", 0)),
-                    "last": float(data.get("lastPrice", 0)),
-                    "quoteVolume": float(data.get("quoteVolume", 0)),
-                    "change": float(data.get("priceChangePercent", 0)) / 100,
-                    "changePrice": float(data.get("priceChange", 0)),
-                    "high": float(data.get("highPrice", 0)),
-                    "low": float(data.get("lowPrice", 0)),
-                    "open": float(data.get("openPrice", 0)),
-                    "averagePrice": float(data.get("weightedAvgPrice", 0)),
+                    "vol": _safe_float(data.get("volume")),
+                    "last": _safe_float(data.get("lastPrice")),
+                    "quoteVolume": _safe_float(data.get("quoteVolume")),
+                    "change": _safe_float(data.get("priceChangePercent", 0)) / 100,
+                    "changePrice": _safe_float(data.get("priceChange")),
+                    "high": _safe_float(data.get("highPrice")),
+                    "low": _safe_float(data.get("lowPrice")),
+                    "open": _safe_float(data.get("openPrice")),
+                    "averagePrice": _safe_float(data.get("weightedAvgPrice")),
                 }
     except Exception as e:
         log.debug(f"Binance ticker error for {symbol}: {e}")
@@ -261,17 +275,18 @@ def get_all_tickers_24h() -> dict:
                 for item in tickers:
                     symbol = item.get("symbol", "").replace("-", "")
                     if symbol.endswith("USDT"):
+                        # Use _safe_float to handle None values
                         result[symbol] = {
                             "symbol": symbol,
-                            "vol": float(item.get("vol", 0)),
-                            "last": float(item.get("last", 0)),
-                            "quoteVolume": float(item.get("volValue", 0)),
-                            "change": float(item.get("changeRate", 0)),
-                            "changePrice": float(item.get("changePrice", 0)),
-                            "high": float(item.get("high", 0)),
-                            "low": float(item.get("low", 0)),
-                            "open": float(item.get("open", 0)),
-                            "averagePrice": float(item.get("averagePrice", 0)),
+                            "vol": _safe_float(item.get("vol")),
+                            "last": _safe_float(item.get("last")),
+                            "quoteVolume": _safe_float(item.get("volValue")),
+                            "change": _safe_float(item.get("changeRate")),
+                            "changePrice": _safe_float(item.get("changePrice")),
+                            "high": _safe_float(item.get("high")),
+                            "low": _safe_float(item.get("low")),
+                            "open": _safe_float(item.get("open")),
+                            "averagePrice": _safe_float(item.get("averagePrice")),
                         }
                 if result:
                     log.info(f"✅ Bulk ticker KuCoin: HTTP 200, raw symbols={len(tickers)}, USDT symbols={len(result)}")
@@ -285,7 +300,7 @@ def get_all_tickers_24h() -> dict:
     except Exception as e:
         log.warning(f"KuCoin bulk ticker exception: {e}")
 
-    # 2. Binance fallback (may be blocked in some regions)
+    # 2. Binance fallback
     try:
         r = requests.get(
             "https://api.binance.com/api/v3/ticker/24hr",
@@ -300,15 +315,15 @@ def get_all_tickers_24h() -> dict:
                 if symbol.endswith("USDT"):
                     result[symbol] = {
                         "symbol": symbol,
-                        "vol": float(item.get("volume", 0)),
-                        "last": float(item.get("lastPrice", 0)),
-                        "quoteVolume": float(item.get("quoteVolume", 0)),
-                        "change": float(item.get("priceChangePercent", 0)) / 100,
-                        "changePrice": float(item.get("priceChange", 0)),
-                        "high": float(item.get("highPrice", 0)),
-                        "low": float(item.get("lowPrice", 0)),
-                        "open": float(item.get("openPrice", 0)),
-                        "averagePrice": float(item.get("weightedAvgPrice", 0)),
+                        "vol": _safe_float(item.get("volume")),
+                        "last": _safe_float(item.get("lastPrice")),
+                        "quoteVolume": _safe_float(item.get("quoteVolume")),
+                        "change": _safe_float(item.get("priceChangePercent", 0)) / 100,
+                        "changePrice": _safe_float(item.get("priceChange")),
+                        "high": _safe_float(item.get("highPrice")),
+                        "low": _safe_float(item.get("lowPrice")),
+                        "open": _safe_float(item.get("openPrice")),
+                        "averagePrice": _safe_float(item.get("weightedAvgPrice")),
                     }
             if result:
                 log.info(f"✅ Bulk ticker Binance: HTTP 200, raw symbols={len(data)}, USDT symbols={len(result)}")
