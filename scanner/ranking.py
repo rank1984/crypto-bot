@@ -81,7 +81,13 @@ def scan_coin(symbol: str) -> Optional[dict]:
         log.debug(f"{symbol}: hard_filter — {reason}")
         return None
 
-    high_price, high_age, pullback = _recent_high_stats(df_5m)
+    # ── Recent High Stats (with error handling) ────────────────
+    try:
+        high_price, high_age, pullback = _recent_high_stats(df_5m)
+    except Exception as e:
+        log.warning(f"{symbol}: recent_high_stats failed - {e}")
+        return None
+
     proximity = (high_price - last_price) / high_price * 100 if high_price > 0 else 0.0
 
     fs = freshness_score(high_age, pullback, mom["momentum_5m"], ind["vwap_dist"], vol["vol_accel"])
