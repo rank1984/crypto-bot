@@ -1,253 +1,180 @@
 """
-CRYPTO-BOT Elite — Entry Engine v1
-
-מפסיק "לדרג מטבעות" ומתחיל להגיד:
-    BUY  — עם מחיר כניסה, SL, TP
-    WAIT — setup קיים אבל טריגר עוד לא הופעל
-    NO   — אין setup או שוק לא מאפשר
+scanner/entry_engine.py
+Entry Engine – determines entry, stop, targets, and decision (BUY/WAIT/NO).
 """
-import os
-from datetime import datetime
-from dataclasses import dataclass
-from typing import Optional
-import pandas as pd
-from utils.logger import get_logger
-from tools.shadow_mode import record_trade
 
-GLOBAL_MARKET_HEALTH = 50.0
-GLOBAL_NEWS_SCORE = 50.0
-GLOBAL_BTC_REGIME = ""
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
+import math
+from utils.logger import get_logger
 
 log = get_logger(__name__)
 
-# ─── Data Classes ─────────────────────────────────────────────────────────────
 
 @dataclass
 class EntrySignal:
-    decision:   str        # "BUY" / "WAIT" / "NO"
-    setup_type: str        # "BREAKOUT" / "VWAP_RECLAIM" / "DIP_BUY" / ""
-    entry:      float      # מחיר כניסה מדויק
-    sl:         float      # Stop Loss
-    tp1:        float      # Take Profit 1
-    tp2:        float      # Take Profit 2
-    rr:         float      # Risk:Reward ratio
-    reason:     str        # הסבר קצר
+    decision: str          # "BUY", "WAIT", "NO"
+    setup_type: str        # "DIP_BUY", "VWAP_RECLAIM", "BREAKOUT", "UNKNOWN"
+    entry: float
+    sl: float
+    tp1: float
+    tp2: float
+    rr: float              # risk/reward ratio
+    reason: str
 
-# ─── 1. Market Filter ─────────────────────────────────────────────────────────
-
-def market_allows_trade(
-    btc_mom_1h:  float,
-    btc_mom_5m:  float,
-    rs_1h:       float,
-) -> tuple[bool, str]:
-    if btc_mom_5m < -1.5:
-        return False, f"BTC dumping {btc_mom_5m:.1f}% in 5m"
-    if btc_mom_1h < -2.0:
-        return False, f"BTC 1h bearish {btc_mom_1h:.1f}%"
-    if rs_1h < 0 and btc_mom_1h < 0:
-        return False, f"Weak vs BTC ({rs_1h:.1f}%) + BTC negative"
-    return True, ""
-
-# ─── 2. Setup Engine ──────────────────────────────────────────────────────────
-
-def _consolidation_range(df_5m: pd.DataFrame, lookback: int = 12) -> tuple[float, float]:
-    window = df_5m.iloc[-lookback:]
-    return float(window["low"].min()), float(window["high"].max())
-
-def detect_setup(
-    df_5m:    pd.DataFrame,
-    vwap:     float,
-    rsi:      float,
-    rvol:     float,
-    mom_5m:   float,
-    mom_15m:  float,
-    mom_1h:   float,
-    ema20:    float,
-) -> tuple[str, dict]:
-    if df_5m is None or len(df_5m) < 15:
-        return "", {}
-
-    last    = df_5m.iloc[-1]
-    prev    = df_5m.iloc[-2]
-    price   = float(last["close"])
-    vwap_dist_pct = (price - vwap) / vwap * 100 if vwap > 0 else 0
-
-    if (0 <= vwap_dist_pct <= 3.0 and rvol >= 1.5 and 55 <= rsi <= 80):
-        cons_low, cons_high = _consolidation_range(df_5m, lookback=12)
-        cons_range_pct = (cons_high - cons_low) / cons_low * 100 if cons_low > 0 else 99
-        if cons_range_pct < 4.0:
-            return "BREAKOUT", {"cons_low": cons_low, "cons_high": cons_high, "vwap": vwap, "price": price}
-
-    prev_price = float(prev["close"])
-    was_below  = prev_price < vwap
-    now_above  = price > vwap
-    vol_rising = float(last["volume"]) > float(prev["volume"])
-
-    if (was_below and now_above and vol_rising and 45 <= rsi <= 70):
-        return "VWAP_RECLAIM", {"vwap": vwap, "price": price}
-
-    all_aligned = mom_1h > 0 and mom_15m > 0
-    near_vwap   = abs(vwap_dist_pct) <= 1.0
-    near_ema20  = ema20 > 0 and abs(price - ema20) / ema20 * 100 <= 1.0
-    green_candle = float(last["close"]) > float(last["open"])
-
-    if all_aligned and (near_vwap or near_ema20) and green_candle:
-        return "DIP_BUY", {"vwap": vwap, "ema20": ema20, "price": price}
-
-    return "", {}
-
-# ─── 3. Trigger Check ─────────────────────────────────────────────────────────
-
-def check_trigger(
-    setup_type: str,
-    ctx:        dict,
-    df_5m:      pd.DataFrame,
-) -> tuple[bool, float]:
-    if df_5m is None or len(df_5m) < 3:
-        return False, 0.0
-
-    last  = df_5m.iloc[-1]
-    close = float(last["close"])
-    high  = float(last["high"])
-    low   = float(last["low"])
-    vol   = float(last["volume"])
-    avg_vol = float(df_5m["volume"].iloc[-20:-1].mean())
-
-    if setup_type == "BREAKOUT":
-        cons_high = ctx.get("cons_high", 0)
-        if cons_high <= 0:
-            return False, 0.0
-
-        breakout = close > cons_high
-        candle_range = high - low
-        upper_wick   = high - close
-        no_rejection = (upper_wick / candle_range < 0.5) if candle_range > 0 else True
-        vol_surge = vol > avg_vol * 1.2
-
-        if breakout and no_rejection and vol_surge:
-            entry = round(cons_high * 1.001, 8)
-            return True, entry
-        
-        # תיקון: פריצה כמעט מושלמת - תן BUY
-        if breakout and no_rejection:
-            entry = round(cons_high * 1.001, 8)
-            return True, entry
-
-    elif setup_type == "VWAP_RECLAIM":
-        vwap = ctx.get("vwap", 0)
-        # תיקון: VWAP reclaim - הסר דרישת ווליום
-        if close > vwap:
-            return True, close
-
-    elif setup_type == "DIP_BUY":
-        green = close > float(last["open"])
-        if green:
-            return True, close
-
-    return False, 0.0
-
-# ─── 4. Risk Manager ──────────────────────────────────────────────────────────
-
-def calc_risk(
-    setup_type:  str,
-    entry:       float,
-    ctx:         dict,
-    df_5m:       pd.DataFrame,
-) -> tuple[float, float, float]:
-    if entry <= 0:
-        return 0.0, 0.0, 0.0
-
-    if setup_type == "BREAKOUT":
-        cons_high = ctx.get("cons_high", entry)
-        sl  = round(cons_high * 0.99, 8)
-        tp1 = round(entry * 1.04, 8)
-        tp2 = round(entry * 1.10, 8)
-
-    elif setup_type == "VWAP_RECLAIM":
-        vwap = ctx.get("vwap", entry * 0.99)
-        sl   = round(vwap * 0.99, 8)
-        tp1  = round(entry * 1.035, 8)
-        tp2  = round(entry * 1.08, 8)
-
-    elif setup_type == "DIP_BUY":
-        swing_low = float(df_5m["low"].iloc[-10:].min()) if df_5m is not None else entry * 0.98
-        sl  = round(swing_low * 0.995, 8)
-        tp1 = round(entry * 1.05, 8)
-        tp2 = round(entry * 1.15, 8)
-
-    else:
-        sl  = round(entry * 0.98, 8)
-        tp1 = round(entry * 1.04, 8)
-        tp2 = round(entry * 1.10, 8)
-
-    return sl, tp1, tp2
-
-# ─── Main Logic ───────────────────────────────────────────────────────────────
-
-def _run_core_logic(
-    coin:        dict,
-    df_5m:       pd.DataFrame,
-    btc_mom_1h:  float = 0.0,
-    btc_mom_5m:  float = 0.0,
-) -> EntrySignal:
-    no_trade = EntrySignal("NO", "", 0, 0, 0, 0, 0, "")
-
-    allowed, reason = market_allows_trade(btc_mom_1h=btc_mom_1h, btc_mom_5m=btc_mom_5m, rs_1h=coin.get("rs_1h", 0))
-    if not allowed:
-        no_trade.reason = f"Market filter: {reason}"
-        return no_trade
-
-    setup_type, ctx = detect_setup(df_5m=df_5m, vwap=coin.get("vwap", 0), rsi=coin.get("rsi_14", 50), rvol=coin.get("rvol", 1), mom_5m=coin.get("momentum_5m", 0), mom_15m=coin.get("momentum_15m", 0), mom_1h=coin.get("momentum_1h", 0), ema20=coin.get("ema20", 0))
-    if not setup_type:
-        no_trade.reason = "No valid setup"
-        return no_trade
-
-    triggered, entry_price = check_trigger(setup_type, ctx, df_5m)
-    if not triggered:
-        return EntrySignal(decision="WAIT", setup_type=setup_type, entry=0, sl=0, tp1=0, tp2=0, rr=0, reason=f"{setup_type} setup — waiting for trigger")
-
-    sl, tp1, tp2 = calc_risk(setup_type, entry_price, ctx, df_5m)
-    risk   = entry_price - sl
-    reward = tp1 - entry_price
-    rr     = round(reward / risk, 2) if risk > 0 else 0
-
-    if rr < 1.5:
-        no_trade.reason = f"R:R too low ({rr})"
-        return no_trade
-
-    return EntrySignal(decision="BUY", setup_type=setup_type, entry=entry_price, sl=sl, tp1=tp1, tp2=tp2, rr=rr, reason=f"{setup_type} trigger confirmed")
-
-
-# ─── Entry Point ──────────────────────────────────────────────────────────────
 
 def evaluate_entry(
-    coin:        dict,
-    df_5m:       pd.DataFrame,
-    btc_mom_1h:  float = 0.0,
-    btc_mom_5m:  float = 0.0,
+    coin: Dict[str, Any],
+    df_5m: Any,
+    btc_mom_5m: float = 0.0,
 ) -> EntrySignal:
-    
-    result = _run_core_logic(coin, df_5m, btc_mom_1h, btc_mom_5m)
-    
-    # הוספת משתני שוק גלובליים למילון
-    coin["market_health"] = GLOBAL_MARKET_HEALTH
-    coin["news_score"] = GLOBAL_NEWS_SCORE
-    coin["btc_regime"] = GLOBAL_BTC_REGIME
-    
-    log.info(
-        f"{coin.get('symbol', 'UNK')} | "
-        f"flow={coin.get('flow_score', 0):.1f} | "
-        f"pre={coin.get('pre_score', 0):.1f} | "
-        f"decision={result.decision} | "
-        f"setup={result.setup_type} | "
-        f"reason='{result.reason}'"
-    )
-    
-    # הבטחת שדות חסרים כדי שה-Shadow Tracker יוכל לקרוא אותם כראוי
-    coin["final_score"] = coin.get("final_score", coin.get("score", 0))
-    coin["probability"] = coin.get("probability", 0)
+    """
+    Evaluate entry conditions for a single coin.
 
-    # שימוש ב-Shadow Tracker החדש ששומר את כל המשתנים למסד הנתונים
-    record_trade(coin, result)
-    
-    return result
+    Args:
+        coin: dictionary with coin data (price, indicators, scores, etc.)
+        df_5m: 5-minute DataFrame (for additional context)
+        btc_mom_5m: BTC 5-minute momentum (for market context)
+
+    Returns:
+        EntrySignal with decision, setup, prices, and reason.
+    """
+    symbol = coin.get("symbol", "UNKNOWN")
+    last_price = float(coin.get("price", 0) or 0)
+    if last_price <= 0:
+        return EntrySignal("NO", "UNKNOWN", 0, 0, 0, 0, 0.0, "invalid price")
+
+    # ── Extract key data ───────────────────────────────────────────────
+    final_score = coin.get("final_score", 0)
+    flow_score = coin.get("flow_score", 0)
+    pre_score = coin.get("pre_score", 0)
+    probability = coin.get("probability", 0)
+
+    # ── Setup detection ────────────────────────────────────────────────
+    # Use entry_decision from ranking if available, otherwise determine
+    setup_type = coin.get("entry_setup", "UNKNOWN")
+    if not setup_type or setup_type == "UNKNOWN":
+        # Auto-detect setup based on patterns
+        vwap_dist = coin.get("vwap_dist", 0)
+        rvol = coin.get("rvol", 0)
+        vol_accel = coin.get("vol_accel", 0)
+        rs_1h = coin.get("rs_1h", 0)
+
+        # DIP_BUY: price below VWAP, volume acceleration, RS positive
+        if vwap_dist < -2.0 and vol_accel > 0.3 and rs_1h > 0:
+            setup_type = "DIP_BUY"
+        # VWAP_RECLAIM: price crossing above VWAP, volume confirms
+        elif -0.5 < vwap_dist < 0.5 and vol_accel > 0.2 and rvol > 0.8:
+            setup_type = "VWAP_RECLAIM"
+        # BREAKOUT: price near recent high, volume expansion
+        elif vol_accel > 0.5 and rvol > 1.0 and coin.get("distance_from_breakout", 10) < 2.0:
+            setup_type = "BREAKOUT"
+        else:
+            setup_type = "UNKNOWN"
+
+    # ── Calculate entry, stop, targets ──────────────────────────────
+    # Base ATR for risk sizing (use 14-period ATR from indicators)
+    atr = coin.get("atr_14", 0)
+    if atr <= 0:
+        atr = last_price * 0.01  # fallback 1%
+
+    # Entry price
+    if setup_type == "DIP_BUY":
+        # Buy near support / VWAP
+        entry = last_price * (1 - 0.001)  # slight discount
+        stop_distance = 1.5 * atr
+        tp_distance = 2.5 * atr
+    elif setup_type == "VWAP_RECLAIM":
+        entry = last_price * (1 + 0.001)  # slight premium for confirmation
+        stop_distance = 1.2 * atr
+        tp_distance = 2.0 * atr
+    elif setup_type == "BREAKOUT":
+        entry = last_price * (1 + 0.002)  # premium for breakout confirmation
+        stop_distance = 1.5 * atr
+        tp_distance = 3.0 * atr
+    else:
+        # Default conservative entry
+        entry = last_price
+        stop_distance = 2.0 * atr
+        tp_distance = 2.0 * atr
+
+    sl = round(entry - stop_distance, 4)
+    tp1 = round(entry + tp_distance, 4)
+    tp2 = round(entry + tp_distance * 1.5, 4)
+
+    # Risk/Reward
+    risk = entry - sl
+    reward = tp1 - entry
+    rr = round(reward / risk, 2) if risk > 0 else 0.0
+
+    # ── Decision logic ────────────────────────────────────────────────
+    decision = "NO"
+    reason = ""
+
+    # 1. Check if setup is valid
+    if setup_type == "UNKNOWN":
+        decision = "NO"
+        reason = "No valid setup"
+
+    # 2. Check score thresholds
+    elif final_score < 50:
+        decision = "NO"
+        reason = f"Final score {final_score:.1f} < 50"
+
+    # 3. Check probability
+    elif probability < 15:
+        decision = "NO"
+        reason = f"Probability {probability:.1f}% < 15%"
+
+    # 4. Check R:R
+    elif rr < 1.5:
+        decision = "WAIT"
+        reason = f"R:R {rr:.2f} < 1.5"
+
+    # 5. Check trigger distance (if trigger_price exists)
+    else:
+        trigger_price = coin.get("trigger_price", 0)
+        if trigger_price > 0:
+            trigger_dist_pct = (trigger_price - last_price) / last_price * 100
+            # For BUY, price must be close to trigger (within 1%)
+            if abs(trigger_dist_pct) > 2.0:
+                decision = "WAIT"
+                reason = f"trigger distance {trigger_dist_pct:.2f}% > 2%"
+            else:
+                decision = "BUY"
+                reason = "trigger confirmed"
+        else:
+            # No trigger price – use flow/pre score to decide
+            if flow_score > 45 and pre_score > 40:
+                decision = "BUY"
+                reason = "flow + pre scores strong"
+            else:
+                decision = "WAIT"
+                reason = "no trigger and flow/pre not strong enough"
+
+    # ── Override: Forced BUY if entry_setup from ranking is BUY ────
+    if coin.get("entry_decision") == "BUY" and decision != "BUY":
+        decision = "BUY"
+        reason = "override from ranking (entry_decision=BUY)"
+
+    # ── Debug log ──────────────────────────────────────────────────────
+    log.info(
+        f"{symbol}: entry_decision={decision} "
+        f"setup={setup_type} "
+        f"entry={entry:.4f} "
+        f"sl={sl:.4f} "
+        f"tp1={tp1:.4f} "
+        f"rr={rr:.2f} "
+        f"reason={reason}"
+    )
+
+    return EntrySignal(
+        decision=decision,
+        setup_type=setup_type,
+        entry=entry,
+        sl=sl,
+        tp1=tp1,
+        tp2=tp2,
+        rr=rr,
+        reason=reason,
+    )
