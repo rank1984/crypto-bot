@@ -1,9 +1,9 @@
 name: CRYPTO-BOT Scan
 
 on:
-  workflow_dispatch:               # 🔹 הפעלה ידנית מכפתור
+  workflow_dispatch:               # הפעלה ידנית
   schedule:
-    - cron: '0 * * * *'            # 🔹 כל שעה עגולה (00:00, 01:00, ...)
+    - cron: '0 * * * *'            # כל שעה עגולה
 
 jobs:
   scan:
@@ -23,40 +23,14 @@ jobs:
           pip install -r requirements.txt
 
       # ================================================================
-      #  🔍 DEBUG – בודק את get_candles ו-get_ticker_24h
+      # 🔍 HEALTH CHECK – בודק את כל מקורות הנתונים
       # ================================================================
-      - name: 🔍 Debug - get_candles for BTCUSDT
+      - name: 🔍 Market Data Health Check
         run: |
-          echo "=== 1. Testing get_candles (KuCoin + Binance) ==="
-          python -c "
-          from scanner.market_data import get_candles
-          print('get_candles(\"BTCUSDT\", \"5min\", limit=10):')
-          df = get_candles('BTCUSDT', '5min', limit=10)
-          if df is not None:
-              print(f'✅ Got {len(df)} candles')
-              print(df[['open_time', 'open', 'close']].tail())
-          else:
-              print('❌ get_candles returned None')
-          "
-
-          echo ""
-          echo "=== 2. Testing get_ticker_24h (KuCoin + Binance) ==="
-          python -c "
-          from scanner.market_data import get_ticker_24h
-          print('get_ticker_24h(\"BTCUSDT\"):')
-          ticker = get_ticker_24h('BTCUSDT')
-          if ticker:
-              print(f'✅ Got ticker: quoteVolume={ticker.get(\"quoteVolume\")}')
-          else:
-              print('❌ get_ticker_24h returned None')
-          "
-
-          echo ""
-          echo "=== 3. Direct KuCoin API (curl) ==="
-          curl -s "https://api.kucoin.com/api/v1/market/stats?symbol=BTC-USDT" | head -100
+          python -c "from tools.health_check import health_check; health_check()"
 
       # ================================================================
-      #  RUN SCAN
+      # RUN SCAN
       # ================================================================
       - name: Run scan (main pipeline)
         run: python main.py --once
