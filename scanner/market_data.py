@@ -275,7 +275,6 @@ def get_all_tickers_24h() -> dict:
                 for item in tickers:
                     symbol = item.get("symbol", "").replace("-", "")
                     if symbol.endswith("USDT"):
-                        # Use _safe_float to handle None values
                         result[symbol] = {
                             "symbol": symbol,
                             "vol": _safe_float(item.get("vol")),
