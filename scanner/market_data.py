@@ -1,6 +1,6 @@
 """
 CRYPTO-BOT Elite — Market Data
-Primary: Binance (no API key needed). Fallback: KuCoin, CoinGecko.
+Primary: KuCoin (works in GitHub Actions). Fallback: Binance, CoinGecko.
 """
 import time
 import pandas as pd
@@ -63,12 +63,14 @@ def _fetch_kucoin_candles(symbol: str, interval: str, limit: int):
     kucoin_interval = INTERVAL_MAP.get(interval, interval)
     try:
         resp = requests.get(
-            f"{KUCOIN_BASE}/api/v1/market/candles",
+            f"{KUCOIN_BASE}/market/candles",
             headers=_HEADERS,
             params={"symbol": kucoin_sym, "type": kucoin_interval},
             timeout=10,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            log.debug(f"KuCoin HTTP {resp.status_code} for {symbol}/{interval}")
+            return None
         data = resp.json()
         if data.get("code") != "200000":
             log.debug(f"KuCoin API error {symbol}/{interval}: {data.get('msg')}")
@@ -177,7 +179,36 @@ def get_all_timeframes(symbol: str) -> dict:
 
 
 def get_ticker_24h(symbol: str) -> dict | None:
-    # Binance first
+    # KuCoin first (more reliable in GitHub Actions)
+    try:
+        kucoin_sym = symbol.replace("USDT", "-USDT")
+        r = requests.get(
+            f"{KUCOIN_BASE}/market/stats",
+            params={"symbol": kucoin_sym},
+            headers=_HEADERS,
+            timeout=5
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("code") == "200000":
+                stats = data.get("data", {})
+                if stats and stats.get("volValue"):
+                    return {
+                        "symbol": symbol,
+                        "vol": float(stats.get("vol", 0)),
+                        "last": float(stats.get("last", 0)),
+                        "quoteVolume": float(stats.get("volValue", 0)),
+                        "change": float(stats.get("changeRate", 0)),
+                        "changePrice": float(stats.get("changePrice", 0)),
+                        "high": float(stats.get("high", 0)),
+                        "low": float(stats.get("low", 0)),
+                        "open": float(stats.get("open", 0)),
+                        "averagePrice": float(stats.get("averagePrice", 0)),
+                    }
+    except Exception as e:
+        log.debug(f"KuCoin ticker error for {symbol}: {e}")
+
+    # Binance fallback
     try:
         r = requests.get(
             "https://api.binance.com/api/v3/ticker/24hr",
@@ -203,48 +234,58 @@ def get_ticker_24h(symbol: str) -> dict | None:
     except Exception as e:
         log.debug(f"Binance ticker error for {symbol}: {e}")
 
-    # KuCoin fallback
-    try:
-        kucoin_sym = symbol.replace("USDT", "-USDT")
-        r = requests.get(
-            f"{KUCOIN_BASE}/api/v1/market/stats",
-            params={"symbol": kucoin_sym},
-            headers=_HEADERS,
-            timeout=5
-        )
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("code") == "200000":
-                stats = data.get("data", {})
-                if stats and stats.get("volValue"):
-                    return {
-                        "symbol": symbol,
-                        "vol": float(stats.get("vol", 0)),
-                        "last": float(stats.get("last", 0)),
-                        "quoteVolume": float(stats.get("volValue", 0)),
-                        "change": float(stats.get("changeRate", 0)),
-                        "changePrice": float(stats.get("changePrice", 0)),
-                        "high": float(stats.get("high", 0)),
-                        "low": float(stats.get("low", 0)),
-                        "open": float(stats.get("open", 0)),
-                        "averagePrice": float(stats.get("averagePrice", 0)),
-                    }
-    except Exception as e:
-        log.debug(f"KuCoin ticker error for {symbol}: {e}")
-
     log.warning(f"All ticker sources failed for {symbol}")
     return None
 
 
 # ============================================================
-# ✅ NEW: Bulk ticker – one request for all symbols
+# ✅ Bulk ticker – one request for all symbols (KuCoin first)
 # ============================================================
 def get_all_tickers_24h() -> dict:
     """
     Fetch 24h ticker stats for ALL symbols in one request.
     Returns dict: {symbol: {quoteVolume, vol, last, ...}}
     """
-    # Binance first (returns all tickers)
+    # 1. KuCoin (most reliable in GitHub Actions)
+    try:
+        r = requests.get(
+            f"{KUCOIN_BASE}/market/allTickers",
+            headers=_HEADERS,
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("code") == "200000":
+                tickers = data.get("data", {}).get("ticker", [])
+                result = {}
+                for item in tickers:
+                    symbol = item.get("symbol", "").replace("-", "")
+                    if symbol.endswith("USDT"):
+                        result[symbol] = {
+                            "symbol": symbol,
+                            "vol": float(item.get("vol", 0)),
+                            "last": float(item.get("last", 0)),
+                            "quoteVolume": float(item.get("volValue", 0)),
+                            "change": float(item.get("changeRate", 0)),
+                            "changePrice": float(item.get("changePrice", 0)),
+                            "high": float(item.get("high", 0)),
+                            "low": float(item.get("low", 0)),
+                            "open": float(item.get("open", 0)),
+                            "averagePrice": float(item.get("averagePrice", 0)),
+                        }
+                if result:
+                    log.info(f"✅ Bulk ticker KuCoin: HTTP 200, raw symbols={len(tickers)}, USDT symbols={len(result)}")
+                    return result
+                else:
+                    log.warning(f"KuCoin bulk ticker returned 0 USDT symbols (raw={len(tickers)})")
+            else:
+                log.warning(f"KuCoin API error: {data.get('msg')}")
+        else:
+            log.warning(f"KuCoin bulk ticker HTTP {r.status_code}")
+    except Exception as e:
+        log.warning(f"KuCoin bulk ticker exception: {e}")
+
+    # 2. Binance fallback (may be blocked in some regions)
     try:
         r = requests.get(
             "https://api.binance.com/api/v3/ticker/24hr",
@@ -270,47 +311,14 @@ def get_all_tickers_24h() -> dict:
                         "averagePrice": float(item.get("weightedAvgPrice", 0)),
                     }
             if result:
-                log.info(f"Bulk ticker Binance: HTTP 200, raw symbols={len(data)}, USDT symbols={len(result)}")
+                log.info(f"✅ Bulk ticker Binance: HTTP 200, raw symbols={len(data)}, USDT symbols={len(result)}")
                 return result
             else:
                 log.warning(f"Binance bulk ticker returned 0 USDT symbols (raw={len(data)})")
+        else:
+            log.warning(f"Binance bulk ticker HTTP {r.status_code}")
     except Exception as e:
-        log.warning(f"Binance bulk ticker failed: {e}")
+        log.warning(f"Binance bulk ticker exception: {e}")
 
-    # KuCoin fallback (allTickers)
-    try:
-        r = requests.get(
-            f"{KUCOIN_BASE}/api/v1/market/allTickers",
-            headers=_HEADERS,
-            timeout=10
-        )
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("code") == "200000":
-                tickers = data.get("data", {}).get("ticker", [])
-                result = {}
-                for item in tickers:
-                    symbol = item.get("symbol", "").replace("-", "")
-                    if symbol.endswith("USDT"):
-                        result[symbol] = {
-                            "symbol": symbol,
-                            "vol": float(item.get("vol", 0)),
-                            "last": float(item.get("last", 0)),
-                            "quoteVolume": float(item.get("volValue", 0)),
-                            "change": float(item.get("changeRate", 0)),
-                            "changePrice": float(item.get("changePrice", 0)),
-                            "high": float(item.get("high", 0)),
-                            "low": float(item.get("low", 0)),
-                            "open": float(item.get("open", 0)),
-                            "averagePrice": float(item.get("averagePrice", 0)),
-                        }
-                if result:
-                    log.info(f"Bulk ticker KuCoin: HTTP 200, raw symbols={len(tickers)}, USDT symbols={len(result)}")
-                    return result
-                else:
-                    log.warning(f"KuCoin bulk ticker returned 0 USDT symbols (raw={len(tickers)})")
-    except Exception as e:
-        log.warning(f"KuCoin bulk ticker failed: {e}")
-
-    log.error("All bulk ticker sources failed – returning empty dict")
+    log.error("❌ All bulk ticker sources failed – returning empty dict")
     return {}
