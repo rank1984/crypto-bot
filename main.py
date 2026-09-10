@@ -1,489 +1,531 @@
 """
-CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, ARM State, Circuit Breaker, Trending Bonus & Dashboards)
+DAYS-BOT V5.0.5 – RESEARCH ENGINE WITH LEARNING + REPLAY INTEGRITY
+
+Intraday + Swing 1–3D
+Manual execution only.
+No automatic orders.
+
+V5.0.5 CHANGES:
+- Replay snapshot for ALL strict candidates (not just Top 5)
+- Replay integrity check (records == strict_candidates)
+- No changes to thresholds, weights, or strategy
 """
 
-import argparse
-import os
-import signal
 import sys
-import time
+from pathlib import Path
+from datetime import datetime
+import pytz
 
-from notifier.sender import send_simple_message
-from scanner.dynamic_universe import build_dynamic_universe
-from scanner.market_data import get_candles
-from scanner.ranking import rank_universe
-from scanner.universe import build_universe
-from utils.config import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE
-from utils.logger import get_logger
+BASE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE_DIR))
 
-# ── News & Event Engines ──────────────────────────────────────────────────────
-from scanner.event_engine import get_event_warning, trading_disabled
-from scanner.news_engine import get_market_health, get_news_score
+ET = pytz.timezone("America/New_York")
 
-# ── שדרוג א: ייבוא מנוע הטרנדינג של CoinGecko ─────────────────────────────────
-from engines.alt_data import get_coingecko_trending, trending_bonus
+from utils.config import (
+    TELEGRAM_TOKEN,
+    TELEGRAM_CHAT_ID,
+)
 
-# ── Circuit Breaker, Trade Quality, Trade Replay ──────────────────────────────
-from portfolio.circuit_breaker import CircuitBreaker
-from scanner.trade_quality import calc_trade_quality
-from storage.trade_replay import init_replay_db, save_snapshot
+from scanner.full_scan_v34 import full_scan_v34
+from scanner.swing_engine import calculate_swing_score
+from database.db import init_db, save_alert
+from telegram_v3 import send_message, format_research_report
+from learning.replay_engine import save_candidate_snapshot
 
-# ── Live Monitor ──────────────────────────────────────────────────────────────
-from monitor.live_monitor import LiveMonitor
-
-log = get_logger("main")
-
-_running = True
-
-
-def _handle_signal(sig, frame):
-    global _running
-    log.info("Shutdown signal — stopping after current scan")
-    _running = False
+from learning.lesson_engine import (
+    build_lesson,
+    save_learning,
+    print_lesson,
+    load_previous_learning,
+    format_lesson_for_telegram,
+)
 
 
-# GitHub Actions / Windows compatibility safe signals
-try:
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
-except Exception:
-    pass
-
-# ── Trade Manager Global ──────────────────────────────────────────────────────
-from scanner.trade_manager import TradeManager
-
-trade_mgr = TradeManager(portfolio_capital=500.0, max_trades=2)
-
-# ── Circuit Breaker ───────────────────────────────────────────────────────────
-circuit_breaker = CircuitBreaker()
-
-# ── Init Trade Replay DB ──────────────────────────────────────────────────────
-init_replay_db()
-
-# ── GitHub Actions Detection ──────────────────────────────────────────────────
-IS_GITHUB_ACTIONS = os.getenv("GITHUB_ACTIONS") == "true"
-
-# ── Live Monitor ──────────────────────────────────────────────────────────────
-# מפעילים את Monitor רק אם זו הרצה מקומית, ולא ב-GitHub Actions
-live_monitor = None
-if not IS_GITHUB_ACTIONS:
-    live_monitor = LiveMonitor(trade_mgr, send_simple_message)
-    live_monitor.start()
-
-# ── Global WebSocket Monitors Dictionary ──────────────────────────────────────
-ws_monitors = {}
-
-
-def _trade_open_message(trade) -> str:
-    quality = getattr(trade, "quality", 0)
-    return (
-        f"🟢 BUY {trade.symbol}\n"
-        f"Entry: {trade.entry_price:.4f}\n"
-        f"SL: {trade.sl:.4f}\n"
-        f"TP1: {trade.tp1:.4f}\n"
-        f"TP2: {trade.tp2:.4f}\n"
-        f"Size: {trade.position_size:.4f} ({trade.initial_capital:.2f}$)\n"
-        f"Quality: {quality:.0f}/100"
-    )
-
-
-def _trade_close_message(trade, action: dict) -> str:
-    return (
-        f"🔴 EXIT {trade.symbol} @ {action['price']:.4f}\n"
-        f"Reason: {action['reason']}\n"
-        f"PnL: {action['pnl']:.2f}$ ({action['pnl_pct']:.2f}%)\n"
-        f"Circuit Breaker: {circuit_breaker.status()}"
-    )
-
-
-def _trade_partial_message(trade, action: dict) -> str:
-    return (
-        f"🟡 TP {action.get('tp','PARTIAL')} {trade.symbol}\n"
-        f"Price: {action['price']:.4f}\n"
-        f"Sold: {action['ratio']*100:.0f}%"
-    )
-
-
-def run_scan() -> None:
-    log.info("── Scan started ──────────────────────────────────────")
-
-    # ── 0. Init Databases ─────────────────────────────────────────────────────
+def _safe_swing(candidate, analysis=None):
     try:
-        from tools.shadow_mode import init_shadow_db
-        init_shadow_db()
-    except Exception as e:
-        log.warning(f"Shadow DB init error: {e}")
+        result = calculate_swing_score(candidate, analysis)
 
-    try:
-        from storage.candle_cache import init_cache
-        init_cache()
-    except Exception as e:
-        log.warning(f"Candle Cache init error: {e}")
-
-    # ── 1. Universe ───────────────────────────────────────────────────────────
-    btc_1h_mov = 0.0
-
-    if USE_DYNAMIC_UNIVERSE:
-        log.info("Mode: Dynamic Universe")
-        btc_df = get_candles("BTCUSDT", "1hour", limit=3)
-        if btc_df is not None and len(btc_df) >= 2:
-            btc_1h_mov = (
-                (
-                    float(btc_df["close"].iloc[-1])
-                    - float(btc_df["close"].iloc[-2])
-                )
-                / float(btc_df["close"].iloc[-2])
-                * 100
+        if not isinstance(result, dict):
+            print(
+                f"[Main] ⚠️ Swing returned "
+                f"{type(result).__name__} for {candidate.get('ticker')}"
             )
-            symbols = build_dynamic_universe(btc_1h_move=btc_1h_mov)
-        else:
-            symbols = build_universe()
-    else:
-        log.info("Mode: Static Universe")
-        symbols = build_universe()
+            return {
+                "swing_score": 0,
+                "swing_type": "INVALID",
+                "qualified": False,
+            }
 
-    if not symbols:
-        log.error("Empty universe — skipping scan")
-        return
+        return result
 
-    # ── Market Health (לפני rank_universe) ────────────────────────────────────
-    news_score = get_news_score()
-    market_health = get_market_health(
-        btc_change_1h=btc_1h_mov,
-        oi_change_pct=0,
-        funding_rate=0.0,
-        liquidations=0.0,
-        news_score=news_score,
-        regime="RANGE",
-    )
-
-    import scanner.entry_engine as entry_engine
-
-    entry_engine.GLOBAL_MARKET_HEALTH = market_health
-    entry_engine.GLOBAL_NEWS_SCORE = news_score
-    entry_engine.GLOBAL_BTC_REGIME = "RANGE"
-
-    # ── 2. Score & Rank ───────────────────────────────────────────────────────
-    result = rank_universe(symbols)
-    top, _diag = result if isinstance(result, tuple) else (result, None)
-    if not top:
-        log.warning("No coins passed scoring — sending 'no signal' message")
-        send_simple_message("ℹ️ No opportunities found. Market is quiet.")
-        return
-
-    # ── חישוב Market Health מחדש ──────────────────────────────────────────────
-    if _diag is not None:
-        if hasattr(_diag, "get"):
-            oi_change_total = _diag.get("total_oi_change", 0)
-            regime = _diag.get("regime", "RANGE")
-            funding_rate = _diag.get("avg_funding", 0.0)
-            liquidations = _diag.get("total_liquidations", 0.0)
-        else:
-            oi_change_total = getattr(_diag, "total_oi_change", 0)
-            regime = getattr(_diag, "regime", "RANGE")
-            funding_rate = getattr(_diag, "avg_funding", 0.0)
-            liquidations = getattr(_diag, "total_liquidations", 0.0)
-    else:
-        oi_change_total = 0
-        regime = "RANGE"
-        funding_rate = 0.0
-        liquidations = 0.0
-
-    news_score = get_news_score()
-    market_health = get_market_health(
-        btc_change_1h=btc_1h_mov,
-        oi_change_pct=oi_change_total,
-        funding_rate=funding_rate,
-        liquidations=liquidations,
-        news_score=news_score,
-        regime=regime,
-    )
-
-    entry_engine.GLOBAL_MARKET_HEALTH = market_health
-    entry_engine.GLOBAL_NEWS_SCORE = news_score
-    entry_engine.GLOBAL_BTC_REGIME = regime
-
-    for c in top:
-        c["market_health"] = market_health
-        c["news_score"] = news_score
-        c["btc_regime"] = regime
-
-    original_max = None
-    if trading_disabled():
-        log.warning("Trading disabled due to high impact event")
-        send_simple_message(get_event_warning())
-        original_max = trade_mgr.max_trades
-        trade_mgr.max_trades = 0
-
-    # ── 3. Decision Engine ────────────────────────────────────────────────────
-    from scanner.decision_engine import decide_batch
-    top = decide_batch(top)
-
-    # ── 4. Quality Gate ───────────────────────────────────────────────────────
-    from scanner.quality_gate import apply_quality_gate_all
-    top = apply_quality_gate_all(top)
-
-    for c in top:
-        if "last_price" not in c or c.get("last_price", 0) == 0:
-            fallback = c.get("close", c.get("price", 0))
-            if fallback == 0:
-                df_tmp = get_candles(c["symbol"], "5m", limit=1)
-                if df_tmp is not None and len(df_tmp) > 0:
-                    fallback = float(df_tmp["close"].iloc[-1])
-            c["last_price"] = fallback
-
-        last_price = c.get("last_price", 0)
-        trigger_price = c.get("trigger_price", c.get("entry_price", 0))
-
-        if last_price > 0 and trigger_price and trigger_price > 0:
-            c["trigger_distance_pct"] = ((trigger_price - last_price) / last_price) * 100
-        else:
-            c["trigger_distance_pct"] = None
-
-        if "trigger_price" not in c and trigger_price > 0:
-            c["trigger_price"] = trigger_price
-
-    # ── 5. Signal Filter ──────────────────────────────────────────────────────
-    from scanner.signal_filter import filter_coins
-    filtered = filter_coins(top)
-
-    for c in top:
-        c["final_decision"] = c.get("signal", "IGNORE")
-
-    try:
-        trending_coins = get_coingecko_trending()
-        for c in top:
-            c["trending_bonus"] = trending_bonus(c["symbol"], trending_coins)
     except Exception as e:
-        log.warning(f"Failed to fetch trending data: {e}")
-
-    log.info(f"TOP COINS BEFORE FILTER = {len(top)}")
-
-    if live_monitor:
-        arm_candidates = filtered.get("arm", [])
-        arm_candidates.sort(
-            key=lambda x: (
-                x.get("probability", 0) * 0.5
-                + x.get("flow_score", 0) * 0.3
-                + x.get("oi_change", 0) / 10
-            ),
-            reverse=True,
+        print(
+            f"[Main] ❌ Swing error "
+            f"{candidate.get('ticker')}: "
+            f"{type(e).__name__}: {e}"
         )
-        top_arm = arm_candidates[:5]
-        live_monitor.clear_watchlist()
-        for c in top_arm:
-            if "trigger_price" not in c:
-                entry = c.get("entry_price", c.get("last_price", 0))
-                c["trigger_price"] = entry * 1.001 if entry > 0 else 0
-            live_monitor.add_to_watchlist(c)
+        import traceback
+        traceback.print_exc()
 
-    # ── 6. Trade Management ───────────────────────────────────────────────────
-    if circuit_breaker.can_trade():
-        for c in filtered.get("buy", []):
-            if trade_mgr.can_open_trade():
-                entry_price = c.get("entry_price", 0)
-                sl = c.get("sl", 0)
-                tp1 = c.get("tp1", 0)
-                tp2 = c.get("tp2", 0)
-                current_price = c.get("last_price", 0)
+        return {
+            "swing_score": 0,
+            "swing_type": "ERROR",
+            "error": str(e),
+            "qualified": False,
+        }
 
-                if entry_price == 0 or current_price == 0:
-                    df_5m = get_candles(c["symbol"], "5m", limit=5)
-                    if df_5m is not None and len(df_5m) > 0:
-                        current_price = float(df_5m["close"].iloc[-1])
-                        if entry_price == 0:
-                            entry_price = current_price
-                if sl == 0:
-                    sl = round(entry_price * 0.98, 8)
-                if tp1 == 0:
-                    tp1 = round(entry_price * 1.04, 8)
-                if tp2 == 0:
-                    tp2 = round(entry_price * 1.10, 8)
-                quality = calc_trade_quality(c, news_score)
-                c["trade_quality"] = quality
-                signal_data = {
-                    "symbol": c["symbol"],
-                    "entry": entry_price,
-                    "sl": sl,
-                    "tp1": tp1,
-                    "tp2": tp2,
-                    "setup_type": c.get("setup_type", "UNKNOWN"),
-                }
-                trade = trade_mgr.open_trade(signal_data, entry_price)
-                if trade:
-                    trade.quality = quality
 
-    # ── 7. הודעה מאוחדת ברורה בעברית ─────────────────────────────────────────
-    lines = []
-    lines.append("📊 תמונת מצב מהירה")
-    lines.append(f"שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
-    cb_status = circuit_breaker.status()
-    lines.append(f"מפסק: {cb_status}")
-    lines.append("")
+def _classify_trade_type(candidate):
+    intraday_score = float(
+        candidate.get("composite_score", 0) or 0
+    )
 
-    lines.append("🏆 דירוג 5 מובילים:")
-    lines.append("מטבע        AI   הסתברות   מרחק לטריגר")
-    lines.append("-" * 44)
-    for c in top[:5]:
-        sym = c['symbol'].replace('USDT', '')[:12].ljust(12)
-        ai = f"{c.get('ai_score', 0):.0f}".rjust(4)
-        prob = f"{c.get('probability', 0):.0f}%".rjust(6)
-        dist_val = c.get('trigger_distance_pct')
-        dist = "—" if dist_val is None else f"{dist_val:.2f}%"
-        lines.append(f"{sym}  {ai}  {prob}  {dist}")
-    lines.append("")
+    swing_score = float(
+        candidate.get("swing_score", 0) or 0
+    )
 
-    buy_list = filtered.get("buy", [])
-    if buy_list:
-        lines.append("🟢 קנייה מומלצת:")
-        for c in buy_list:
-            lines.append(f"  {c['symbol']}")
-            lines.append(f"    כניסה: {c.get('entry_price', 0):.4f}")
-            lines.append(f"    סטופ: {c.get('entry_sl', 0):.4f}")
-            lines.append(f"    יעד1: {c.get('entry_tp1', 0):.4f}")
-            lines.append(f"    יעד2: {c.get('entry_tp2', 0):.4f}")
-        lines.append("")
+    plan_valid = bool(
+        candidate.get("plan_valid", False)
+    )
+
+    data_status = candidate.get(
+        "data_status",
+        "NO_TRADE"
+    )
+
+    if data_status == "NO_TRADE":
+        return "NO_TRADE"
+
+    if data_status == "WATCH":
+        return "WATCH"
+
+    # Gap-and-Go requires positive gap.
+    if float(candidate.get("gap_pct", 0) or 0) < 0:
+        return "WATCH"
+
+    if intraday_score >= 75 and swing_score >= 70:
+        return "BOTH"
+
+    if intraday_score >= 75 and plan_valid:
+        return "INTRADAY"
+
+    if swing_score >= 70:
+        return "SWING_1_3D"
+
+    if intraday_score >= 60 or swing_score >= 60:
+        return "WATCH"
+
+    return "WATCH"
+
+
+def _normalize_discovery_stats(stats):
+    """
+    Keep Learning Engine input stable.
+    """
+    if not isinstance(stats, dict):
+        stats = {}
+
+    print("[Main] RAW discovery stats (before normalize):")
+    print(stats)
+
+    universe_value = stats.get("universe", stats.get("requested_symbols", 0))
+    if not universe_value:
+        universe_value = 500
+
+    normalized = {
+        "universe": int(universe_value or 0),
+
+        "snapshots_received": int(
+            stats.get("snapshots_received",
+                      stats.get("returned_snapshots", 0))
+            or 0
+        ),
+
+        "valid_price": int(
+            stats.get("valid_price", 0) or 0
+        ),
+
+        "valid_prev_close": int(
+            stats.get("valid_prev_close", 0) or 0
+        ),
+
+        "parsed_raw": int(
+            stats.get("parsed_raw", 0) or 0
+        ),
+
+        "strict_candidates": int(
+            stats.get("strict_candidates", 0) or 0
+        ),
+
+        "fallback_candidates": int(
+            stats.get("fallback_candidates", 0) or 0
+        ),
+
+        "reject_price_low": int(
+            stats.get("reject_price_low", 0) or 0
+        ),
+
+        "reject_price_high": int(
+            stats.get("reject_price_high", 0) or 0
+        ),
+
+        "reject_gap": int(
+            stats.get("reject_gap", 0) or 0
+        ),
+
+        "reject_volume": int(
+            stats.get("reject_volume", 0) or 0
+        ),
+
+        "reject_invalid": int(
+            stats.get("reject_invalid", 0) or 0
+        ),
+
+        "reject_float": int(
+            stats.get("reject_float", 0) or 0
+        ),
+    }
+
+    print("[Main] Normalized discovery stats:")
+    print(normalized)
+
+    return normalized
+
+
+def _run_replay_integrity_check(replay_count, strict_count):
+    """
+    V5.0.5 – Replay Integrity Check
+    Verifies that we saved a replay record for every strict candidate.
+    """
+    print()
+    print("=" * 74)
+    print("REPLAY INTEGRITY CHECK")
+    print("=" * 74)
+
+    strict_ok = (replay_count == strict_count)
+    print(f"  strict_candidates:                    {strict_count}")
+    print(f"  replay_records:                       {replay_count}")
+    print(f"  replay_records == strict_candidates:  {'PASS' if strict_ok else 'FAIL'}")
+
+    if not strict_ok:
+        print()
+        print("  ⚠️  WARNING: Replay count does not match strict candidates.")
+        print("  ⚠️  Do NOT proceed to V5.0.6 until this is resolved.")
+        print("  ⚠️  Inspect save_candidate_snapshot() for silent failures.")
+
+    print("=" * 74)
+    print()
+
+    return strict_ok
+
+
+def run_fullscan_v34(manual=False):
+    init_db()
+
+    now_et = datetime.now(ET)
+
+    print("\n" + "=" * 74)
+    print(
+        "DAYS-BOT V5.0.5 – RESEARCH ENGINE "
+        "(Intraday + Swing + Learning + Replay Integrity)"
+    )
+    print(
+        f"Date: {now_et.strftime('%Y-%m-%d')} | "
+        f"Mode: {'MANUAL' if manual else 'LIVE'}"
+    )
+    print("=" * 74)
+
+    # ------------------------------------------------------------
+    # 1. DISCOVERY
+    # ------------------------------------------------------------
+
+    print("[Main] Starting discovery...")
+
+    from scanner.premarket import scan_premarket
+
+    discovery_result = scan_premarket(
+        now_et.strftime("%Y-%m-%d"),
+        manual
+    )
+
+    if (
+        isinstance(discovery_result, tuple)
+        and len(discovery_result) >= 2
+    ):
+        candidates = discovery_result[0]
+        discovery_stats = discovery_result[1]
     else:
-        lines.append("🟢 אין קנייה כרגע.")
-        lines.append("")
+        candidates = discovery_result
+        discovery_stats = {}
 
-    prepare_list = filtered.get("prepare", [])
-    if prepare_list:
-        lines.append("🟡 הכנה (PREPARE) – הצטברות טובה, חסר טריגר:")
-        for c in prepare_list[:3]:
-            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f} Prob:{c.get('probability',0):.0f}%")
-        lines.append("")
+    discovery_stats = _normalize_discovery_stats(
+        discovery_stats
+    )
 
-    arm_list = filtered.get("arm", [])
-    if arm_list:
-        lines.append("🟠 במעקב צמוד (ARM) – קרוב לפריצה:")
-        for c in arm_list[:3]:
-            dist_val = c.get('trigger_distance_pct')
-            dist = f"{dist_val:.2f}%" if dist_val is not None else "—"
-            lines.append(f"  {c['symbol']} מרחק:{dist}")
-        lines.append("")
+    if not candidates:
+        print(
+            "[Main] ❌ No candidates found by discovery."
+        )
 
-    watch_list = filtered.get("watch", [])
-    if watch_list:
-        lines.append("🟡 במעקב (WATCH):")
-        for c in watch_list[:3]:
-            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f} Prob:{c.get('probability',0):.0f}%")
-        lines.append("")
+        msg = (
+            "😴 DAYS-BOT\n\n"
+            "לא נמצאו מועמדים.\n"
+            "אין מספיק market data כרגע.\n\n"
+            "⚠️ אין לבצע עסקה על בסיס סריקה ריקה."
+        )
 
-    lines.append("🔹 מה לעשות:")
-    lines.append("• 🟢 קנייה – בצע קנייה ידנית אם הכניסה עדיין בתוקף.")
-    lines.append("• 🟡 הכנה/מעקב – המתן לפריצה ברורה.")
-    lines.append("• 📊 אם השוק חלש (מתחת 50) – עדיף לא לקנות.")
-    lines.append("• 🛡 מפסק ACTIVE = מותר לסחור. BLOCKED = אין כניסות חדשות.")
+        send_message(
+            TELEGRAM_TOKEN,
+            TELEGRAM_CHAT_ID,
+            msg
+        )
 
-    send_simple_message("\n".join(lines))
+        return
 
-    # ── 8. Learning & Shadow ──────────────────────────────────────────────────
-    try:
-        from learning.recorder import record_scan
-        record_scan(_diag, top)
-    except Exception as e:
-        log.debug(f"Learning recorder skipped: {e}")
+    print(
+        f"[Main] ✅ Discovery returned "
+        f"{len(candidates)} candidates"
+    )
 
-    # ── 9. הבטחת נרות לכל העסקאות הפתוחות (לפני outcome tracker) ────────────
-    try:
-        from tools.ensure_open_trade_candles import ensure_candles_for_open_trades
-        ensure_candles_for_open_trades()
-    except Exception as e:
-        log.error(f"Ensure candles error: {e}", exc_info=True)
+    if candidates:
+        print(
+            f"[Main] First candidate: "
+            f"{candidates[0].get('ticker')} "
+            f"(score="
+            f"{candidates[0].get('event_score', 0)})"
+        )
 
-    # ── 10. Outcome Tracking (מקור אמת יחיד) ──────────────────────────────────
-    try:
-        from tools.outcome_tracker import update_outcomes
-        updated = update_outcomes()
-        log.info(f"Outcome tracker updated {updated} trades")
-    except Exception as e:
-        log.error(f"Outcome tracker error: {e}", exc_info=True)
+    print(
+        "[Main] Discovery diagnostics: "
+        f"universe={discovery_stats['universe']} | "
+        f"snapshots={discovery_stats['snapshots_received']} | "
+        f"strict={discovery_stats['strict_candidates']} | "
+        f"fallback={discovery_stats['fallback_candidates']}"
+    )
 
-    # ── 10b. Backfill RS/AI buckets (לאחר עדכון התוצאות) ─────────────────────
-    try:
-        from tools.backfill_buckets import backfill
-        backfill()
-    except Exception as e:
-        log.error(f"Backfill error: {e}", exc_info=True)
+    # ------------------------------------------------------------
+    # 2. FULL ANALYSIS
+    # ------------------------------------------------------------
 
-    # ── 10c. Multi-Day Research (Shadow Mode) ────────────────────────────────
-    try:
-        from scanner.multiday_outcome import update_multiday_outcomes
-        update_multiday_outcomes()
-    except Exception as e:
-        log.error(f"Multi-Day outcome update error: {e}", exc_info=True)
+    print("[Main] Running full analysis...")
 
-    try:
-        from scanner.multiday_engine import run_multiday_scan
-        # ✅ העברת ה-Universe שכבר נבנה (חוסך קריאה מיותרת)
-        signals = run_multiday_scan(symbols)
-        if signals:
-            log.info(f"Multi-Day scan generated {len(signals)} research signals (Shadow mode)")
-    except Exception as e:
-        log.error(f"Multi-Day scan error: {e}", exc_info=True)
+    top5 = full_scan_v34(
+        candidates,
+        manual
+    )
 
-    try:
-        from tools.multiday_dashboard import run_multiday_dashboard
-        md_dash = run_multiday_dashboard()
-        if md_dash:
-            log.info(md_dash)
-    except Exception as e:
-        log.debug(f"Multi-Day dashboard skipped: {e}")
+    if not top5:
+        print(
+            "[Main] ❌ Full analysis returned empty."
+        )
 
-    # ── 11. Export ML Learning Dataset ─────────────────────────────────────────
-    try:
-        from tools.export_learning_dataset import export_ml_dataset
-        export_ml_dataset()
-    except Exception as e:
-        log.error(f"ML Dataset export error: {e}", exc_info=True)
+        msg = (
+            "😴 DAYS-BOT\n\n"
+            "ה-Discovery עבד, אבל לא התקבל "
+            "מועמד לניתוח מלא."
+        )
 
-    # ── 12. Learning Dashboard (לוג בלבד) ─────────────────────────────────────
-    try:
-        from tools.learning_dashboard import run_dashboard
-        lr = run_dashboard()
-        if lr:
-            log.info(lr)
-    except Exception as e:
-        log.error(f"Learning dashboard error: {e}", exc_info=True)
+        send_message(
+            TELEGRAM_TOKEN,
+            TELEGRAM_CHAT_ID,
+            msg
+        )
 
-    if original_max is not None:
-        trade_mgr.max_trades = original_max
+        return
 
+    print(
+        f"[Main] ✅ Full analysis returned "
+        f"{len(top5)} candidates"
+    )
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="Single scan and exit")
-    args = parser.parse_args()
+    # ------------------------------------------------------------
+    # 3. V5.0.5 – SAVE REPLAY FOR **ALL** STRICT CANDIDATES
+    # ------------------------------------------------------------
+    # We save replay for every candidate that passed the initial
+    # strict discovery (i.e. len(candidates)), not just Top 5.
+    #
+    # This gives us the full research dataset.
+    # ------------------------------------------------------------
 
-    run_once = args.once or IS_GITHUB_ACTIONS
+    print("[Main] Saving replay snapshots for ALL strict candidates...")
 
-    log.info(f"CRYPTO-BOT Elite starting | dynamic_universe={USE_DYNAMIC_UNIVERSE} | GitHubActions={IS_GITHUB_ACTIONS}")
+    replay_saved = 0
+    replay_failed = 0
 
-    if run_once:
-        log.info("Mode: Single scan execution (--once)")
-        run_scan()
-        log.info("Scan completed successfully. Exiting.")
-        sys.exit(0)
-
-    log.info(f"Mode: Loop every {SCAN_INTERVAL_SECONDS}s")
-    while _running:
+    for idx, candidate in enumerate(candidates):
         try:
-            run_scan()
+            save_candidate_snapshot(candidate, idx)
+            replay_saved += 1
         except Exception as e:
-            log.error(f"Scan error: {e}", exc_info=True)
+            replay_failed += 1
+            print(
+                f"[Main] ⚠️ Replay snapshot error "
+                f"{candidate.get('ticker')}: "
+                f"{type(e).__name__}: {e}"
+            )
 
-        if not _running:
-            break
+    print(
+        f"[Main] Replay snapshots saved: "
+        f"{replay_saved} (failed: {replay_failed})"
+    )
 
-        time.sleep(SCAN_INTERVAL_SECONDS)
+    # ------------------------------------------------------------
+    # 4. SWING ANALYSIS (TOP 5 ONLY)
+    # ------------------------------------------------------------
 
-    if live_monitor:
-        live_monitor.stop()
+    print("[Main] Running swing analysis for Top 5...")
 
-    log.info("CRYPTO-BOT Elite stopped.")
-    sys.exit(0)
+    for idx, candidate in enumerate(top5):
+        analysis = candidate.get('analysis', {})
+
+        swing = _safe_swing(candidate, analysis)
+
+        candidate["swing_score"] = float(
+            swing.get("swing_score", 0) or 0
+        )
+
+        candidate["qualified"] = swing.get("qualified", False)
+
+        candidate["swing_data"] = swing
+
+        candidate["trade_type"] = (
+            _classify_trade_type(candidate)
+        )
+
+        try:
+            save_alert(**candidate)
+
+            print(
+                f"[Main] DB saved: "
+                f"{candidate.get('ticker')}"
+            )
+
+        except Exception as e:
+            print(
+                f"[Main] ❌ DB save error "
+                f"{candidate.get('ticker')}: "
+                f"{type(e).__name__}: {e}"
+            )
+
+    # ------------------------------------------------------------
+    # 5. REPLAY INTEGRITY CHECK
+    # ------------------------------------------------------------
+
+    strict_count = discovery_stats.get("strict_candidates", 0)
+    integrity_ok = _run_replay_integrity_check(
+        replay_count=replay_saved,
+        strict_count=strict_count,
+    )
+
+    # ------------------------------------------------------------
+    # 6. LEARNING
+    # ------------------------------------------------------------
+
+    print("[Main] Building daily lesson...")
+
+    previous_lesson = load_previous_learning()
+
+    lesson = build_lesson(
+        candidates=candidates,
+        top5=top5,
+        discovery_stats=discovery_stats,
+        previous_lesson=previous_lesson,
+        config_params={
+            "DISCOVERY_MIN_PRICE": 1.00,
+            "DISCOVERY_MAX_PRICE": 30.00,
+            "DISCOVERY_MIN_GAP": 3.0,
+            "DISCOVERY_MIN_VOLUME": 50000,
+        }
+    )
+
+    save_learning(lesson)
+    print_lesson(lesson)
+
+    # ------------------------------------------------------------
+    # 7. TELEGRAM
+    # ------------------------------------------------------------
+
+    print("[Main] Sending Telegram...")
+
+    msg = format_research_report(
+        top5,
+        now_et
+    )
+
+    telegram_ok = send_message(
+        TELEGRAM_TOKEN,
+        TELEGRAM_CHAT_ID,
+        msg
+    )
+
+    print(
+        f"[Main] Telegram report sent: "
+        f"{telegram_ok}"
+    )
+
+    if lesson.get("recommendations"):
+        lesson_msg = format_lesson_for_telegram(
+            lesson
+        )
+
+        send_message(
+            TELEGRAM_TOKEN,
+            TELEGRAM_CHAT_ID,
+            lesson_msg
+        )
+
+    # ------------------------------------------------------------
+    # 8. SUMMARY
+    # ------------------------------------------------------------
+
+    print("\n" + "=" * 74)
+    print("TOP 5")
+    print("=" * 74)
+
+    for i, c in enumerate(top5, 1):
+
+        print(
+            f"{i}. {c.get('ticker')} | "
+            f"Intraday={float(c.get('composite_score', 0) or 0):.1f} | "
+            f"Early={float(c.get('early_score', 0) or 0):.1f} | "
+            f"Swing={float(c.get('swing_score', 0) or 0):.1f} | "
+            f"Qualified={c.get('qualified', False)} | "
+            f"Type={c.get('trade_type', 'WATCH')} | "
+            f"Data={c.get('data_status', 'UNKNOWN')}"
+        )
+
+    print("=" * 74)
+
+    # Replay summary
+    print()
+    print("=" * 74)
+    print("REPLAY SUMMARY")
+    print("=" * 74)
+    print(f"Universe:             {discovery_stats['universe']}")
+    print(f"Valid snapshots:      {discovery_stats['snapshots_received']}")
+    print(f"Strict candidates:    {strict_count}")
+    print(f"Replay records:       {replay_saved}")
+    print(f"Top 5:                {len(top5)}")
+    print()
+    print(f"Replay integrity:     {'✅ PASS' if integrity_ok else '❌ FAIL'}")
+    print("=" * 74)
+
+    print(
+        "⚠️ NO AUTOMATIC ORDERS – "
+        "MANUAL EXECUTION ONLY"
+    )
+    print("=" * 74)
 
 
 if __name__ == "__main__":
-    main()
+
+    if len(sys.argv) < 2:
+        print(
+            "Usage: python main.py "
+            "fullscan_v34 [--manual]"
+        )
+        sys.exit(1)
+
+    manual = "--manual" in sys.argv
+
+    run_fullscan_v34(manual)
