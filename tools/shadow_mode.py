@@ -123,10 +123,8 @@ def init_shadow_db():
             ("entry_candle_ambiguous", "INTEGER DEFAULT 0"),
             ("pnl_pct_method", "TEXT"),
             ("entry_slippage_pct", "REAL"),
-            # עמודות התראות יציאה
-            ("tp1_alert_sent", "INTEGER DEFAULT 0"),
-            ("tp2_alert_sent", "INTEGER DEFAULT 0"),
-            ("sl_alert_sent", "INTEGER DEFAULT 0"),
+            # 🆕 Provenance Fix (trigger tracking)
+            ("trigger_source", "TEXT"),
         ]
         for col, typ in new_columns:
             _add_column_if_not_exists(c, "shadow_trades", col, typ)
@@ -189,17 +187,20 @@ def save_shadow_signal(coin: dict, signal: str):
                 INSERT INTO shadow_trades (
                     ts, symbol, decision, setup, entry_price, trigger_price, tp1, tp2, sl,
                     ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
-                    probability, market_health, news_score, btc_regime, funding, trade_state,
+                    probability, market_health, news_score, btc_regime, funding,
                     shadow_tags, shadow_rs, rs_bucket, ai_bucket, trigger_source
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
-                ts, symbol, signal, coin.get("entry_setup", ""), coin.get("entry_price", coin.get("price", 0)),
-                coin.get("trigger_price"), coin.get("entry_tp1", 0), coin.get("entry_tp2", 0), coin.get("entry_sl", 0),
+                ts, symbol, signal, coin.get("entry_setup", ""),
+                coin.get("entry_price", coin.get("price", 0)),
+                coin.get("trigger_price"),  # None → NULL
+                coin.get("entry_tp1", 0), coin.get("entry_tp2", 0), coin.get("entry_sl", 0),
                 coin.get("ai_score", 0), coin.get("flow_score", 0), coin.get("pre_score", 0),
                 coin.get("oi_change", 0), coin.get("rs_1h", 0), compressed, signal,
                 coin.get("entry_reason", ""), coin.get("probability", 0), coin.get("market_health", 50),
                 coin.get("news_score", 50), coin.get("btc_regime", ""), funding,
-                tags, shadow_rs, rs_bucket, ai_bucket
+                tags, shadow_rs, rs_bucket, ai_bucket,
+                coin.get("trigger_source", "missing"),
             ))
         export_shadow_csv()
     except Exception as e:
@@ -234,23 +235,25 @@ def record_trade(coin: dict, signal):
 
     try:
         with _conn() as c:
-            # ✅ תיקון: 27 עמודות = 27 placeholders = 27 ערכים
+            # ✅ 28 עמודות = 28 placeholders = 28 ערכים
             c.execute('''
                 INSERT INTO shadow_trades (
                     ts, symbol, decision, setup, entry_price, trigger_price, tp1, tp2, sl,
                     ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
                     probability, market_health, news_score, btc_regime, funding, trade_state,
-                    shadow_tags, shadow_rs, rs_bucket, ai_bucket
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    shadow_tags, shadow_rs, rs_bucket, ai_bucket, trigger_source
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts, symbol, signal.decision, getattr(signal, "setup_type", ""),
-                getattr(signal, "entry", 0.0), coin.get("trigger_price", 0.0),
+                getattr(signal, "entry", 0.0),
+                coin.get("trigger_price"),  # None → NULL (don't invent)
                 getattr(signal, "tp1", 0.0), getattr(signal, "tp2", 0.0), getattr(signal, "sl", 0.0),
                 coin.get("ai_score", 0), coin.get("flow_score", 0), coin.get("pre_score", 0),
                 coin.get("oi_change", 0), coin.get("rs_1h", 0), compressed, initial_status,
                 getattr(signal, "reason", ""), coin.get("probability", 0), coin.get("market_health", 50),
                 coin.get("news_score", 50), coin.get("btc_regime", ""), funding, 'ACTIVE',
-                tags, shadow_rs, rs_bucket, ai_bucket
+                tags, shadow_rs, rs_bucket, ai_bucket,
+                coin.get("trigger_source", "missing"),
             ))
         log.info(f"Recorded shadow trade for {symbol} ({signal.decision})")
         export_shadow_csv()
@@ -311,7 +314,7 @@ def mark_buy_intent(symbol: str):
 
 
 def confirm_manual_execution(symbol: str, actual_fill_price: float,
-                             executed: bool = True, skip_reason: str = None):
+                              executed: bool = True, skip_reason: str = None):
     """נקרא מ-/done או /skip — לפי symbol."""
     symbol = symbol.upper().strip()
     candidates = [symbol] if symbol.endswith("USDT") else [symbol, f"{symbol}USDT"]
@@ -375,102 +378,47 @@ def export_shadow_csv():
     filepath = "shadow_results.csv"
     try:
         with _conn() as c:
-            trades = c.execute("SELECT * FROM shadow_trades").fetchall()
-            if not trades:
-                return
-            keys = trades[0].keys()
-            with open(filepath, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(keys)
-                for t in trades:
-                    writer.writerow([t[k] for k in keys])
+            trades = c.execute("SELECT * FROM shadow_trades ORDER BY id DESC").fetchall()
+
+        with open(filepath, mode='w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "Time (Israel)", "Coin", "Decision", "Setup", "Entry", "Trigger Price", "TP1", "TP2", "SL",
+                "AI Score", "Final Score", "Probability", "Flow", "Pre", "OI", "Funding", "RS",
+                "Compression", "Market Health", "News Score", "BTC Regime",
+                "Status", "Reason", "Exit Reason", "PnL", "PnL%", "PnL R",
+                "Max Profit%", "Max DD%", "Trade State", "Exit Price", "Duration (m)",
+                "Trigger Hit", "TP1 Hit", "TP2 Hit", "SL Hit",
+                "Max Up%", "Max Down%", "MFE%", "MAE%", "Outcome Checked", "Outcome Status",
+                "Shadow RS", "Shadow Tags", "RS Bucket", "AI Bucket", "Slippage%", "Trigger Source"
+            ])
+
+            for t in trades:
+                t = dict(t)
+                dt_utc = datetime.fromisoformat(t["ts"]) if t.get("ts") else None
+                dt_str = (dt_utc + timedelta(hours=3)).strftime("%H:%M:%S") if dt_utc else ""
+                writer.writerow([
+                    dt_str, t.get("symbol", ""), t.get("decision", ""), t.get("setup", ""),
+                    t.get("entry_price", 0), t.get("trigger_price", ""), t.get("tp1", 0),
+                    t.get("tp2", 0), t.get("sl", 0), t.get("ai_score", 0),
+                    t.get("final_score", 0) if "final_score" in t else 0, t.get("probability", 0),
+                    t.get("flow_score", 0), t.get("pre_score", 0), t.get("oi_change", 0),
+                    t.get("funding", 0), t.get("rs_1h", 0), t.get("is_compressed", 0),
+                    t.get("market_health", 50), t.get("news_score", 50), t.get("btc_regime", ""),
+                    t.get("status", ""), t.get("reason", ""), t.get("exit_reason", ""),
+                    t.get("pnl", 0), t.get("pnl_pct", 0), t.get("pnl_r", 0),
+                    t.get("max_profit_pct", 0), t.get("max_drawdown_pct", 0), t.get("trade_state", ""),
+                    t.get("exit_price", 0), t.get("duration_minutes", 0),
+                    t.get("outcome_trigger_hit", 0), t.get("outcome_tp1_hit", 0),
+                    t.get("outcome_tp2_hit", 0), t.get("outcome_sl_hit", 0),
+                    t.get("outcome_max_up_pct", 0), t.get("outcome_max_down_pct", 0),
+                    t.get("outcome_mfe", 0), t.get("outcome_mae", 0),
+                    t.get("outcome_checked", 0), t.get("outcome_status", ""),
+                    t.get("shadow_rs", "UNKNOWN"), t.get("shadow_tags", ""),
+                    t.get("rs_bucket", ""), t.get("ai_bucket", ""),
+                    t.get("entry_slippage_pct", ""),
+                    t.get("trigger_source", ""),
+                ])
+        log.info(f"CSV Exported: {os.path.abspath(filepath)}")
     except Exception as e:
-        log.error(f"export_shadow_csv failed: {e}")
-
-
-# =============================================
-# Exit Alerts Logic (מנגנון התראות חי)
-# =============================================
-
-def check_and_alert_exits():
-    """
-    בודק עסקאות פעילות שבוצעו בפועל (was_executed=1) ומתריע במקרה של חציית TP/SL.
-    שולף מחירים בזמן אמת ושולח התראה לטלגרם פעם אחת בלבד.
-    """
-    try:
-        # ייבוא פנימי כדי למנוע מעגליות
-        from scanner.market_data import get_candles
-        from notifier.sender import send_simple_message
-    except ImportError as e:
-        log.error(f"Cannot import dependencies for check_and_alert_exits: {e}")
-        return
-
-    try:
-        with _conn() as c:
-            # שולפים רק עסקאות פעילות שבוצעו
-            trades = c.execute("""
-                SELECT id, symbol, direction, tp1, tp2, sl,
-                       tp1_alert_sent, tp2_alert_sent, sl_alert_sent
-                FROM shadow_trades
-                WHERE was_executed = 1
-                  AND trade_state = 'ACTIVE'
-            """).fetchall()
-
-            if not trades:
-                return
-
-            for trade in trades:
-                symbol = trade["symbol"]
-                
-                # משיכת מחיר עדכני למטבע (1m candle)
-                df = get_candles(symbol, "1m", limit=1)
-                if df is None or len(df) == 0:
-                    continue
-                    
-                current_price = float(df["close"].iloc[-1])
-                direction = trade["direction"] or "LONG"
-                t_id = trade["id"]
-
-                updates = []
-                alert_msg = None
-
-                # --- בדיקות לעסקאות LONG ---
-                if direction == "LONG":
-                    if trade["sl"] and current_price <= trade["sl"] and not trade["sl_alert_sent"]:
-                        alert_msg = f"🚨 <b>{symbol}</b> hit Stop Loss!\nPrice: {current_price:.4f}"
-                        updates.append("sl_alert_sent = 1")
-                    elif trade["tp2"] and current_price >= trade["tp2"] and not trade["tp2_alert_sent"]:
-                        alert_msg = f"🎯🎯 <b>{symbol}</b> hit TP2!\nPrice: {current_price:.4f}"
-                        updates.append("tp2_alert_sent = 1")
-                        # סגירת TP1 אם קפץ ישר ל-TP2
-                        if not trade["tp1_alert_sent"]:
-                            updates.append("tp1_alert_sent = 1")
-                    elif trade["tp1"] and current_price >= trade["tp1"] and not trade["tp1_alert_sent"]:
-                        alert_msg = f"🎯 <b>{symbol}</b> hit TP1!\nPrice: {current_price:.4f}"
-                        updates.append("tp1_alert_sent = 1")
-
-                # --- בדיקות לעסקאות SHORT ---
-                elif direction == "SHORT":
-                    if trade["sl"] and current_price >= trade["sl"] and not trade["sl_alert_sent"]:
-                        alert_msg = f"🚨 <b>{symbol}</b> hit Stop Loss!\nPrice: {current_price:.4f}"
-                        updates.append("sl_alert_sent = 1")
-                    elif trade["tp2"] and current_price <= trade["tp2"] and not trade["tp2_alert_sent"]:
-                        alert_msg = f"🎯🎯 <b>{symbol}</b> hit TP2!\nPrice: {current_price:.4f}"
-                        updates.append("tp2_alert_sent = 1")
-                        if not trade["tp1_alert_sent"]:
-                            updates.append("tp1_alert_sent = 1")
-                    elif trade["tp1"] and current_price <= trade["tp1"] and not trade["tp1_alert_sent"]:
-                        alert_msg = f"🎯 <b>{symbol}</b> hit TP1!\nPrice: {current_price:.4f}"
-                        updates.append("tp1_alert_sent = 1")
-
-                # --- שליחה ועדכון ---
-                if alert_msg and updates:
-                    send_simple_message(alert_msg)
-                    set_clause = ", ".join(updates)
-                    c.execute(f"UPDATE shadow_trades SET {set_clause} WHERE id = ?", (t_id,))
-                    log.info(f"Exit alert sent and DB updated for {symbol} (ID: {t_id}): {alert_msg}")
-
-            export_shadow_csv()
-
-    except Exception as e:
-        log.error(f"Failed in check_and_alert_exits: {e}", exc_info=True)
+        log.error(f"Error exporting shadow CSV: {e}")
