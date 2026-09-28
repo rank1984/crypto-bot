@@ -12,6 +12,10 @@ from utils.logger import get_logger
 log = get_logger(__name__)
 
 
+# ✅ Threshold for RANGE regime gating (tuned from 55 → 50)
+RANGE_HEALTH_THRESHOLD = 50
+
+
 def classify_signal(c: dict) -> str:
     dec           = c.get("entry_decision", "NO")
     flow          = c.get("flow_score", 0)
@@ -31,24 +35,30 @@ def classify_signal(c: dict) -> str:
     oi_strong   = oi_change > 30.0
     at_trigger  = (0.0 <= dist_pct <= 0.05)
 
-    # ── Strict Regime Filter ─────────────────────────────────────────────
-    if btc_regime == "RISK_OFF":
-        if dec == "BUY":
+    # ── Debug: log BUY rejections ────────────────────────────────────
+    if dec == "BUY":
+        if btc_regime == "RISK_OFF":
+            log.info(f"{c.get('symbol','?')}: BUY→WATCH (regime=RISK_OFF)")
             return "WATCH"
-    if btc_regime == "RANGE" and market_health < 55:
-        if dec == "BUY":
+        if btc_regime == "RANGE" and market_health < RANGE_HEALTH_THRESHOLD:
+            log.info(f"{c.get('symbol','?')}: BUY→WATCH (RANGE, health={market_health:.0f} < {RANGE_HEALTH_THRESHOLD})")
             return "WATCH"
 
     # ── Final AI Gate ─────────────────────────────────────────────────────
     if dec == "BUY":
         if prob < 40:
+            log.info(f"{c.get('symbol','?')}: BUY→WATCH (prob={prob:.1f} < 40)")
             return "WATCH"
         if flow < 40:
+            log.info(f"{c.get('symbol','?')}: BUY→PREPARE (flow={flow:.1f} < 40)")
             return "PREPARE"
         if c.get("final_score", 0) < 60:
+            log.info(f"{c.get('symbol','?')}: BUY→PREPARE (final_score={c.get('final_score',0):.1f} < 60)")
             return "PREPARE"
         if market_health < 35:
+            log.info(f"{c.get('symbol','?')}: BUY→WATCH (health={market_health:.0f} < 35)")
             return "WATCH"
+        log.info(f"{c.get('symbol','?')}: BUY (confirmed)")
         return "BUY"
 
     # ── ARM ──────────────────────────────────────────────────────────────
