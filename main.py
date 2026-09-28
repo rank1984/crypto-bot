@@ -316,15 +316,22 @@ def run_scan() -> None:
     lines.append("")
 
     lines.append("🏆 דירוג 5 מובילים:")
-    lines.append("מטבע        AI   הסתברות   מרחק לטריגר")
-    lines.append("-" * 44)
+    lines.append("מטבע        AI   רמת ביטחון   מרחק לטריגר")
+    lines.append("-" * 48)
     for c in top[:5]:
-        sym = c['symbol'].replace('USDT', '')[:12].ljust(12)
-        ai = f"{c.get('ai_score', 0):.0f}".rjust(4)
-        prob = f"{c.get('probability', 0):.0f}%".rjust(6)
-        dist_val = c.get('trigger_distance_pct')
-        dist = "—" if dist_val is None else f"{dist_val:.2f}%"
-        lines.append(f"{sym}  {ai}  {prob}  {dist}")
+    sym = c['symbol'].replace('USDT', '')[:12].ljust(12)
+    ai = f"{c.get('ai_score', 0):.0f}".rjust(4)
+    ai_val = c.get('ai_score', 0)
+    if ai_val >= 65:
+        conf = "HIGH"
+    elif ai_val >= 50:
+        conf = "MEDIUM"
+    else:
+        conf = "LOW"
+    conf = conf.rjust(6)
+    dist_val = c.get('trigger_distance_pct')
+    dist = "—" if dist_val is None else f"{dist_val:.2f}%"
+    lines.append(f"{sym}  {ai}  {conf}  {dist}")
     lines.append("")
 
     buy_list = filtered.get("buy", [])
