@@ -7,7 +7,7 @@ import os
 # ============================================================
 # SCAN INTERVAL (seconds)
 # ============================================================
-SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", 3600))  # 1 hour
+SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", 3600))
 
 # ============================================================
 # UNIVERSE
@@ -15,8 +15,16 @@ SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", 3600))  # 1 hour
 USE_DYNAMIC_UNIVERSE = True
 MAX_SYMBOLS = 150
 MIN_PRICE = 0.001
-MIN_DAILY_VOLUME = 1_000_000  # USD
+MIN_DAILY_VOLUME = 1_000_000
 TOP_N = 5
+
+# ============================================================
+# 🆕 MARKET CAP FILTERS (Mid-caps: potential 3-10x)
+# ============================================================
+# Min: $50M – filter out micro-cap scams
+# Max: $2B – filter out large caps that finished their move
+MIN_MARKET_CAP_USD = float(os.getenv("MIN_MARKET_CAP_USD", 50_000_000))
+MAX_MARKET_CAP_USD = float(os.getenv("MAX_MARKET_CAP_USD", 2_000_000_000))
 
 # ============================================================
 # API & EXTERNAL SERVICES
@@ -30,42 +38,27 @@ KUCOIN_FUTURES_BASE = os.getenv("KUCOIN_FUTURES_BASE", "https://api-futures.kuco
 # ============================================================
 TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
 CANDLES_PER_TF = {
-    "1m": 200,
-    "5m": 200,
-    "15m": 200,
-    "30m": 200,
-    "1h": 200,
-    "4h": 200,
-    "1d": 200,
+    "1m": 200, "5m": 200, "15m": 200, "30m": 200,
+    "1h": 200, "4h": 200, "1d": 200,
 }
 
 # ============================================================
 # CACHE
 # ============================================================
 CACHE_DIR = os.getenv("CACHE_DIR", "cache")
-CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", 300))  # 5 minutes
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", 300))
 
 # ============================================================
 # SCORING WEIGHTS
 # ============================================================
 SCORE_WEIGHTS = {
-    "ai_score": 0.30,
-    "flow_score": 0.25,
-    "pre_score": 0.15,
-    "oi_change": 0.10,
-    "rs_1h": 0.10,
-    "prob_boost": 0.10,
+    "ai_score": 0.30, "flow_score": 0.25, "pre_score": 0.15,
+    "oi_change": 0.10, "rs_1h": 0.10, "prob_boost": 0.10,
 }
 
-# ============================================================
-# ✅ FRESHNESS WEIGHTS – תוקן לפי scoring.py
-# ============================================================
 FRESHNESS_WEIGHTS = {
-    "high_age": 0.25,
-    "pullback": 0.20,
-    "momentum": 0.20,
-    "vwap": 0.15,
-    "vol_accel": 0.20,
+    "high_age": 0.25, "pullback": 0.20, "momentum": 0.20,
+    "vwap": 0.15, "vol_accel": 0.20,
 }
 
 # ============================================================
@@ -81,13 +74,13 @@ MIN_MARKET_HEALTH = 50.0
 # TRADING PARAMETERS
 # ============================================================
 MAX_TRADES = 2
-PORTFOLIO_CAPITAL = 500.0  # USD
+PORTFOLIO_CAPITAL = 500.0
 
 # ============================================================
 # RISK
 # ============================================================
-MAX_RISK_PER_TRADE = 0.02  # 2% of portfolio
-MAX_DAILY_LOSS = 0.05      # 5% of portfolio
+MAX_RISK_PER_TRADE = 0.02
+MAX_DAILY_LOSS = 0.05
 
 # ============================================================
 # TELEGRAM
