@@ -29,10 +29,7 @@ except ImportError:
 
 log = get_logger(__name__)
 
-# ============================================================
-# ✅ RVOL Configuration – Experimental
-# ============================================================
-MIN_RVOL = 0.4   # Temporary – will be tuned after data collection
+MIN_RVOL = 0.4
 
 
 def _recent_high_stats(df_5m: pd.DataFrame, lookback: int = 20) -> Tuple[float, float, float]:
@@ -65,13 +62,11 @@ def scan_coin(symbol: str) -> Optional[dict]:
     ind = calc_indicators(df_5m, df_1h)
     rs = calc_relative_strength(df_1h)
 
-    # ── RVOL filter with configurable threshold ────────────────
     rvol = vol["rvol"]
     if rvol < MIN_RVOL:
         log.debug(f"{symbol}: RVOL {rvol:.2f} < {MIN_RVOL:.2f} — filtered")
         return None
 
-    # Hard filters
     passed, reason = passes_hard_filters(
         rsi_14=ind["rsi_14"], vwap_dist=ind["vwap_dist"],
         momentum_5m=mom["momentum_5m"], momentum_15m=mom["momentum_15m"],
@@ -81,7 +76,6 @@ def scan_coin(symbol: str) -> Optional[dict]:
         log.debug(f"{symbol}: hard_filter — {reason}")
         return None
 
-    # ── Recent High Stats (with error handling) ────────────────
     try:
         high_price, high_age, pullback = _recent_high_stats(df_5m)
     except Exception as e:
@@ -96,15 +90,12 @@ def scan_coin(symbol: str) -> Optional[dict]:
     score = final_score(fs, ms, bs, rvol=vol["rvol"], vol_accel=vol["vol_accel"], vwap_dist=ind["vwap_dist"])
     score = apply_trader_overrides(score, {**mom, **vol, **ind, "rs_1h": rs["rs_1h"], "rs_4h": rs["rs_4h"]})
 
-    # RS bonus
     if rs["rs_1h"] > 1.0: score = min(100.0, score + 4)
     if rs["rs_4h"] > 2.0: score = min(100.0, score + 4)
     score = round(score, 1)
 
-    # Flow Engine
     flow = calc_flow_score(symbol, df_5m, rs_btc_1h=rs["rs_1h"])
 
-    # Pre-Breakout Score
     pre = calc_pre_breakout_score(
         df_5m=df_5m, df_1h=df_1h,
         oi_change_pct=flow.get("oi_change", 0),
@@ -139,8 +130,6 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "breakout_score": bs,
         "final_score": score,
         "probability": round(score * 0.88, 1),
-
-        # flow
         "flow_score": flow["flow_score"],
         "flow_components": flow["components"],
         "is_compressed": flow["is_compressed"],
@@ -148,22 +137,17 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "cvd_trend": flow["cvd_trend"],
         "oi_change": flow["oi_change"],
         "funding_rate": flow["funding_rate"],
-
-        # pre-breakout
         "pre_score": pre["pre_score"],
         "phase": pre["phase"],
         "phase_label": pre["phase_label"],
         "pre_components": pre["components"],
-
         "is_sympathy": False,
         "leader": "",
         "regime": "",
     }
 
-    # ── Probability Engine ─────────────────────────────────────────────
     coin = enrich_with_probability([coin])[0]
 
-    # ── Entry Engine ───────────────────────────────────────────────────
     entry_signal = evaluate_entry(
         coin=coin,
         df_5m=df_5m,
@@ -179,6 +163,8 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "entry_tp2": entry_signal.tp2,
         "entry_rr": entry_signal.rr,
         "entry_reason": entry_signal.reason,
+        "trigger_price": entry_signal.trigger_price,
+        "trigger_source": entry_signal.trigger_source,
     })
 
     return coin
@@ -187,14 +173,12 @@ def scan_coin(symbol: str) -> Optional[dict]:
 def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
     init_db()
 
-    # BTC reference
     log.info("Loading BTC reference...")
     btc_dfs = get_all_timeframes("BTCUSDT")
     btc_1h = btc_dfs.get("1hour")
     if btc_1h is not None:
         set_btc_reference(btc_1h)
 
-    # BTC moves for regime
     btc_1h_move = btc_4h_move = btc_24h_move = 0.0
     if btc_1h is not None and len(btc_1h) > 24:
         c = btc_1h["close"]
@@ -206,7 +190,6 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
     min_threshold = get_min_threshold(regime)
     log.info(f"Regime: {regime} | BTC 1h={btc_1h_move:+.1f}% | Min threshold: {min_threshold}")
 
-    # Sympathy
     leaders = find_leaders(symbols)
     sympathy_plays = find_sympathy_plays(leaders, symbols)
 
@@ -217,7 +200,6 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
         _stats.scanned = len(symbols)
         _stats.regime = regime
 
-    # ── RVOL Statistics ───────────────────────────────────────────────
     rvol_buckets = {
         f"rvol_<{MIN_RVOL}": 0,
         f"rvol_{MIN_RVOL:.1f}_to_0.6": 0,
@@ -237,7 +219,6 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
             if _stats and "flow_score" in r:
                 _stats.record_flow(r["flow_score"])
 
-            # Track RVOL buckets
             rvol = r.get("rvol", 0)
             if rvol < MIN_RVOL:
                 rvol_buckets[f"rvol_<{MIN_RVOL}"] += 1
@@ -263,15 +244,12 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
             log.warning(f"{sym}: {e}")
 
     log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters")
-
-    # ── RVOL Diagnostics ──────────────────────────────────────────────
     log.info(
         f"RVOL diagnostics: "
         f"{' | '.join([f'{k}={v}' for k, v in rvol_buckets.items()])} "
         f"passed={cnt['ok']}"
     )
 
-    # ── Ranking ────────────────────────────────────────────────────────
     def _rank_score(x: dict) -> float:
         score = (
             x.get("flow_score", 0) * 0.35 +
@@ -279,20 +257,16 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
             x.get("final_score", 0) * 0.15 +
             x.get("probability", 0) * 0.10
         )
-
         if x.get("entry_decision") == "BUY":
             score += 20
         elif x.get("entry_decision") == "WAIT":
             score += 10
-
         if x.get("signal") == "PREPARE":
             score += 8
-
         return score
 
     results.sort(key=_rank_score, reverse=True)
 
-    # Deduplication
     seen, unique = set(), []
     for r in results:
         if r["symbol"] not in seen:
@@ -304,7 +278,6 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
     for r in results:
         is_buy = r.get("entry_decision") == "BUY"
         passes_thresh = r.get("final_score", 0) >= min_threshold
-
         if is_buy or passes_thresh:
             top.append(r)
         else:
