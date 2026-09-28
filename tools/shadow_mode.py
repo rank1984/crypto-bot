@@ -189,8 +189,8 @@ def save_shadow_signal(coin: dict, signal: str):
                 INSERT INTO shadow_trades (
                     ts, symbol, decision, setup, entry_price, trigger_price, tp1, tp2, sl,
                     ai_score, flow_score, pre_score, oi_change, rs_1h, is_compressed, status, reason,
-                    probability, market_health, news_score, btc_regime, funding,
-                    shadow_tags, shadow_rs, rs_bucket, ai_bucket
+                    probability, market_health, news_score, btc_regime, funding, trade_state,
+                    shadow_tags, shadow_rs, rs_bucket, ai_bucket, trigger_source
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts, symbol, signal, coin.get("entry_setup", ""), coin.get("entry_price", coin.get("price", 0)),
