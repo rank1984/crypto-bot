@@ -1,9 +1,9 @@
 name: CRYPTO-BOT Scan
 
 on:
-  workflow_dispatch:               # הפעלה ידנית
+  workflow_dispatch:               # הפעלה ידנית מכפתור
   schedule:
-    - cron: '0 * * * *'            # כל שעה עגולה
+    - cron: '0 * * * *'            # כל שעה עגולה (00:00, 01:00, ...)
 
 jobs:
   scan:
@@ -30,7 +30,7 @@ jobs:
           python -c "from tools.health_check import health_check; health_check()"
 
       # ================================================================
-      # RUN SCAN
+      # RUN SCAN (main pipeline)
       # ================================================================
       - name: Run scan (main pipeline)
         run: python main.py --once
@@ -38,6 +38,15 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+
+      # ================================================================
+      # 🔬 EDGE AUDIT – הבדיקה הקריטית להחלטה
+      # ================================================================
+      - name: 🔬 Edge Audit (full statistical analysis)
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "from tools.edge_audit import run_edge_audit; run_edge_audit()"
 
       # ================================================================
       #  PHASE 1 – DATA PROVENANCE AUDIT
@@ -170,7 +179,7 @@ jobs:
           python -c "from tools.learning_dashboard import run_dashboard; print(run_dashboard())"
 
       # ================================================================
-      #  PHASE 3 – ARTIFACTS
+      #  PHASE 3 – ARTIFACTS (תמיד להעלות)
       # ================================================================
       - name: Upload shadow results
         if: always()
