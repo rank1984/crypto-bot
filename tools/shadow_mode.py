@@ -194,7 +194,7 @@ def save_shadow_signal(coin: dict, signal: str):
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 ts, symbol, signal, coin.get("entry_setup", ""), coin.get("entry_price", coin.get("price", 0)),
-                coin.get("trigger_price", 0), coin.get("entry_tp1", 0), coin.get("entry_tp2", 0), coin.get("entry_sl", 0),
+                coin.get("trigger_price"), coin.get("entry_tp1", 0), coin.get("entry_tp2", 0), coin.get("entry_sl", 0),
                 coin.get("ai_score", 0), coin.get("flow_score", 0), coin.get("pre_score", 0),
                 coin.get("oi_change", 0), coin.get("rs_1h", 0), compressed, signal,
                 coin.get("entry_reason", ""), coin.get("probability", 0), coin.get("market_health", 50),
