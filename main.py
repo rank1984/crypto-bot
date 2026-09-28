@@ -73,6 +73,20 @@ if not IS_GITHUB_ACTIONS:
 ws_monitors = {}
 
 
+def _confidence_from_ai(ai_score: float) -> str:
+    """Map AI score to confidence level (research-only label)."""
+    try:
+        ai = float(ai_score or 0)
+    except (TypeError, ValueError):
+        ai = 0.0
+    if ai >= 65:
+        return "HIGH"
+    elif ai >= 50:
+        return "MEDIUM"
+    else:
+        return "LOW"
+
+
 def _trade_open_message(trade) -> str:
     quality = getattr(trade, "quality", 0)
     return (
@@ -221,21 +235,21 @@ def run_scan() -> None:
     top = apply_quality_gate_all(top)
 
     for c in top:
-    if "last_price" not in c or c.get("last_price", 0) == 0:
-        fallback = c.get("close", c.get("price", 0))
-        if fallback == 0:
-            df_tmp = get_candles(c["symbol"], "5m", limit=1)
-            if df_tmp is not None and len(df_tmp) > 0:
-                fallback = float(df_tmp["close"].iloc[-1])
-        c["last_price"] = fallback
+        if "last_price" not in c or c.get("last_price", 0) == 0:
+            fallback = c.get("close", c.get("price", 0))
+            if fallback == 0:
+                df_tmp = get_candles(c["symbol"], "5m", limit=1)
+                if df_tmp is not None and len(df_tmp) > 0:
+                    fallback = float(df_tmp["close"].iloc[-1])
+            c["last_price"] = fallback
 
-    last_price = c.get("last_price", 0)
-    trigger_price = c.get("trigger_price")  # NEW: don't default to entry_price
+        last_price = c.get("last_price", 0)
+        trigger_price = c.get("trigger_price")  # ✅ לא ממציאים trigger_price
 
-    if last_price > 0 and trigger_price is not None and trigger_price > 0:
-        c["trigger_distance_pct"] = ((trigger_price - last_price) / last_price) * 100
-    else:
-        c["trigger_distance_pct"] = None   # Explicitly None when missing
+        if last_price > 0 and trigger_price is not None and trigger_price > 0:
+            c["trigger_distance_pct"] = ((trigger_price - last_price) / last_price) * 100
+        else:
+            c["trigger_distance_pct"] = None  # NULL אם אין trigger
 
     # ── 5. Signal Filter ──────────────────────────────────────────────────────
     from scanner.signal_filter import filter_coins
@@ -316,22 +330,15 @@ def run_scan() -> None:
     lines.append("")
 
     lines.append("🏆 דירוג 5 מובילים:")
-    lines.append("מטבע        AI   רמת ביטחון   מרחק לטריגר")
-    lines.append("-" * 48)
+    lines.append("מטבע        AI   ביטחון   מרחק לטריגר")
+    lines.append("-" * 44)
     for c in top[:5]:
-    sym = c['symbol'].replace('USDT', '')[:12].ljust(12)
-    ai = f"{c.get('ai_score', 0):.0f}".rjust(4)
-    ai_val = c.get('ai_score', 0)
-    if ai_val >= 65:
-        conf = "HIGH"
-    elif ai_val >= 50:
-        conf = "MEDIUM"
-    else:
-        conf = "LOW"
-    conf = conf.rjust(6)
-    dist_val = c.get('trigger_distance_pct')
-    dist = "—" if dist_val is None else f"{dist_val:.2f}%"
-    lines.append(f"{sym}  {ai}  {conf}  {dist}")
+        sym = c['symbol'].replace('USDT', '')[:12].ljust(12)
+        ai = f"{c.get('ai_score', 0):.0f}".rjust(4)
+        conf = _confidence_from_ai(c.get('ai_score', 0)).rjust(7)
+        dist_val = c.get('trigger_distance_pct')
+        dist = "—" if dist_val is None else f"{dist_val:.2f}%"
+        lines.append(f"{sym}  {ai}  {conf}  {dist}")
     lines.append("")
 
     buy_list = filtered.get("buy", [])
@@ -352,7 +359,7 @@ def run_scan() -> None:
     if prepare_list:
         lines.append("🟡 הכנה (PREPARE) – הצטברות טובה, חסר טריגר:")
         for c in prepare_list[:3]:
-            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f} Prob:{c.get('probability',0):.0f}%")
+            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f}")
         lines.append("")
 
     arm_list = filtered.get("arm", [])
@@ -368,7 +375,7 @@ def run_scan() -> None:
     if watch_list:
         lines.append("🟡 במעקב (WATCH):")
         for c in watch_list[:3]:
-            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f} Prob:{c.get('probability',0):.0f}%")
+            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f}")
         lines.append("")
 
     lines.append("🔹 מה לעשות:")
