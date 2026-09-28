@@ -23,7 +23,6 @@ def classify_signal(c: dict) -> str:
     compressed    = c.get("is_compressed", False)
     oi_change     = c.get("oi_change", 0)
     rs_1h         = c.get("rs_1h", 0)
-    prob          = c.get("probability", 0)
     dist_pct      = c.get("trigger_distance_pct")
     if dist_pct is None:
         dist_pct = 999
@@ -35,7 +34,7 @@ def classify_signal(c: dict) -> str:
     oi_strong   = oi_change > 30.0
     at_trigger  = (0.0 <= dist_pct <= 0.05)
 
-    # ── Debug: log BUY rejections ────────────────────────────────────
+    # ── Regime gating ─────────────────────────────────────────────────
     if dec == "BUY":
         if btc_regime == "RISK_OFF":
             log.info(f"{c.get('symbol','?')}: BUY→WATCH (regime=RISK_OFF)")
@@ -45,10 +44,8 @@ def classify_signal(c: dict) -> str:
             return "WATCH"
 
     # ── Final AI Gate ─────────────────────────────────────────────────────
+    # ⚠️ Probability gate removed – we proved correlation with outcome is ~0.
     if dec == "BUY":
-        if prob < 40:
-            log.info(f"{c.get('symbol','?')}: BUY→WATCH (prob={prob:.1f} < 40)")
-            return "WATCH"
         if flow < 40:
             log.info(f"{c.get('symbol','?')}: BUY→PREPARE (flow={flow:.1f} < 40)")
             return "PREPARE"
@@ -58,19 +55,18 @@ def classify_signal(c: dict) -> str:
         if market_health < 35:
             log.info(f"{c.get('symbol','?')}: BUY→WATCH (health={market_health:.0f} < 35)")
             return "WATCH"
-        log.info(f"{c.get('symbol','?')}: BUY (confirmed)")
+        log.info(f"{c.get('symbol','?')}: BUY (confirmed) | flow={flow:.1f} score={c.get('final_score',0):.1f}")
         return "BUY"
 
     # ── ARM ──────────────────────────────────────────────────────────────
     if at_trigger and (compressed or flow >= 40 or oi_strong):
         return "ARM"
     arm_conditions = [
-        prob >= 25 if prob > 0 else True,
         dist_pct <= 1.0,
         compressed or flow >= 45 or oi_strong,
         market_health >= 50,
     ]
-    if sum(arm_conditions) >= 3 and dist_pct <= 1.0:
+    if sum(arm_conditions) >= 2 and dist_pct <= 1.0:
         return "ARM"
 
     # ── PREPARE ──────────────────────────────────────────────────────────
@@ -79,7 +75,7 @@ def classify_signal(c: dict) -> str:
         return "PREPARE"
 
     # ── WATCH ────────────────────────────────────────────────────────────
-    if flow >= 45 or pre >= 45 or (prob >= 25 and dist_pct < 2.0):
+    if flow >= 45 or pre >= 45 or dist_pct < 2.0:
         return "WATCH"
 
     return "IGNORE"
