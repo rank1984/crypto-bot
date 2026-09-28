@@ -4,7 +4,10 @@ CRYPTO-BOT Elite — Dynamic Universe Builder
 import requests
 import pandas as pd
 import numpy as np
-from utils.config import COINGECKO_BASE, MIN_DAILY_VOLUME, MIN_PRICE, MAX_SYMBOLS
+from utils.config import (
+    COINGECKO_BASE, MIN_DAILY_VOLUME, MIN_PRICE, MAX_SYMBOLS,
+    MIN_MARKET_CAP_USD, MAX_MARKET_CAP_USD,
+)
 from utils.logger import get_logger
 from scanner.market_data import get_candles
 
@@ -14,6 +17,7 @@ _BLACKLIST = {
     "USDCUSDT","USDTUSDT","BUSDUSDT","TUSDUSDT","USDSUSDT",
     "USD1USDT","USDEUSDT","FDUSDUSDT","DAIUSDT","FRAXUSDT",
     "PYUSDUSDT","USDDUSDT","EURCUSDT","USDPUSDT","GUSDUSDT",
+    "RLUSDUSDT","USDGOUSDT","USDCXUSDT",
 }
 
 _HEADERS   = {"User-Agent": "crypto-bot/1.0"}
@@ -33,7 +37,18 @@ def _min_volume_for_mcap(mcap: float) -> float:
 
 
 def _base_universe() -> list[str]:
+    """
+    Fetch base universe from CoinGecko with:
+    - Volume filter
+    - Price filter
+    - 🆕 Market Cap filter (MIN_MARKET_CAP_USD - MAX_MARKET_CAP_USD)
+    """
     symbols = []
+    rejected_vol = 0
+    rejected_price = 0
+    rejected_mcap_low = 0
+    rejected_mcap_high = 0
+
     for page in range(1, 3):
         try:
             r = requests.get(
@@ -49,15 +64,38 @@ def _base_universe() -> list[str]:
                 price = c.get("current_price") or 0
                 mcap  = c.get("market_cap") or 0
                 sym   = (c.get("symbol") or "").upper()
-                min_vol = max(MIN_DAILY_VOLUME, _min_volume_for_mcap(mcap))
-                if vol < min_vol or price < MIN_PRICE or not sym:
+
+                # 🆕 Market Cap filter
+                if mcap < MIN_MARKET_CAP_USD:
+                    rejected_mcap_low += 1
                     continue
+                if mcap > MAX_MARKET_CAP_USD:
+                    rejected_mcap_high += 1
+                    continue
+
+                min_vol = max(MIN_DAILY_VOLUME, _min_volume_for_mcap(mcap))
+                if vol < min_vol:
+                    rejected_vol += 1
+                    continue
+                if price < MIN_PRICE or not sym:
+                    rejected_price += 1
+                    continue
+
                 s = f"{sym}USDT"
                 if s not in symbols:
                     symbols.append(s)
+
         except Exception as e:
             log.warning(f"CoinGecko page {page}: {e}")
             break
+
+    log.info(
+        f"Base universe filters: "
+        f"mcap_low={rejected_mcap_low} mcap_high={rejected_mcap_high} "
+        f"vol={rejected_vol} price={rejected_price} "
+        f"passed={len(symbols)}"
+    )
+
     return symbols[:150]
 
 
@@ -126,7 +164,10 @@ def _rs_leaders(base: list[str], btc_1h_move: float, top_n: int = 20) -> list[st
 
 
 def build_dynamic_universe(btc_1h_move: float = 0.0) -> list[str]:
-    log.info("Building dynamic universe...")
+    log.info(
+        f"Building dynamic universe "
+        f"(Market Cap range: ${MIN_MARKET_CAP_USD/1e6:.0f}M-${MAX_MARKET_CAP_USD/1e9:.1f}B)..."
+    )
     base   = _base_universe()
     oi_l   = _oi_leaders(base)
     comp_l = _compression_leaders(base)
