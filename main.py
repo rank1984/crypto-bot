@@ -221,24 +221,21 @@ def run_scan() -> None:
     top = apply_quality_gate_all(top)
 
     for c in top:
-        if "last_price" not in c or c.get("last_price", 0) == 0:
-            fallback = c.get("close", c.get("price", 0))
-            if fallback == 0:
-                df_tmp = get_candles(c["symbol"], "5m", limit=1)
-                if df_tmp is not None and len(df_tmp) > 0:
-                    fallback = float(df_tmp["close"].iloc[-1])
-            c["last_price"] = fallback
+    if "last_price" not in c or c.get("last_price", 0) == 0:
+        fallback = c.get("close", c.get("price", 0))
+        if fallback == 0:
+            df_tmp = get_candles(c["symbol"], "5m", limit=1)
+            if df_tmp is not None and len(df_tmp) > 0:
+                fallback = float(df_tmp["close"].iloc[-1])
+        c["last_price"] = fallback
 
-        last_price = c.get("last_price", 0)
-        trigger_price = c.get("trigger_price", c.get("entry_price", 0))
+    last_price = c.get("last_price", 0)
+    trigger_price = c.get("trigger_price")  # NEW: don't default to entry_price
 
-        if last_price > 0 and trigger_price and trigger_price > 0:
-            c["trigger_distance_pct"] = ((trigger_price - last_price) / last_price) * 100
-        else:
-            c["trigger_distance_pct"] = None
-
-        if "trigger_price" not in c and trigger_price > 0:
-            c["trigger_price"] = trigger_price
+    if last_price > 0 and trigger_price is not None and trigger_price > 0:
+        c["trigger_distance_pct"] = ((trigger_price - last_price) / last_price) * 100
+    else:
+        c["trigger_distance_pct"] = None   # Explicitly None when missing
 
     # ── 5. Signal Filter ──────────────────────────────────────────────────────
     from scanner.signal_filter import filter_coins
