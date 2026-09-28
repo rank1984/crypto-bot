@@ -3,7 +3,7 @@ name: CRYPTO-BOT Scan
 on:
   workflow_dispatch:               # הפעלה ידנית מכפתור
   schedule:
-    - cron: '0 * * * *'            # כל שעה עגולה (00:00, 01:00, ...)
+    - cron: '0 * * * *'            # כל שעה עגולה
 
 jobs:
   scan:
@@ -30,6 +30,46 @@ jobs:
           python -c "from tools.health_check import health_check; health_check()"
 
       # ================================================================
+      # 🔍 DEBUG – בדיקת candles לעסקאות פתוחות (10 דוגמאות)
+      # ================================================================
+      - name: 🔍 Debug Candles for Open Trades
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "
+          import sqlite3, os, time
+          from scanner.market_data import get_candles
+
+          conn = sqlite3.connect(os.getenv('DB_PATH', 'data/shadow.db'))
+          cur = conn.cursor()
+          symbols = [r[0] for r in cur.execute('''
+              SELECT DISTINCT symbol FROM shadow_trades
+              WHERE outcome_status IN ('PENDING', 'ACTIVE')
+          ''').fetchall()]
+          conn.close()
+
+          print(f'Total open trade symbols: {len(symbols)}')
+          print()
+
+          success = 0
+          failed = 0
+          for i, sym in enumerate(symbols[:10], 1):
+              start = time.time()
+              df = get_candles(sym, '5m', limit=10)
+              elapsed = time.time() - start
+              n = len(df) if df is not None else 0
+              print(f'{i}. {sym}: {n} candles ({elapsed:.2f}s)')
+              if n > 0:
+                  success += 1
+              else:
+                  failed += 1
+              time.sleep(0.5)
+
+          print()
+          print(f'Success: {success}/10, Failed: {failed}/10')
+          "
+
+      # ================================================================
       # RUN SCAN (main pipeline)
       # ================================================================
       - name: Run scan (main pipeline)
@@ -40,7 +80,7 @@ jobs:
           DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
 
       # ================================================================
-      # 🔬 EDGE AUDIT – הבדיקה הקריטית להחלטה
+      # 🔬 EDGE AUDIT
       # ================================================================
       - name: 🔬 Edge Audit (full statistical analysis)
         env:
@@ -179,7 +219,7 @@ jobs:
           python -c "from tools.learning_dashboard import run_dashboard; print(run_dashboard())"
 
       # ================================================================
-      #  PHASE 3 – ARTIFACTS (תמיד להעלות)
+      #  PHASE 3 – ARTIFACTS
       # ================================================================
       - name: Upload shadow results
         if: always()
