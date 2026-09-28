@@ -13,7 +13,7 @@ from utils.logger import get_logger
 
 log = get_logger(__name__)
 _HEADERS = {"User-Agent": "crypto-bot/1.0"}
-_DELAY = 0.05
+_DELAY = 0.15   # 🆕 העלאה מ-0.05 ל-0.15 שניות
 
 INTERVAL_MAP = {
     "1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min",
