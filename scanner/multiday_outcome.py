@@ -1,7 +1,6 @@
 """
 scanner/multiday_outcome.py
 Multi-Day Outcome Tracker – computes 24h, 48h, 72h, 7d PnL/MFE/MAE.
-Uses point-in-time data only.
 """
 
 import sqlite3
@@ -12,6 +11,14 @@ from storage.sqlite_db import DB_PATH
 from scanner.market_data import get_candles
 
 log = get_logger("multiday_outcome")
+
+
+def _to_utc_timestamp(dt) -> pd.Timestamp:
+    """Convert a datetime or string to UTC pandas Timestamp safely."""
+    ts = pd.Timestamp(dt)
+    if ts.tzinfo is None:
+        return ts.tz_localize("UTC")
+    return ts.tz_convert("UTC")
 
 
 def ensure_multiday_table():
@@ -68,16 +75,11 @@ def ensure_multiday_table():
 
 
 def _fetch_candles_since(symbol: str, interval: str, start_ts: datetime):
-    """
-    Fetch 4H candles and filter for those after start_ts.
-    Workaround for get_candles not supporting 'start' parameter.
-    """
-    # Fetch a large number of candles (e.g., 500 4H candles ≈ 83 days)
+    """Fetch 4H candles and filter for those after start_ts."""
     df = get_candles(symbol, interval, limit=500)
     if df is None or df.empty:
         return None
 
-    # Ensure time column is datetime
     if "open_time" in df.columns:
         df["time"] = pd.to_datetime(df["open_time"], utc=True)
     elif "time" in df.columns:
@@ -86,8 +88,7 @@ def _fetch_candles_since(symbol: str, interval: str, start_ts: datetime):
         log.warning(f"{symbol}: no time column in candles")
         return None
 
-    # Filter candles >= start_ts
-    start_ts_utc = pd.Timestamp(start_ts, tz="UTC")
+    start_ts_utc = _to_utc_timestamp(start_ts)
     df = df[df["time"] >= start_ts_utc].copy()
     return df
 
@@ -117,16 +118,17 @@ def update_multiday_outcomes():
     for row in signals:
         try:
             symbol = row["symbol"]
-            entry = float(row["entry"])
-            stop = float(row["stop"])
-            tp1 = float(row["tp1"])
-            tp2 = float(row["tp2"])
+            entry = float(row["entry"] or 0)
+            stop = float(row["stop"] or 0)
+            tp1 = float(row["tp1"] or 0)
+            tp2 = float(row["tp2"] or 0)
+            if entry <= 0:
+                continue
+
             signal_ts = datetime.fromisoformat(row["signal_timestamp"])
-            # Ensure timezone aware
             if signal_ts.tzinfo is None:
                 signal_ts = signal_ts.replace(tzinfo=timezone.utc)
 
-            # Fetch candles (using our new helper)
             df = _fetch_candles_since(symbol, "4h", signal_ts)
 
             if df is None or df.empty:
@@ -135,13 +137,12 @@ def update_multiday_outcomes():
 
             df = df.sort_values("time").reset_index(drop=True)
 
-            # Compute outcomes for each horizon
             horizons = {"24h": 24, "48h": 48, "72h": 72, "7d": 168}
             outcomes = {}
 
             for name, hours in horizons.items():
                 cutoff = signal_ts + timedelta(hours=hours)
-                cutoff_ts = pd.Timestamp(cutoff, tz="UTC")
+                cutoff_ts = _to_utc_timestamp(cutoff)
                 df_horizon = df[df["time"] <= cutoff_ts]
 
                 if df_horizon.empty:
@@ -155,19 +156,19 @@ def update_multiday_outcomes():
                 outcomes[f"mae_{name}"] = round((low - entry) / entry * 100, 2)
                 outcomes[f"pnl_{name}"] = round((close - entry) / entry * 100, 2)
 
-            # Determine outcome type
             outcome_type = "STILL_OPEN"
             if not df.empty:
                 last_time = df["time"].iloc[-1]
-                hours_elapsed = (last_time - pd.Timestamp(signal_ts, tz="UTC")).total_seconds() / 3600
+                sig_ts_utc = _to_utc_timestamp(signal_ts)
+                hours_elapsed = (last_time - sig_ts_utc).total_seconds() / 3600
                 if hours_elapsed >= 168:
                     outcome_type = "TIMEOUT"
                 else:
-                    if any(df["high"] >= tp1):
+                    if tp1 > 0 and any(df["high"] >= tp1):
                         outcome_type = "TP1_HIT"
-                    if any(df["high"] >= tp2):
+                    if tp2 > 0 and any(df["high"] >= tp2):
                         outcome_type = "TP2_HIT"
-                    if any(df["low"] <= stop):
+                    if stop > 0 and any(df["low"] <= stop):
                         outcome_type = "STOP_HIT"
 
             cur.execute("""
