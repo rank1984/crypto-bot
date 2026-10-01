@@ -107,19 +107,18 @@ def evaluate_entry(
             trigger_price = round(float(vwap), 4)
             trigger_source = "vwap"
 
-    # ── Decision logic ────────────────────────────────────────────
+        # ── Decision logic ────────────────────────────────────────────
     decision = "NO"
     reason = ""
 
     if setup_type == "UNKNOWN":
         decision = "NO"
         reason = "No valid setup"
-    elif final_score < 50:
+    # ⚠️ Probability gate removed – correlation with outcome is ~0.065
+    # ⚠️ Final score gate lowered from 50 to 40
+    elif final_score < 40:
         decision = "NO"
-        reason = f"Final score {final_score:.1f} < 50"
-    elif probability < 15:
-        decision = "NO"
-        reason = f"Probability {probability:.1f}% < 15%"
+        reason = f"Final score {final_score:.1f} < 40"
     elif rr < 1.5:
         decision = "WAIT"
         reason = f"R:R {rr:.2f} < 1.5"
