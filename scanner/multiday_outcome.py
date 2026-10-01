@@ -1,6 +1,7 @@
 """
 scanner/multiday_outcome.py
 Multi-Day Outcome Tracker – computes 24h, 48h, 72h, 7d PnL/MFE/MAE.
+Only computes horizons where enough time has passed.
 """
 
 import sqlite3
@@ -14,7 +15,7 @@ log = get_logger("multiday_outcome")
 
 
 def _to_utc_timestamp(dt) -> pd.Timestamp:
-    """Convert a datetime or string to UTC pandas Timestamp safely."""
+    """Convert to UTC pandas Timestamp safely."""
     ts = pd.Timestamp(dt)
     if ts.tzinfo is None:
         return ts.tz_localize("UTC")
@@ -75,7 +76,7 @@ def ensure_multiday_table():
 
 
 def _fetch_candles_since(symbol: str, interval: str, start_ts: datetime):
-    """Fetch 4H candles and filter for those after start_ts."""
+    """Fetch candles after start_ts."""
     df = get_candles(symbol, interval, limit=500)
     if df is None or df.empty:
         return None
@@ -85,7 +86,6 @@ def _fetch_candles_since(symbol: str, interval: str, start_ts: datetime):
     elif "time" in df.columns:
         df["time"] = pd.to_datetime(df["time"], utc=True)
     else:
-        log.warning(f"{symbol}: no time column in candles")
         return None
 
     start_ts_utc = _to_utc_timestamp(start_ts)
@@ -94,7 +94,7 @@ def _fetch_candles_since(symbol: str, interval: str, start_ts: datetime):
 
 
 def update_multiday_outcomes():
-    """Update outcomes for all pending Multi-Day signals."""
+    """Update outcomes for pending Multi-Day signals."""
     ensure_multiday_table()
 
     conn = sqlite3.connect(DB_PATH)
@@ -114,7 +114,20 @@ def update_multiday_outcomes():
 
     log.info(f"Updating outcomes for {len(signals)} Multi-Day signals")
 
+    # Current time – used to skip signals that are too fresh
+    now = datetime.now(timezone.utc)
+
+    # 🆕 Horizons with required hours
+    horizons = {
+        "24h": 24,
+        "48h": 48,
+        "72h": 72,
+        "7d": 168,
+    }
+
     updated = 0
+    skipped_too_fresh = 0
+
     for row in signals:
         try:
             symbol = row["symbol"]
@@ -129,6 +142,12 @@ def update_multiday_outcomes():
             if signal_ts.tzinfo is None:
                 signal_ts = signal_ts.replace(tzinfo=timezone.utc)
 
+            # 🆕 Skip signals that haven't passed 24h yet
+            hours_since_signal = (now - signal_ts).total_seconds() / 3600
+            if hours_since_signal < 24:
+                skipped_too_fresh += 1
+                continue
+
             df = _fetch_candles_since(symbol, "4h", signal_ts)
 
             if df is None or df.empty:
@@ -136,12 +155,16 @@ def update_multiday_outcomes():
                 continue
 
             df = df.sort_values("time").reset_index(drop=True)
+            last_candle_ts = df["time"].iloc[-1]
+            hours_of_data = (last_candle_ts - _to_utc_timestamp(signal_ts)).total_seconds() / 3600
 
-            horizons = {"24h": 24, "48h": 48, "72h": 72, "7d": 168}
             outcomes = {}
+            for name, hours_needed in horizons.items():
+                # 🆕 Only compute if we have enough data for this horizon
+                if hours_of_data < hours_needed:
+                    continue
 
-            for name, hours in horizons.items():
-                cutoff = signal_ts + timedelta(hours=hours)
+                cutoff = signal_ts + timedelta(hours=hours_needed)
                 cutoff_ts = _to_utc_timestamp(cutoff)
                 df_horizon = df[df["time"] <= cutoff_ts]
 
@@ -156,20 +179,22 @@ def update_multiday_outcomes():
                 outcomes[f"mae_{name}"] = round((low - entry) / entry * 100, 2)
                 outcomes[f"pnl_{name}"] = round((close - entry) / entry * 100, 2)
 
+            # Determine outcome_type
             outcome_type = "STILL_OPEN"
-            if not df.empty:
-                last_time = df["time"].iloc[-1]
-                sig_ts_utc = _to_utc_timestamp(signal_ts)
-                hours_elapsed = (last_time - sig_ts_utc).total_seconds() / 3600
-                if hours_elapsed >= 168:
-                    outcome_type = "TIMEOUT"
-                else:
-                    if tp1 > 0 and any(df["high"] >= tp1):
-                        outcome_type = "TP1_HIT"
-                    if tp2 > 0 and any(df["high"] >= tp2):
-                        outcome_type = "TP2_HIT"
-                    if stop > 0 and any(df["low"] <= stop):
-                        outcome_type = "STOP_HIT"
+            if hours_of_data >= 168:
+                outcome_type = "TIMEOUT"
+            else:
+                if tp1 > 0 and any(df["high"] >= tp1):
+                    outcome_type = "TP1_HIT"
+                if tp2 > 0 and any(df["high"] >= tp2):
+                    outcome_type = "TP2_HIT"
+                if stop > 0 and any(df["low"] <= stop):
+                    outcome_type = "STOP_HIT"
+
+            # Skip if no outcomes computed yet (still too fresh for even 24h)
+            if not outcomes:
+                skipped_too_fresh += 1
+                continue
 
             cur.execute("""
                 UPDATE multiday_signals
@@ -181,10 +206,10 @@ def update_multiday_outcomes():
                     outcome_type = ?
                 WHERE id = ?
             """, (
-                outcomes.get("mfe_24h", 0), outcomes.get("mae_24h", 0), outcomes.get("pnl_24h", 0),
-                outcomes.get("mfe_48h", 0), outcomes.get("mae_48h", 0), outcomes.get("pnl_48h", 0),
-                outcomes.get("mfe_72h", 0), outcomes.get("mae_72h", 0), outcomes.get("pnl_72h", 0),
-                outcomes.get("mfe_7d", 0), outcomes.get("mae_7d", 0), outcomes.get("pnl_7d", 0),
+                outcomes.get("mfe_24h"), outcomes.get("mae_24h"), outcomes.get("pnl_24h"),
+                outcomes.get("mfe_48h"), outcomes.get("mae_48h"), outcomes.get("pnl_48h"),
+                outcomes.get("mfe_72h"), outcomes.get("mae_72h"), outcomes.get("pnl_72h"),
+                outcomes.get("mfe_7d"), outcomes.get("mae_7d"), outcomes.get("pnl_7d"),
                 outcome_type,
                 row["id"]
             ))
@@ -195,7 +220,7 @@ def update_multiday_outcomes():
 
     conn.commit()
     conn.close()
-    log.info(f"Multi-Day outcome update complete: {updated} updated")
+    log.info(f"Multi-Day outcome update complete: {updated} updated, {skipped_too_fresh} skipped (too fresh)")
     return updated
 
 
