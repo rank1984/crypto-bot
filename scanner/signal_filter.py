@@ -43,14 +43,15 @@ def classify_signal(c: dict) -> str:
             log.info(f"{c.get('symbol','?')}: BUY→WATCH (RANGE, health={market_health:.0f} < {RANGE_HEALTH_THRESHOLD})")
             return "WATCH"
 
-    # ── Final AI Gate ─────────────────────────────────────────────────────
-    # ⚠️ Probability gate removed – we proved correlation with outcome is ~0.
+        # ── Final AI Gate ─────────────────────────────────────────────────────
+    # ⚠️ Probability gate removed – it does not predict outcome
+    # ⚠️ Final score threshold lowered from 60 to 45
     if dec == "BUY":
-        if flow < 40:
-            log.info(f"{c.get('symbol','?')}: BUY→PREPARE (flow={flow:.1f} < 40)")
+        if flow < 35:
+            log.info(f"{c.get('symbol','?')}: BUY→PREPARE (flow={flow:.1f} < 35)")
             return "PREPARE"
-        if c.get("final_score", 0) < 60:
-            log.info(f"{c.get('symbol','?')}: BUY→PREPARE (final_score={c.get('final_score',0):.1f} < 60)")
+        if c.get("final_score", 0) < 45:
+            log.info(f"{c.get('symbol','?')}: BUY→PREPARE (final_score={c.get('final_score',0):.1f} < 45)")
             return "PREPARE"
         if market_health < 35:
             log.info(f"{c.get('symbol','?')}: BUY→WATCH (health={market_health:.0f} < 35)")
