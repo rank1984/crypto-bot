@@ -1,6 +1,7 @@
 """
 scanner/multiday_outcome.py
 Multi-Day Outcome Tracker – computes 24h, 48h, 72h, 7d PnL/MFE/MAE.
+Uses point-in-time data only.
 """
 
 import sqlite3
@@ -62,12 +63,37 @@ def ensure_multiday_table():
         """)
         conn.commit()
         conn.close()
-        log.debug("Multi-day table ensured")
     except Exception as e:
         log.error(f"Error creating multiday_signals table: {e}")
 
 
+def _fetch_candles_since(symbol: str, interval: str, start_ts: datetime):
+    """
+    Fetch 4H candles and filter for those after start_ts.
+    Workaround for get_candles not supporting 'start' parameter.
+    """
+    # Fetch a large number of candles (e.g., 500 4H candles ≈ 83 days)
+    df = get_candles(symbol, interval, limit=500)
+    if df is None or df.empty:
+        return None
+
+    # Ensure time column is datetime
+    if "open_time" in df.columns:
+        df["time"] = pd.to_datetime(df["open_time"], utc=True)
+    elif "time" in df.columns:
+        df["time"] = pd.to_datetime(df["time"], utc=True)
+    else:
+        log.warning(f"{symbol}: no time column in candles")
+        return None
+
+    # Filter candles >= start_ts
+    start_ts_utc = pd.Timestamp(start_ts, tz="UTC")
+    df = df[df["time"] >= start_ts_utc].copy()
+    return df
+
+
 def update_multiday_outcomes():
+    """Update outcomes for all pending Multi-Day signals."""
     ensure_multiday_table()
 
     conn = sqlite3.connect(DB_PATH)
@@ -96,23 +122,27 @@ def update_multiday_outcomes():
             tp1 = float(row["tp1"])
             tp2 = float(row["tp2"])
             signal_ts = datetime.fromisoformat(row["signal_timestamp"])
+            # Ensure timezone aware
+            if signal_ts.tzinfo is None:
+                signal_ts = signal_ts.replace(tzinfo=timezone.utc)
 
-            ts_str = signal_ts.strftime("%Y-%m-%d %H:%M:%S")
-            df = get_candles(symbol, "4h", start=ts_str)
+            # Fetch candles (using our new helper)
+            df = _fetch_candles_since(symbol, "4h", signal_ts)
 
             if df is None or df.empty:
                 log.debug(f"{symbol}: no candles for outcome")
                 continue
 
-            df["time"] = pd.to_datetime(df["time"], utc=True)
             df = df.sort_values("time").reset_index(drop=True)
 
+            # Compute outcomes for each horizon
             horizons = {"24h": 24, "48h": 48, "72h": 72, "7d": 168}
             outcomes = {}
 
             for name, hours in horizons.items():
                 cutoff = signal_ts + timedelta(hours=hours)
-                df_horizon = df[df["time"] <= cutoff]
+                cutoff_ts = pd.Timestamp(cutoff, tz="UTC")
+                df_horizon = df[df["time"] <= cutoff_ts]
 
                 if df_horizon.empty:
                     continue
@@ -125,18 +155,19 @@ def update_multiday_outcomes():
                 outcomes[f"mae_{name}"] = round((low - entry) / entry * 100, 2)
                 outcomes[f"pnl_{name}"] = round((close - entry) / entry * 100, 2)
 
+            # Determine outcome type
             outcome_type = "STILL_OPEN"
             if not df.empty:
                 last_time = df["time"].iloc[-1]
-                hours_elapsed = (last_time - signal_ts).total_seconds() / 3600
+                hours_elapsed = (last_time - pd.Timestamp(signal_ts, tz="UTC")).total_seconds() / 3600
                 if hours_elapsed >= 168:
                     outcome_type = "TIMEOUT"
                 else:
                     if any(df["high"] >= tp1):
                         outcome_type = "TP1_HIT"
-                    elif any(df["high"] >= tp2):
+                    if any(df["high"] >= tp2):
                         outcome_type = "TP2_HIT"
-                    elif any(df["low"] <= stop):
+                    if any(df["low"] <= stop):
                         outcome_type = "STOP_HIT"
 
             cur.execute("""
