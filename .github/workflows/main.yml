@@ -1,9 +1,9 @@
 name: CRYPTO-BOT Scan
 
 on:
-  workflow_dispatch:               # הפעלה ידנית מכפתור
+  workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'            # כל שעה עגולה
+    - cron: '0 * * * *'
 
 jobs:
   scan:
@@ -12,6 +12,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,14 +26,48 @@ jobs:
           pip install -r requirements.txt
 
       # ================================================================
-      # 🔍 HEALTH CHECK – בודק את כל מקורות הנתונים
+      # 🔍 DB STATUS CHECK – בדיקה לפני הריצה
+      # ================================================================
+      - name: 🔍 DB Status Check (Before)
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "
+          import sqlite3, os
+          DB_PATH = os.getenv('DB_PATH', 'data/shadow.db')
+          print(f'DB_PATH: {DB_PATH}')
+          print(f'DB exists: {os.path.exists(DB_PATH)}')
+          if not os.path.exists(DB_PATH):
+              print('❌ DB not found – starting fresh')
+          else:
+              conn = sqlite3.connect(DB_PATH)
+              cur = conn.cursor()
+              print()
+              print('=== Status Breakdown ===')
+              cur.execute('SELECT outcome_status, COUNT(*) FROM shadow_trades GROUP BY outcome_status')
+              for row in cur.fetchall():
+                  print(f'  {row[0]}: {row[1]}')
+              print()
+              cur.execute('SELECT COUNT(*) FROM shadow_trades')
+              total = cur.fetchone()[0]
+              print(f'  TOTAL: {total}')
+              print()
+              print('=== Last 10 trades ===')
+              cur.execute('SELECT id, symbol, ts, outcome_status FROM shadow_trades ORDER BY id DESC LIMIT 10')
+              for row in cur.fetchall():
+                  print(f'  ID={row[0]} | {row[1]} | {row[2]} | {row[3]}')
+              conn.close()
+          "
+
+      # ================================================================
+      # 🔍 HEALTH CHECK
       # ================================================================
       - name: 🔍 Market Data Health Check
         run: |
           python -c "from tools.health_check import health_check; health_check()"
 
       # ================================================================
-      # 🔍 DEBUG – בדיקת candles לעסקאות פתוחות (10 דוגמאות)
+      # 🔍 DEBUG CANDLES
       # ================================================================
       - name: 🔍 Debug Candles for Open Trades
         env:
@@ -39,7 +76,6 @@ jobs:
           python -c "
           import sqlite3, os, time
           from scanner.market_data import get_candles
-
           conn = sqlite3.connect(os.getenv('DB_PATH', 'data/shadow.db'))
           cur = conn.cursor()
           symbols = [r[0] for r in cur.execute('''
@@ -47,30 +83,21 @@ jobs:
               WHERE outcome_status IN ('PENDING', 'ACTIVE')
           ''').fetchall()]
           conn.close()
-
           print(f'Total open trade symbols: {len(symbols)}')
-          print()
-
           success = 0
           failed = 0
           for i, sym in enumerate(symbols[:10], 1):
-              start = time.time()
               df = get_candles(sym, '5m', limit=10)
-              elapsed = time.time() - start
               n = len(df) if df is not None else 0
-              print(f'{i}. {sym}: {n} candles ({elapsed:.2f}s)')
-              if n > 0:
-                  success += 1
-              else:
-                  failed += 1
+              print(f'{i}. {sym}: {n} candles')
+              if n > 0: success += 1
+              else: failed += 1
               time.sleep(0.5)
-
-          print()
           print(f'Success: {success}/10, Failed: {failed}/10')
           "
 
       # ================================================================
-      # RUN SCAN (main pipeline)
+      # RUN SCAN
       # ================================================================
       - name: Run scan (main pipeline)
         run: python main.py --once
@@ -78,6 +105,39 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+
+      # ================================================================
+      # 🔍 DB STATUS CHECK – אחרי הריצה
+      # ================================================================
+      - name: 🔍 DB Status Check (After)
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "
+          import sqlite3, os
+          DB_PATH = os.getenv('DB_PATH', 'data/shadow.db')
+          conn = sqlite3.connect(DB_PATH)
+          cur = conn.cursor()
+          print('=== Status Breakdown (After) ===')
+          cur.execute('SELECT outcome_status, COUNT(*) FROM shadow_trades GROUP BY outcome_status')
+          for row in cur.fetchall():
+              print(f'  {row[0]}: {row[1]}')
+          print()
+          cur.execute('SELECT COUNT(*) FROM shadow_trades')
+          total = cur.fetchone()[0]
+          print(f'  TOTAL: {total}')
+          print()
+          print('=== Trades from today ===')
+          cur.execute('''
+              SELECT id, symbol, ts, outcome_status 
+              FROM shadow_trades 
+              WHERE ts >= datetime('now', '-1 day')
+              ORDER BY id DESC LIMIT 20
+          ''')
+          for row in cur.fetchall():
+              print(f'  ID={row[0]} | {row[1]} | {row[2]} | {row[3]}')
+          conn.close()
+          "
 
       # ================================================================
       # 🔬 EDGE AUDIT
@@ -101,15 +161,10 @@ jobs:
           conn = sqlite3.connect(DB_PATH)
           cur = conn.cursor()
           cur.execute('''
-              SELECT
-                  COALESCE(pnl_pct_method, 'NULL') AS method,
-                  COUNT(*) AS n
+              SELECT COALESCE(pnl_pct_method, 'NULL') AS method, COUNT(*) AS n
               FROM shadow_trades
-              WHERE decision='BUY'
-                AND outcome_status='FINAL'
-                AND outcome_checked=1
-              GROUP BY pnl_pct_method
-              ORDER BY n DESC
+              WHERE decision='BUY' AND outcome_status='FINAL' AND outcome_checked=1
+              GROUP BY pnl_pct_method ORDER BY n DESC
           ''')
           print('===== Audit: pnl_pct_method =====')
           for row in cur.fetchall():
@@ -117,7 +172,7 @@ jobs:
           conn.close()
           "
 
-      - name: Audit V8 fields (pnl_r, mfe_r, mae_r, outcome_type)
+      - name: Audit V8 fields
         env:
           DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
         run: |
@@ -127,16 +182,13 @@ jobs:
           conn = sqlite3.connect(DB_PATH)
           cur = conn.cursor()
           cur.execute('''
-              SELECT
-                  COUNT(*) AS total,
+              SELECT COUNT(*) AS total,
                   SUM(CASE WHEN pnl_r IS NOT NULL THEN 1 ELSE 0 END) AS has_pnl_r,
                   SUM(CASE WHEN mfe_r IS NOT NULL THEN 1 ELSE 0 END) AS has_mfe_r,
                   SUM(CASE WHEN mae_r IS NOT NULL THEN 1 ELSE 0 END) AS has_mae_r,
                   SUM(CASE WHEN first_outcome_type IS NOT NULL THEN 1 ELSE 0 END) AS has_outcome_type
               FROM shadow_trades
-              WHERE decision='BUY'
-                AND outcome_status='FINAL'
-                AND outcome_checked=1
+              WHERE decision='BUY' AND outcome_status='FINAL' AND outcome_checked=1
           ''')
           row = cur.fetchone()
           print('===== Audit: V8-derived fields =====')
@@ -146,11 +198,6 @@ jobs:
               print(f'  with mfe_r: {row[2]} ({row[2]*100/row[0]:.1f}%)')
               print(f'  with mae_r: {row[3]} ({row[3]*100/row[0]:.1f}%)')
               print(f'  with first_outcome_type: {row[4]} ({row[4]*100/row[0]:.1f}%)')
-          else:
-              print('  with pnl_r: 0')
-              print('  with mfe_r: 0')
-              print('  with mae_r: 0')
-              print('  with first_outcome_type: 0')
           conn.close()
           "
 
@@ -165,27 +212,22 @@ jobs:
           cur = conn.cursor()
           cur.execute('''
               SELECT id, symbol FROM shadow_trades
-              WHERE decision='BUY'
-                AND outcome_status='FINAL'
-                AND outcome_checked=1
+              WHERE decision='BUY' AND outcome_status='FINAL' AND outcome_checked=1
           ''')
           db_rows = [(r[0], r[1]) for r in cur.fetchall()]
           conn.close()
           db_ids = [r[0] for r in db_rows]
-
           try:
               df = pd.read_csv('shadow_results.csv')
               csv_symbols = set(df[df['Decision']=='BUY']['Coin'].astype(str).str.replace('USDT', '').tolist())
           except:
               csv_symbols = set()
-
           db_symbols = set([r[1].replace('USDT', '') for r in db_rows])
-
-          print('===== Reconciliation: DB FINAL vs CSV BUY =====')
+          print('===== Reconciliation =====')
           print(f'DB FINAL count: {len(db_ids)}')
           print(f'CSV BUY count:  {len(csv_symbols)}')
-          print(f'In DB but not CSV: {db_symbols - csv_symbols}')
-          print(f'In CSV but not DB: {csv_symbols - db_symbols}')
+          print(f'In DB but not CSV: {len(db_symbols - csv_symbols)}')
+          print(f'In CSV but not DB: {len(csv_symbols - db_symbols)}')
           "
 
       # ================================================================
@@ -195,12 +237,9 @@ jobs:
         env:
           DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
         run: |
-          python -c "
-          from tools.reset_legacy_finals import reset_legacy_finals
-          reset_legacy_finals()
-          "
+          python -c "from tools.reset_legacy_finals import reset_legacy_finals; reset_legacy_finals()"
 
-      - name: Re-run outcome tracker (after reset)
+      - name: Re-run outcome tracker
         env:
           DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
         run: |
@@ -212,14 +251,38 @@ jobs:
         run: |
           python -c "from tools.export_learning_dataset import export_ml_dataset; export_ml_dataset()"
 
-      - name: Re-run dashboard (after rebuild)
+      - name: Re-run dashboard
         env:
           DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
         run: |
           python -c "from tools.learning_dashboard import run_dashboard; print(run_dashboard())"
 
       # ================================================================
-      #  PHASE 3 – ARTIFACTS
+      # 💾 COMMIT + PUSH – שמירת ה‑DB וה‑CSV ל‑git
+      # ================================================================
+      - name: 💾 Commit updated DB and results
+        if: always()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Add all data files
+          git add -f data/shadow.db || echo "DB not found"
+          git add shadow_results.csv || echo "CSV not found"
+          git add data/learning_dataset.csv || echo "Dataset not found"
+          git add analysis_report.txt || echo "Report not found"
+          
+          # Check if there's anything to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "📈 Auto-update shadow results [skip ci]"
+            git push
+            echo "✅ DB + results pushed to git"
+          fi
+
+      # ================================================================
+      #  ARTIFACTS
       # ================================================================
       - name: Upload shadow results
         if: always()
@@ -229,6 +292,7 @@ jobs:
           path: |
             shadow_results.csv
             data/learning_dataset.csv
+            data/shadow.db
 
       - name: Upload dashboard output
         if: always()
