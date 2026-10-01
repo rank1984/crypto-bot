@@ -167,6 +167,16 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "trigger_source": entry_signal.trigger_source,
     })
 
+    # ══════════════════════════════════════════════════════════════════
+    # 🆕 Record to shadow_trades if BUY or PREPARE
+    # ══════════════════════════════════════════════════════════════════
+    if entry_signal.decision in ("BUY", "PREPARE"):
+        try:
+            from tools.shadow_mode import record_trade
+            record_trade(coin, entry_signal)
+        except Exception as e:
+            log.error(f"shadow record_trade failed for {symbol}: {e}")
+
     return coin
 
 
