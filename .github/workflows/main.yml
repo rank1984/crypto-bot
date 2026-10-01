@@ -5,16 +5,24 @@ on:
   schedule:
     - cron: '0 * * * *'
 
+# 🔑 תיקון הרשאות – מאפשר ל-GitHub Actions לדחוף שינויים חזרה ל-repo
+permissions:
+  contents: write
+
 jobs:
   scan:
     runs-on: ubuntu-latest
 
     steps:
+      # ================================================================
+      # CHECKOUT – עם תמיכה ב-PAT_TOKEN אם קיים
+      # ================================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # משתמש ב-PAT_TOKEN אם קיים, אחרת ב-GITHUB_TOKEN
+          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,7 +34,7 @@ jobs:
           pip install -r requirements.txt
 
       # ================================================================
-      # 🔍 DB STATUS CHECK – בדיקה לפני הריצה
+      # 🔍 DB STATUS CHECK – לפני הריצה
       # ================================================================
       - name: 🔍 DB Status Check (Before)
         env:
@@ -56,6 +64,11 @@ jobs:
               cur.execute('SELECT id, symbol, ts, outcome_status FROM shadow_trades ORDER BY id DESC LIMIT 10')
               for row in cur.fetchall():
                   print(f'  ID={row[0]} | {row[1]} | {row[2]} | {row[3]}')
+              print()
+              cur.execute(\"SELECT COUNT(*) FROM shadow_trades WHERE ts >= date('now', '-1 day')\")
+              print(f'Trades today: {cur.fetchone()[0]}')
+              cur.execute('SELECT MAX(ts) FROM shadow_trades')
+              print(f'Latest trade: {cur.fetchone()[0]}')
               conn.close()
           "
 
@@ -134,7 +147,10 @@ jobs:
               WHERE ts >= datetime('now', '-1 day')
               ORDER BY id DESC LIMIT 20
           ''')
-          for row in cur.fetchall():
+          rows = cur.fetchall()
+          if not rows:
+              print('  (none)')
+          for row in rows:
               print(f'  ID={row[0]} | {row[1]} | {row[2]} | {row[3]}')
           conn.close()
           "
@@ -201,35 +217,6 @@ jobs:
           conn.close()
           "
 
-      - name: Reconcile DB vs CSV
-        env:
-          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
-        run: |
-          python -c "
-          import sqlite3, os, pandas as pd
-          DB_PATH = os.getenv('DB_PATH', 'data/shadow.db')
-          conn = sqlite3.connect(DB_PATH)
-          cur = conn.cursor()
-          cur.execute('''
-              SELECT id, symbol FROM shadow_trades
-              WHERE decision='BUY' AND outcome_status='FINAL' AND outcome_checked=1
-          ''')
-          db_rows = [(r[0], r[1]) for r in cur.fetchall()]
-          conn.close()
-          db_ids = [r[0] for r in db_rows]
-          try:
-              df = pd.read_csv('shadow_results.csv')
-              csv_symbols = set(df[df['Decision']=='BUY']['Coin'].astype(str).str.replace('USDT', '').tolist())
-          except:
-              csv_symbols = set()
-          db_symbols = set([r[1].replace('USDT', '') for r in db_rows])
-          print('===== Reconciliation =====')
-          print(f'DB FINAL count: {len(db_ids)}')
-          print(f'CSV BUY count:  {len(csv_symbols)}')
-          print(f'In DB but not CSV: {len(db_symbols - csv_symbols)}')
-          print(f'In CSV but not DB: {len(csv_symbols - db_symbols)}')
-          "
-
       # ================================================================
       #  PHASE 2 – LEGACY REBUILD
       # ================================================================
@@ -265,20 +252,27 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          
-          # Add all data files
-          git add -f data/shadow.db || echo "DB not found"
-          git add shadow_results.csv || echo "CSV not found"
-          git add data/learning_dataset.csv || echo "Dataset not found"
-          git add analysis_report.txt || echo "Report not found"
-          
+
+          # Add data files (עם || true כדי לא להיכשל אם קובץ חסר)
+          git add -f data/shadow.db 2>/dev/null || echo "⚠️ DB not found"
+          git add shadow_results.csv 2>/dev/null || echo "⚠️ CSV not found"
+          git add data/learning_dataset.csv 2>/dev/null || echo "⚠️ Dataset not found"
+          git add analysis_report.txt 2>/dev/null || echo "⚠️ Report not found"
+
           # Check if there's anything to commit
           if git diff --staged --quiet; then
-            echo "No changes to commit"
+            echo "ℹ️ No changes to commit"
           else
             git commit -m "📈 Auto-update shadow results [skip ci]"
-            git push
-            echo "✅ DB + results pushed to git"
+            echo "✅ Committed changes"
+            
+            # Push with error handling
+            if git push; then
+              echo "✅ Pushed to remote successfully"
+            else
+              echo "❌ Push failed – check permissions (need contents: write or PAT_TOKEN)"
+              exit 1
+            fi
           fi
 
       # ================================================================
