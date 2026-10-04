@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Main Loop (v3.0 with Live Monitor, ARM State, Circuit Breaker, Trending Bonus & Dashboards)
+CRYPTO-BOT Elite — Main Loop (v3.1 with Investment Advisor)
 """
 
 import argparse
@@ -30,6 +30,17 @@ from storage.trade_replay import init_replay_db, save_snapshot
 
 # ── Live Monitor ──────────────────────────────────────────────────────────────
 from monitor.live_monitor import LiveMonitor
+
+# ── Expected Moves (Investment Advisor) ───────────────────────────────────────
+try:
+    from scanner.expected_moves import get_expected_stats, format_expected_move
+    _HAS_EXPECTED_MOVES = True
+except ImportError:
+    _HAS_EXPECTED_MOVES = False
+    def get_expected_stats(*args, **kwargs):
+        return None
+    def format_expected_move(*args, **kwargs):
+        return ""
 
 log = get_logger("main")
 
@@ -79,9 +90,9 @@ def _confidence_from_ai(ai_score: float) -> str:
         ai = float(ai_score or 0)
     except (TypeError, ValueError):
         ai = 0.0
-    if ai >= 65:
+    if ai >= 75:
         return "HIGH"
-    elif ai >= 50:
+    elif ai >= 60:
         return "MEDIUM"
     else:
         return "LOW"
@@ -115,6 +126,51 @@ def _trade_partial_message(trade, action: dict) -> str:
         f"Price: {action['price']:.4f}\n"
         f"Sold: {action['ratio']*100:.0f}%"
     )
+
+
+def _format_candidate(idx: int, coin: dict) -> list:
+    """Format a single AI≥60 candidate for Telegram."""
+    lines = []
+    sym = coin.get('symbol', '').replace('USDT', '')
+    ai = coin.get('ai_score', 0)
+    setup = coin.get('entry_setup', 'UNKNOWN')
+    decision = coin.get('entry_decision', 'NO')
+    confidence = _confidence_from_ai(ai)
+
+    emoji = {1: "🥇", 2: "🥈", 3: "🥉"}.get(idx, "•")
+    lines.append(f"{emoji} #{idx} {sym}")
+    lines.append(f"   AI: {ai:.0f} | Confidence: {confidence}")
+    lines.append(f"   Setup: {setup} | Decision: {decision}")
+
+    entry = coin.get('entry_price', 0)
+    sl = coin.get('entry_sl', 0)
+    tp1 = coin.get('entry_tp1', 0)
+    tp2 = coin.get('entry_tp2', 0)
+    rr = coin.get('entry_rr', 0)
+    trigger = coin.get('trigger_price')
+    trigger_src = coin.get('trigger_source', 'unknown')
+
+    if entry > 0:
+        lines.append(f"   🟢 Entry: {entry:.4f}")
+        lines.append(f"   🛡 Stop: {sl:.4f}")
+        lines.append(f"   🎯 TP1: {tp1:.4f} | TP2: {tp2:.4f}")
+        lines.append(f"   ⚖️ R:R = {rr:.2f}")
+        if trigger and trigger > 0:
+            lines.append(f"   🔔 Trigger: {trigger:.4f} ({trigger_src})")
+
+    # Expected stats from historical data
+    if _HAS_EXPECTED_MOVES:
+        try:
+            stats = get_expected_stats(ai, setup)
+            if stats:
+                expected_text = format_expected_move(stats)
+                if expected_text:
+                    lines.append("")
+                    lines.append(expected_text)
+        except Exception as e:
+            log.debug(f"Expected stats error for {sym}: {e}")
+
+    return lines
 
 
 def run_scan() -> None:
@@ -244,12 +300,12 @@ def run_scan() -> None:
             c["last_price"] = fallback
 
         last_price = c.get("last_price", 0)
-        trigger_price = c.get("trigger_price")  # ✅ לא ממציאים trigger_price
+        trigger_price = c.get("trigger_price")
 
         if last_price > 0 and trigger_price is not None and trigger_price > 0:
             c["trigger_distance_pct"] = ((trigger_price - last_price) / last_price) * 100
         else:
-            c["trigger_distance_pct"] = None  # NULL אם אין trigger
+            c["trigger_distance_pct"] = None
 
     # ── 5. Signal Filter ──────────────────────────────────────────────────────
     from scanner.signal_filter import filter_coins
@@ -321,68 +377,68 @@ def run_scan() -> None:
                 if trade:
                     trade.quality = quality
 
-    # ── 7. הודעה מאוחדת ברורה בעברית ─────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── 7. INVESTMENT ADVISOR – רק AI≥60, Top 3, ללא Probability ─────────────
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Filter candidates: AI ≥ 60 AND (BUY or WAIT) AND valid entry
+    ai_60_plus = [
+        c for c in top
+        if c.get("ai_score", 0) >= 60
+        and c.get("entry_decision") in ("BUY", "WAIT")
+        and c.get("entry_price", 0) > 0
+    ]
+
+    # Sort by AI score (highest first)
+    ai_60_plus.sort(key=lambda x: x.get("ai_score", 0), reverse=True)
+    top_3 = ai_60_plus[:3]
+
     lines = []
-    lines.append("📊 תמונת מצב מהירה")
-    lines.append(f"שוק: {market_health:.0f}/100 | חדשות: {news_score} | משטר: {regime}")
-    cb_status = circuit_breaker.status()
-    lines.append(f"מפסק: {cb_status}")
+    lines.append("🧠 *INVESTMENT ADVISOR*")
     lines.append("")
-
-    lines.append("🏆 דירוג 5 מובילים:")
-    lines.append("מטבע        AI   ביטחון   מרחק לטריגר")
-    lines.append("-" * 44)
-    for c in top[:5]:
-        sym = c['symbol'].replace('USDT', '')[:12].ljust(12)
-        ai = f"{c.get('ai_score', 0):.0f}".rjust(4)
-        conf = _confidence_from_ai(c.get('ai_score', 0)).rjust(7)
-        dist_val = c.get('trigger_distance_pct')
-        dist = "—" if dist_val is None else f"{dist_val:.2f}%"
-        lines.append(f"{sym}  {ai}  {conf}  {dist}")
+    lines.append(f"📊 שוק: {market_health:.0f}/100")
+    lines.append(f"🌐 Regime: {regime}")
+    lines.append(f"🛡 Trading: {circuit_breaker.status()}")
     lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
 
-    buy_list = filtered.get("buy", [])
-    if buy_list:
-        lines.append("🟢 קנייה מומלצת:")
-        for c in buy_list:
-            lines.append(f"  {c['symbol']}")
-            lines.append(f"    כניסה: {c.get('entry_price', 0):.4f}")
-            lines.append(f"    סטופ: {c.get('entry_sl', 0):.4f}")
-            lines.append(f"    יעד1: {c.get('entry_tp1', 0):.4f}")
-            lines.append(f"    יעד2: {c.get('entry_tp2', 0):.4f}")
+    if not top_3:
         lines.append("")
+        lines.append("🚫 *NO TRADE*")
+        lines.append("")
+        lines.append("אין כרגע מטבע שעובר את רף האיכות (AI≥60).")
+        lines.append("")
+        lines.append("אל תקנה מטבע רק כי הוא נמצא בראש הדירוג.")
+        lines.append("")
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        lines.append("")
+        lines.append("📌 *סטטיסטיקה כללית:*")
+        if top:
+            top_5_syms = ', '.join([c['symbol'].replace('USDT','') for c in top[:5]])
+            lines.append(f"   • 5 מובילים בדירוג (AI<60): {top_5_syms}")
+        lines.append(f"   • Market Health: {market_health:.0f}/100")
     else:
-        lines.append("🟢 אין קנייה כרגע.")
-        lines.append("")
+        for i, c in enumerate(top_3, 1):
+            lines.append("")
+            candidate_lines = _format_candidate(i, c)
+            lines.extend(candidate_lines)
+            lines.append("")
+            lines.append("━━━━━━━━━━━━━━━━━━━━")
 
-    prepare_list = filtered.get("prepare", [])
-    if prepare_list:
-        lines.append("🟡 הכנה (PREPARE) – הצטברות טובה, חסר טריגר:")
-        for c in prepare_list[:3]:
-            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f}")
-        lines.append("")
+        # Add "no more candidates" if less than 3
+        if len(top_3) < 3:
+            lines.append("")
+            lines.append(f"ℹ️ אין מועמד נוסף עם AI≥60 (נמצאו {len(top_3)}).")
 
-    arm_list = filtered.get("arm", [])
-    if arm_list:
-        lines.append("🟠 במעקב צמוד (ARM) – קרוב לפריצה:")
-        for c in arm_list[:3]:
-            dist_val = c.get('trigger_distance_pct')
-            dist = f"{dist_val:.2f}%" if dist_val is not None else "—"
-            lines.append(f"  {c['symbol']} מרחק:{dist}")
         lines.append("")
-
-    watch_list = filtered.get("watch", [])
-    if watch_list:
-        lines.append("🟡 במעקב (WATCH):")
-        for c in watch_list[:3]:
-            lines.append(f"  {c['symbol']} AI:{c.get('ai_score',0):.0f}")
+        lines.append("💰 *כסף אמיתי:*")
+        lines.append("❌ עדיין לא")
         lines.append("")
+        lines.append("סיבה:")
+        lines.append("אין מספיק היסטוריית AI≥60 מאומתת.")
 
-    lines.append("🔹 מה לעשות:")
-    lines.append("• 🟢 קנייה – בצע קנייה ידנית אם הכניסה עדיין בתוקף.")
-    lines.append("• 🟡 הכנה/מעקב – המתן לפריצה ברורה.")
-    lines.append("• 📊 אם השוק חלש (מתחת 50) – עדיף לא לקנות.")
-    lines.append("• 🛡 מפסק ACTIVE = מותר לסחור. BLOCKED = אין כניסות חדשות.")
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
 
     send_simple_message("\n".join(lines))
 
@@ -393,14 +449,14 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Learning recorder skipped: {e}")
 
-    # ── 9. הבטחת נרות לכל העסקאות הפתוחות (לפני outcome tracker) ────────────
+    # ── 9. הבטחת נרות לכל העסקאות הפתוחות ────────────────────────────────────
     try:
         from tools.ensure_open_trade_candles import ensure_candles_for_open_trades
         ensure_candles_for_open_trades()
     except Exception as e:
         log.error(f"Ensure candles error: {e}", exc_info=True)
 
-    # ── 10. Outcome Tracking (מקור אמת יחיד) ──────────────────────────────────
+    # ── 10. Outcome Tracking ──────────────────────────────────────────────────
     try:
         from tools.outcome_tracker import update_outcomes
         updated = update_outcomes()
@@ -408,7 +464,7 @@ def run_scan() -> None:
     except Exception as e:
         log.error(f"Outcome tracker error: {e}", exc_info=True)
 
-    # ── 10b. Backfill RS/AI buckets (לאחר עדכון התוצאות) ─────────────────────
+    # ── 10b. Backfill RS/AI buckets ───────────────────────────────────────────
     try:
         from tools.backfill_buckets import backfill
         backfill()
@@ -438,14 +494,14 @@ def run_scan() -> None:
     except Exception as e:
         log.debug(f"Multi-Day dashboard skipped: {e}")
 
-    # ── 11. Export ML Learning Dataset ─────────────────────────────────────────
+    # ── 11. Export ML Learning Dataset ────────────────────────────────────────
     try:
         from tools.export_learning_dataset import export_ml_dataset
         export_ml_dataset()
     except Exception as e:
         log.error(f"ML Dataset export error: {e}", exc_info=True)
 
-    # ── 12. Learning Dashboard (לוג בלבד) ─────────────────────────────────────
+    # ── 12. Learning Dashboard ────────────────────────────────────────────────
     try:
         from tools.learning_dashboard import run_dashboard
         lr = run_dashboard()
