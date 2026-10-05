@@ -1,121 +1,87 @@
 """
-CRYPTO-BOT Elite — Indicators (V3)
-מחשב אינדיקטורים טכניים על ה-5m / 1h DataFrames.
-
-פלט:
-    vwap, vwap_dist (% מהמחיר)
-    ema20, ema50, ema200
-    rsi_14
-    atr_14
+scanner/indicators.py
+Technical indicators – RSI, VWAP, EMA, ATR (5m and 1h).
 """
+
 import pandas as pd
 import numpy as np
-
 from utils.logger import get_logger
 
 log = get_logger(__name__)
 
 
-# ─── VWAP ─────────────────────────────────────────────────────────────────────
+def calc_rsi(df: pd.DataFrame, period: int = 14) -> float:
+    if df is None or len(df) < period + 1:
+        return 50.0
+    close = df["close"].values
+    delta = np.diff(close)
+    gain = np.where(delta > 0, delta, 0)
+    loss = np.where(delta < 0, -delta, 0)
+    avg_gain = np.mean(gain[-period:])
+    avg_loss = np.mean(loss[-period:])
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return round(100 - (100 / (1 + rs)), 2)
+
 
 def calc_vwap(df: pd.DataFrame) -> float:
-    """
-    Rolling session VWAP on the provided DataFrame.
-    Uses all candles as the session (reset per scan).
-    """
-    tp  = (df["high"] + df["low"] + df["close"]) / 3   # typical price
-    vol = df["volume"]
-    cumvol = vol.cumsum()
-    if cumvol.iloc[-1] == 0:
+    if df is None or len(df) < 2:
+        return 0.0
+    tp = (df["high"] + df["low"] + df["close"]) / 3
+    vol = df["volume"].values
+    if vol.sum() == 0:
         return float(df["close"].iloc[-1])
-    return float((tp * vol).cumsum().iloc[-1] / cumvol.iloc[-1])
+    vwap = (tp * vol).sum() / vol.sum()
+    return round(float(vwap), 6)
 
 
-# ─── EMA ──────────────────────────────────────────────────────────────────────
+def calc_ema(df: pd.DataFrame, period: int = 20) -> float:
+    if df is None or len(df) < period:
+        return 0.0
+    close = df["close"]
+    ema = close.ewm(span=period, adjust=False).mean()
+    return round(float(ema.iloc[-1]), 6)
 
-def calc_ema(df: pd.DataFrame, period: int) -> float:
-    """EMA of close over `period` candles."""
-    if len(df) < period:
-        return float(df["close"].iloc[-1])
-    return float(df["close"].ewm(span=period, adjust=False).mean().iloc[-1])
-
-
-# ─── RSI ──────────────────────────────────────────────────────────────────────
-
-def calc_rsi(df: pd.DataFrame, period: int = 14) -> float:
-    if len(df) < period + 1:
-        return 50.0
-    delta  = df["close"].diff().dropna()
-    gain   = delta.clip(lower=0)
-    loss   = (-delta).clip(lower=0)
-    avg_g  = gain.ewm(alpha=1/period, adjust=False).mean()
-    avg_l  = loss.ewm(alpha=1/period, adjust=False).mean()
-    rs     = avg_g / avg_l.replace(0, np.nan)
-    rsi    = 100 - (100 / (1 + rs))
-    return round(float(rsi.iloc[-1]), 2)
-
-
-# ─── ATR ──────────────────────────────────────────────────────────────────────
 
 def calc_atr(df: pd.DataFrame, period: int = 14) -> float:
-    if len(df) < period + 1:
+    """Average True Range."""
+    if df is None or len(df) < period:
         return 0.0
-    high  = df["high"]
-    low   = df["low"]
-    close = df["close"]
-    tr    = pd.concat([
-        high - low,
-        (high - close.shift()).abs(),
-        (low  - close.shift()).abs(),
-    ], axis=1).max(axis=1)
-    atr = tr.ewm(span=period, adjust=False).mean()
-    return round(float(atr.iloc[-1]), 8)
+    high = df["high"].values
+    low = df["low"].values
+    close = df["close"].values
+
+    tr = np.zeros(len(high))
+    for i in range(1, len(high)):
+        tr[i] = max(high[i] - low[i], abs(high[i] - close[i-1]), abs(low[i] - close[i-1]))
+    atr = np.mean(tr[-period:])
+    return round(float(atr), 6)
 
 
-# ─── Main entry point ─────────────────────────────────────────────────────────
-
-def calc_indicators(df_5m: pd.DataFrame,
-                    df_1h: pd.DataFrame) -> dict[str, float]:
+def calc_indicators(df_5m: pd.DataFrame, df_1h: pd.DataFrame = None) -> dict:
     """
-    Parameters
-    ----------
-    df_5m : 5m candle DataFrame  (VWAP, EMA, RSI, ATR)
-    df_1h : 1h candle DataFrame  (EMA200 — needs more history)
-
-    Returns
-    -------
-    {
-        'vwap':      float,
-        'vwap_dist': float,   # % above/below VWAP (+2.1 = 2.1% above)
-        'ema20':     float,
-        'ema50':     float,
-        'ema200':    float,   # computed on 1h for better signal
-        'rsi_14':    float,
-        'atr_14':    float,
-    }
+    Calculate all indicators.
+    Returns dict with rsi_14, vwap, vwap_dist, ema20, ema50, atr_14, atr_1h.
     """
-    result = {
-        "vwap": 0.0, "vwap_dist": 0.0,
-        "ema20": 0.0, "ema50": 0.0, "ema200": 0.0,
-        "rsi_14": 50.0, "atr_14": 0.0,
-    }
+    last_price = float(df_5m["close"].iloc[-1]) if df_5m is not None and len(df_5m) > 0 else 0
 
-    if df_5m is None or df_5m.empty:
-        return result
-
-    last_price = float(df_5m["close"].iloc[-1])
-
+    rsi_14 = calc_rsi(df_5m, period=14)
     vwap = calc_vwap(df_5m)
-    result["vwap"] = round(vwap, 8)
-    if vwap > 0:
-        result["vwap_dist"] = round((last_price - vwap) / vwap * 100, 3)
+    vwap_dist = ((last_price - vwap) / vwap * 100) if vwap > 0 else 0.0
+    ema20 = calc_ema(df_5m, period=20)
+    ema50 = calc_ema(df_5m, period=50)
+    atr_14 = calc_atr(df_5m, period=14)
 
-    result["ema20"]  = round(calc_ema(df_5m, 20),  8)
-    result["ema50"]  = round(calc_ema(df_5m, 50),  8)
-    df_for_ema200 = df_1h if (df_1h is not None and not df_1h.empty) else df_5m
-    result["ema200"] = round(calc_ema(df_for_ema200, 200), 8)
+    # 🆕 1h ATR (for proper stop sizing)
+    atr_1h = calc_atr(df_1h, period=14) if df_1h is not None and len(df_1h) >= 14 else 0.0
 
-    result["rsi_14"] = calc_rsi(df_5m)
-    result["atr_14"] = calc_atr(df_5m)
-
-    return result
+    return {
+        "rsi_14": rsi_14,
+        "vwap": vwap,
+        "vwap_dist": round(vwap_dist, 3),
+        "ema20": ema20,
+        "ema50": ema50,
+        "atr_14": atr_14,
+        "atr_1h": atr_1h,   # 🆕
+    }
