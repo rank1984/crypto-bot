@@ -7,13 +7,15 @@ CRYPTO-BOT Elite — Signal Filter
     ARM
     PREPARE
     BUY
+
+Includes stop-tightness protection and AI-gate.
 """
 from utils.logger import get_logger
 log = get_logger(__name__)
 
 
-# ✅ Threshold for RANGE regime gating (tuned from 55 → 50)
 RANGE_HEALTH_THRESHOLD = 50
+MIN_STOP_PCT = 0.005   # 🆕 0.5% minimum stop distance
 
 
 def classify_signal(c: dict) -> str:
@@ -43,9 +45,7 @@ def classify_signal(c: dict) -> str:
             log.info(f"{c.get('symbol','?')}: BUY→WATCH (RANGE, health={market_health:.0f} < {RANGE_HEALTH_THRESHOLD})")
             return "WATCH"
 
-        # ── Final AI Gate ─────────────────────────────────────────────────────
-    # ⚠️ Probability gate removed – it does not predict outcome
-    # ⚠️ Final score threshold lowered from 60 to 45
+    # ── Final AI Gate ─────────────────────────────────────────────────────
     if dec == "BUY":
         if flow < 35:
             log.info(f"{c.get('symbol','?')}: BUY→PREPARE (flow={flow:.1f} < 35)")
@@ -56,6 +56,16 @@ def classify_signal(c: dict) -> str:
         if market_health < 35:
             log.info(f"{c.get('symbol','?')}: BUY→WATCH (health={market_health:.0f} < 35)")
             return "WATCH"
+
+        # 🆕 Reject BUY if stop is too tight
+        entry = c.get("entry_price", 0) or 0
+        stop = c.get("entry_sl", 0) or 0
+        if entry > 0 and stop > 0:
+            stop_pct = abs(entry - stop) / entry
+            if stop_pct < MIN_STOP_PCT:
+                log.info(f"{c.get('symbol','?')}: BUY→WATCH (stop too tight: {stop_pct*100:.2f}% < {MIN_STOP_PCT*100:.1f}%)")
+                return "WATCH"
+
         log.info(f"{c.get('symbol','?')}: BUY (confirmed) | flow={flow:.1f} score={c.get('final_score',0):.1f}")
         return "BUY"
 
