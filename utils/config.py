@@ -1,11 +1,10 @@
 """
 CRYPTO-BOT Elite — Configuration
 """
-
 import os
 
 # ============================================================
-# SCAN INTERVAL (seconds)
+# SCAN INTERVAL
 # ============================================================
 SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", 3600))
 
@@ -18,16 +17,11 @@ MIN_PRICE = 0.001
 MIN_DAILY_VOLUME = 1_000_000
 TOP_N = 5
 
-# ============================================================
-# 🆕 MARKET CAP FILTERS (Mid-caps: potential 3-10x)
-# ============================================================
-# Min: $50M – filter out micro-cap scams
-# Max: $2B – filter out large caps that finished their move
 MIN_MARKET_CAP_USD = float(os.getenv("MIN_MARKET_CAP_USD", 50_000_000))
 MAX_MARKET_CAP_USD = float(os.getenv("MAX_MARKET_CAP_USD", 2_000_000_000))
 
 # ============================================================
-# API & EXTERNAL SERVICES
+# API
 # ============================================================
 COINGECKO_BASE = os.getenv("COINGECKO_BASE", "https://api.coingecko.com/api/v3")
 KUCOIN_BASE = os.getenv("KUCOIN_BASE", "https://api.kucoin.com/api/v1")
@@ -49,13 +43,12 @@ CACHE_DIR = os.getenv("CACHE_DIR", "cache")
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", 300))
 
 # ============================================================
-# SCORING WEIGHTS
+# SCORING
 # ============================================================
 SCORE_WEIGHTS = {
     "ai_score": 0.30, "flow_score": 0.25, "pre_score": 0.15,
     "oi_change": 0.10, "rs_1h": 0.10, "prob_boost": 0.10,
 }
-
 FRESHNESS_WEIGHTS = {
     "high_age": 0.25, "pullback": 0.20, "momentum": 0.20,
     "vwap": 0.15, "vol_accel": 0.20,
@@ -71,14 +64,10 @@ MIN_RS_SCORE = 0.3
 MIN_MARKET_HEALTH = 50.0
 
 # ============================================================
-# TRADING PARAMETERS
+# TRADING
 # ============================================================
 MAX_TRADES = 2
 PORTFOLIO_CAPITAL = 500.0
-
-# ============================================================
-# RISK
-# ============================================================
 MAX_RISK_PER_TRADE = 0.02
 MAX_DAILY_LOSS = 0.05
 
@@ -94,13 +83,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DATA_DIR = "data"
 DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
 
-# ============================================================
-# LOGGING
-# ============================================================
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # ============================================================
-# MULTI-DAY RESEARCH
+# MULTI-DAY
 # ============================================================
 MULTIDAY_ENABLED = os.getenv("MULTIDAY_ENABLED", "true").lower() == "true"
 MIN_1D_CANDLES = 60
@@ -113,7 +99,7 @@ TIMEOUT_HOURS = 48
 EXIT_SLIPPAGE_PCT = 0.001
 
 # ============================================================
-# LIQUIDITY FILTERS
+# LIQUIDITY
 # ============================================================
 MIN_LIQUIDITY_USD = 500_000
 MAX_SPREAD_PCT = 0.02
@@ -126,7 +112,31 @@ ENABLE_PARTIAL_TAKE_PROFIT = True
 ENABLE_SYMPATHY_TRADES = True
 
 # ============================================================
-# BACKTEST / REPLAY
+# BACKTEST
 # ============================================================
 REPLAY_START_DATE = "2025-01-01"
 REPLAY_END_DATE = "2025-12-31"
+
+# ============================================================
+# 🔴 EMERGENCY V8.7 — ADDED
+# ============================================================
+# Minimum stop distance (0.8% floor — enforced in entry_engine + signal_filter)
+MIN_STOP_PCT = 0.008
+MIN_TP_PCT = 0.015
+MIN_RR_RATIO = 1.8
+
+# Kill switches (emergency)
+BLOCK_VWAP_RECLAIM = os.getenv("BLOCK_VWAP_RECLAIM", "1") == "1"
+BLOCK_REGIME_BAD_RS_LOW = os.getenv("BLOCK_REGIME_BAD_RS_LOW", "1") == "1"
+
+# Shadow tags (for kill switches)
+TAG_REGIME_BAD = "shadow_regime_bad"
+TAG_RS_LOW = "shadow_rs_low"
+
+# Investment Advisor guards
+ADVISOR_MIN_AI = 60
+ADVISOR_TOP_N = 3
+ADVISOR_RECENCY_DAYS = 90
+ADVISOR_MIN_SAMPLE = 20
+ADVISOR_MIN_AVG_R = 0.0
+ADVISOR_MIN_TP1_RATE = 0.25
