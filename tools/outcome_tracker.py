@@ -1,9 +1,12 @@
 """
-CRYPTO-BOT Elite — Outcome Tracker v8.6
-Single Source of Truth for trade outcomes.
-Uses engines.exit_simulator to perfectly mirror live trading limits and exits.
+CRYPTO-BOT Elite — Outcome Tracker v8.7
+Changes:
+  - Writes exit_reason (mapped from first_outcome_type + hit flags)
+  - Writes duration_minutes
+  - Updates status field → FINAL when outcome_status='FINAL'
+  - Filters decision='BUY' (skips PREPARE)
+  - Keeps is_closed contract from exit_simulator
 """
-
 import os
 import sqlite3
 import pandas as pd
@@ -28,6 +31,22 @@ def _parse_ts(value):
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _compute_exit_reason(first_outcome_type, sl_hit, tp1_hit, tp2_hit, pnl_pct):
+    if tp2_hit:
+        return "TP2"
+    if tp1_hit and sl_hit:
+        return "TP1_THEN_SL"
+    if tp1_hit:
+        return "TP1"
+    if sl_hit:
+        return "SL"
+    if first_outcome_type:
+        return first_outcome_type
+    if abs(pnl_pct or 0) < 0.01:
+        return "FLAT"
+    return "UNKNOWN"
+
+
 def update_outcomes():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -41,17 +60,17 @@ def update_outcomes():
 
     rows = cur.execute("""
         SELECT * FROM shadow_trades
-        WHERE outcome_status IN ('PENDING', 'ACTIVE') AND entry_price > 0
+        WHERE outcome_status IN ('PENDING', 'ACTIVE')
+          AND decision = 'BUY'
+          AND entry_price > 0
         ORDER BY id
     """).fetchall()
 
     executed_count = sum(1 for r in rows if safe_get(r, "was_executed", 0))
-    log.info(f"Outcome tracker V8.6: {len(rows)} open outcomes ({executed_count} manually executed)")
+    log.info(f"Outcome tracker V8.7: {len(rows)} open BUY outcomes ({executed_count} manually executed)")
 
     updated = 0
     no_candles = 0
-
-    # ✅ תיקון: יצירת Timestamp UTC ללא התנגשות timezone
     now_ts = pd.Timestamp.now('UTC')
 
     for row in rows:
@@ -63,8 +82,7 @@ def update_outcomes():
 
             tp1 = float(row["tp1"] or 0)
             tp2 = float(row["tp2"] or 0)
-            sl = float(row["sl"] or 0)
-            trigger = float(row["trigger_price"] or entry * 1.001)
+            sl  = float(row["sl"] or 0)
 
             t0 = _parse_ts(row["ts"])
             if t0 is None:
@@ -75,23 +93,19 @@ def update_outcomes():
 
             if df is None or df.empty:
                 no_candles += 1
-                log.warning(f"{symbol}: no candles returned — keeping outcome open")
+                log.warning(f"{symbol}: no candles — keeping outcome open")
                 continue
 
             df["time"] = pd.to_datetime(df["time"], utc=True, errors="coerce")
             df = df.dropna(subset=["time"])
-            
+
             entry_ts = pd.Timestamp(t0, tz="UTC")
-            
-            # ✅ פילטר בטוח – ללא Look‑Ahead
             df = df[df["time"] >= entry_ts].copy()
-            
+
             if df.empty:
                 continue
 
-            # ==========================================================
-            # אבחון entry_candle_ambiguous (מחושב בנפרד)
-            # ==========================================================
+            # Diagnostics
             entry_candle_ambiguous = 0
             df_diag = get_candles_range(symbol, ts_str)
             if df_diag is not None and not df_diag.empty:
@@ -102,9 +116,6 @@ def update_outcomes():
                     if not match.empty:
                         entry_candle_ambiguous = 1
 
-            # ==========================================================
-            # סימולציה – מקבלת 6 ערכים (כולל is_closed)
-            # ==========================================================
             pnl_pct, exit_events, ambiguous_bar, mfe_pct, mae_pct, is_closed = simulate_trade_path(
                 df=df, entry_price=entry, sl=sl, tp1=tp1, tp2=tp2,
                 entry_ts=entry_ts, now_ts=now_ts, timeout_hours=TIMEOUT_HOURS
@@ -117,12 +128,25 @@ def update_outcomes():
 
             first_outcome_type = exit_events[0][0] if exit_events else None
 
-            # ✅ is_closed קובע אם זו עסקה FINAL או עדיין ACTIVE
-            new_status = "FINAL" if is_closed else "ACTIVE"
-
             tp1_hit = 1 if any(ev[0] == "TP1" for ev in exit_events) else 0
             tp2_hit = 1 if any(ev[0] == "TP2" for ev in exit_events) else 0
-            sl_hit = 1 if any(ev[0] == "SL" for ev in exit_events) else 0
+            sl_hit  = 1 if any(ev[0] == "SL"  for ev in exit_events) else 0
+
+            new_status = "FINAL" if is_closed else "ACTIVE"
+
+            # 🆕 Compute exit_reason
+            exit_reason = _compute_exit_reason(
+                first_outcome_type, sl_hit, tp1_hit, tp2_hit, pnl_pct
+            ) if is_closed else None
+
+            # 🆕 Compute duration_minutes
+            try:
+                duration_min = int((now_ts.tz_localize(None) - entry_ts.tz_localize(None)).total_seconds() / 60.0)
+            except Exception:
+                duration_min = None
+
+            # 🆕 Update status field too (fix Pending + FINAL contradiction)
+            new_status_field = "FINAL ✅" if is_closed else "Pending ⏳"
 
             cur.execute("""
                 UPDATE shadow_trades
@@ -132,7 +156,11 @@ def update_outcomes():
                     outcome_status = ?, outcome_checked = ?,
                     first_outcome_type = ?, ambiguous_bar = ?, entry_candle_ambiguous = ?,
                     last_update_time = ?, pnl_pct = ?, pnl_r = ?, mfe_r = ?, mae_r = ?,
-                    pnl_pct_method = ?
+                    pnl_pct_method = ?,
+                    exit_reason = ?,
+                    duration_minutes = ?,
+                    status = ?,
+                    trade_state = ?
                 WHERE id = ?
             """, (
                 tp1_hit, tp2_hit, sl_hit,
@@ -141,11 +169,19 @@ def update_outcomes():
                 first_outcome_type, ambiguous_bar, entry_candle_ambiguous,
                 datetime.utcnow().isoformat(),
                 pnl_pct, pnl_r, mfe_r, mae_r,
-                "simulated_v8.6",
+                "simulated_v8.7",
+                exit_reason,
+                duration_min,
+                new_status_field,
+                "CLOSED" if is_closed else "ACTIVE",
                 row["id"]
             ))
 
             updated += 1
+            if is_closed:
+                log.info(
+                    f"{symbol} id={row['id']} → {exit_reason} | pnl={pnl_pct:.2f}% R={pnl_r} dur={duration_min}m"
+                )
 
         except Exception as e:
             log.exception(f"Outcome error {row['symbol']}: {e}")
@@ -153,7 +189,7 @@ def update_outcomes():
     conn.commit()
     conn.close()
 
-    log.info(f"Outcome tracker V8.6 complete: {updated}/{len(rows)} updated")
+    log.info(f"Outcome tracker V8.7 complete: {updated}/{len(rows)} updated, {no_candles} without candles")
     return updated
 
 
