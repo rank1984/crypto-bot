@@ -1,11 +1,11 @@
 """
-CRYPTO-BOT Elite — Outcome Tracker v8.7
+CRYPTO-BOT Elite — Outcome Tracker v8.8
 Changes:
+  - OUTLIER GUARD: rejects |pnl|>50%, |R|>10, dur>7d → marks INVALID
   - Writes exit_reason (mapped from first_outcome_type + hit flags)
   - Writes duration_minutes
   - Updates status field → FINAL when outcome_status='FINAL'
   - Filters decision='BUY' (skips PREPARE)
-  - Keeps is_closed contract from exit_simulator
 """
 import os
 import sqlite3
@@ -20,6 +20,11 @@ log = get_logger("outcome_tracker")
 
 DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
 TIMEOUT_HOURS = 48
+
+# ── Outlier thresholds ─────────────────────────────────────────
+MAX_PNL_PCT = 50.0
+MAX_ABS_R = 10.0
+MAX_DURATION_MIN = 60 * 24 * 7  # 7 days
 
 
 def _parse_ts(value):
@@ -47,6 +52,22 @@ def _compute_exit_reason(first_outcome_type, sl_hit, tp1_hit, tp2_hit, pnl_pct):
     return "UNKNOWN"
 
 
+def _mark_invalid(cur, trade_id, reason):
+    """Mark a trade as INVALID (preserve row, exclude from stats)."""
+    cur.execute("""
+        UPDATE shadow_trades
+        SET outcome_status = 'INVALID',
+            exit_reason = ?,
+            status = 'INVALID ⚠️',
+            outcome_checked = 1,
+            pnl_pct = NULL,
+            pnl_r = NULL,
+            mfe_r = NULL,
+            mae_r = NULL
+        WHERE id = ?
+    """, (reason, trade_id))
+
+
 def update_outcomes():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -67,9 +88,10 @@ def update_outcomes():
     """).fetchall()
 
     executed_count = sum(1 for r in rows if safe_get(r, "was_executed", 0))
-    log.info(f"Outcome tracker V8.7: {len(rows)} open BUY outcomes ({executed_count} manually executed)")
+    log.info(f"Outcome tracker V8.8: {len(rows)} open BUY outcomes ({executed_count} manually executed)")
 
     updated = 0
+    invalidated = 0
     no_candles = 0
     now_ts = pd.Timestamp.now('UTC')
 
@@ -105,7 +127,7 @@ def update_outcomes():
             if df.empty:
                 continue
 
-            # Diagnostics
+            # ── Entry candle ambiguous diagnostic ─────────────────
             entry_candle_ambiguous = 0
             df_diag = get_candles_range(symbol, ts_str)
             if df_diag is not None and not df_diag.empty:
@@ -116,6 +138,7 @@ def update_outcomes():
                     if not match.empty:
                         entry_candle_ambiguous = 1
 
+            # ── Simulate ──────────────────────────────────────────
             pnl_pct, exit_events, ambiguous_bar, mfe_pct, mae_pct, is_closed = simulate_trade_path(
                 df=df, entry_price=entry, sl=sl, tp1=tp1, tp2=tp2,
                 entry_ts=entry_ts, now_ts=now_ts, timeout_hours=TIMEOUT_HOURS
@@ -134,18 +157,53 @@ def update_outcomes():
 
             new_status = "FINAL" if is_closed else "ACTIVE"
 
-            # 🆕 Compute exit_reason
+            # ── Compute duration ──────────────────────────────────
+            try:
+                duration_min = int(
+                    (now_ts.tz_localize(None) - entry_ts.tz_localize(None)).total_seconds() / 60.0
+                )
+            except Exception:
+                duration_min = None
+
+            # ══════════════════════════════════════════════════════
+            # OUTLIER GUARD — reject suspect trades
+            # ══════════════════════════════════════════════════════
+            if is_closed:
+                # Extreme PnL
+                if pnl_pct is not None and abs(pnl_pct) > MAX_PNL_PCT:
+                    log.warning(
+                        f"SUSPECT: {symbol} id={row['id']} "
+                        f"pnl={pnl_pct:.2f}% > ±{MAX_PNL_PCT}% → INVALID"
+                    )
+                    _mark_invalid(cur, row["id"], "OUTLIER_PNL")
+                    invalidated += 1
+                    continue
+
+                # Extreme R
+                if pnl_r is not None and abs(pnl_r) > MAX_ABS_R:
+                    log.warning(
+                        f"SUSPECT: {symbol} id={row['id']} "
+                        f"R={pnl_r:.2f} > ±{MAX_ABS_R} → INVALID"
+                    )
+                    _mark_invalid(cur, row["id"], "OUTLIER_R")
+                    invalidated += 1
+                    continue
+
+                # Stale trade (over 7 days)
+                if duration_min is not None and duration_min > MAX_DURATION_MIN:
+                    log.warning(
+                        f"STALE: {symbol} id={row['id']} "
+                        f"dur={duration_min}m > 7d → INVALID"
+                    )
+                    _mark_invalid(cur, row["id"], "OUTLIER_STALE")
+                    invalidated += 1
+                    continue
+
+            # ── Normal update ─────────────────────────────────────
             exit_reason = _compute_exit_reason(
                 first_outcome_type, sl_hit, tp1_hit, tp2_hit, pnl_pct
             ) if is_closed else None
 
-            # 🆕 Compute duration_minutes
-            try:
-                duration_min = int((now_ts.tz_localize(None) - entry_ts.tz_localize(None)).total_seconds() / 60.0)
-            except Exception:
-                duration_min = None
-
-            # 🆕 Update status field too (fix Pending + FINAL contradiction)
             new_status_field = "FINAL ✅" if is_closed else "Pending ⏳"
 
             cur.execute("""
@@ -169,7 +227,7 @@ def update_outcomes():
                 first_outcome_type, ambiguous_bar, entry_candle_ambiguous,
                 datetime.utcnow().isoformat(),
                 pnl_pct, pnl_r, mfe_r, mae_r,
-                "simulated_v8.7",
+                "simulated_v8.8",
                 exit_reason,
                 duration_min,
                 new_status_field,
@@ -180,7 +238,8 @@ def update_outcomes():
             updated += 1
             if is_closed:
                 log.info(
-                    f"{symbol} id={row['id']} → {exit_reason} | pnl={pnl_pct:.2f}% R={pnl_r} dur={duration_min}m"
+                    f"{symbol} id={row['id']} → {exit_reason} | "
+                    f"pnl={pnl_pct:.2f}% R={pnl_r} dur={duration_min}m"
                 )
 
         except Exception as e:
@@ -189,7 +248,12 @@ def update_outcomes():
     conn.commit()
     conn.close()
 
-    log.info(f"Outcome tracker V8.7 complete: {updated}/{len(rows)} updated, {no_candles} without candles")
+    log.info(
+        f"Outcome tracker V8.8 complete: "
+        f"{updated}/{len(rows)} updated, "
+        f"{invalidated} invalidated, "
+        f"{no_candles} without candles"
+    )
     return updated
 
 
