@@ -1,6 +1,8 @@
 """
-CRYPTO-BOT Elite — Main Loop (v8.9 Stress Test 7-Day)
-SILENT_MODE active — no Telegram messages for 7 days.
+CRYPTO-BOT Elite — Main Loop (v9.0 Stress Test 7-Day)
+Changes from v8.9:
+  - MULTIDAY_ENABLED imported and gates the multi-day block
+  - (Multi-Day will not run unless explicitly enabled)
 """
 import argparse
 import os
@@ -17,6 +19,7 @@ from scanner.ranking import rank_universe
 from scanner.universe import build_universe
 from utils.config import (
     SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE, DB_PATH, SILENT_MODE,
+    MULTIDAY_ENABLED,
 )
 from utils.logger import get_logger
 
@@ -369,14 +372,12 @@ def run_scan() -> None:
     top_3 = _advisor_select_candidates(top)
 
     if SILENT_MODE:
-        # Don't build the message at all — just log a summary line
         log.info(
             f"[SILENT] Advisor summary: hist_n={hist['n']} "
             f"avg_r={hist['avg_r']:.2f} tp1={hist['tp1_rate']:.0%} "
             f"top3={len(top_3)}"
         )
     else:
-        # Build and send the full diagnostic message (original v8.8 behavior)
         diag_cats = {
             "vwap_blocked": [], "unknown_setup": [], "ai_low": [],
             "ai_high_but_not_buy": [], "regime_bad_rs_low": [],
@@ -497,26 +498,30 @@ def run_scan() -> None:
     except Exception as e:
         log.error(f"Backfill error: {e}", exc_info=True)
 
-    try:
-        from scanner.multiday_outcome import update_multiday_outcomes
-        update_multiday_outcomes()
-    except Exception as e:
-        log.error(f"Multi-Day outcome error: {e}", exc_info=True)
+    # ── Multi-Day — only if enabled (MULTIDAY_ENABLED=False for stress test) ──
+    if MULTIDAY_ENABLED:
+        try:
+            from scanner.multiday_outcome import update_multiday_outcomes
+            update_multiday_outcomes()
+        except Exception as e:
+            log.error(f"Multi-Day outcome error: {e}", exc_info=True)
 
-    try:
-        from scanner.multiday_engine import run_multiday_scan
-        signals = run_multiday_scan(symbols)
-        if signals:
-            log.info(f"Multi-Day scan: {len(signals)} signals")
-    except Exception as e:
-        log.error(f"Multi-Day scan error: {e}", exc_info=True)
+        try:
+            from scanner.multiday_engine import run_multiday_scan
+            signals = run_multiday_scan(symbols)
+            if signals:
+                log.info(f"Multi-Day scan: {len(signals)} signals")
+        except Exception as e:
+            log.error(f"Multi-Day scan error: {e}", exc_info=True)
 
-    try:
-        from tools.multiday_dashboard import run_multiday_dashboard
-        md = run_multiday_dashboard()
-        if md: log.info(md)
-    except Exception as e:
-        log.debug(f"Multi-Day dashboard skipped: {e}")
+        try:
+            from tools.multiday_dashboard import run_multiday_dashboard
+            md = run_multiday_dashboard()
+            if md: log.info(md)
+        except Exception as e:
+            log.debug(f"Multi-Day dashboard skipped: {e}")
+    else:
+        log.info("Multi-Day disabled (MULTIDAY_ENABLED=False)")
 
     try:
         from tools.export_learning_dataset import export_ml_dataset
@@ -560,9 +565,10 @@ def main() -> None:
 
     run_once = args.once or IS_GITHUB_ACTIONS
     log.info(
-        f"CRYPTO-BOT Elite v8.9 STRESS TEST 7-DAY | "
+        f"CRYPTO-BOT Elite v9.0 STRESS TEST 7-DAY | "
         f"dynamic_universe={USE_DYNAMIC_UNIVERSE} | "
-        f"GH={IS_GITHUB_ACTIONS} | SILENT={SILENT_MODE}"
+        f"GH={IS_GITHUB_ACTIONS} | SILENT={SILENT_MODE} | "
+        f"MULTIDAY={MULTIDAY_ENABLED}"
     )
 
     _vacuum_if_needed()
