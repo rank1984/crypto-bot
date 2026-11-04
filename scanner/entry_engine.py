@@ -1,9 +1,9 @@
 """
-scanner/entry_engine.py — v8.9 (Stress Test 7-Day)
-Relaxed setup detection:
-  vwap_dist < -0.3  (was -0.8, was -2.0)
-  vol_accel > 0.2   (was 0.5, was 0.3)
-  rs_1h     > -0.2  (was 0.2, was 0)
+scanner/entry_engine.py — v9.1 (Stress Test 7-Day)
+Changes from v8.9:
+  - DIP_BUY has its own final_score gate (20 instead of 40)
+    Reason: final_score measures positive momentum, which is
+    the opposite of what DIP_BUY looks for.
 """
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
@@ -27,6 +27,11 @@ class EntrySignal:
     trigger_source: str = "missing"
 
 
+# final_score thresholds per setup
+MIN_SCORE_DEFAULT = 40
+MIN_SCORE_DIP_BUY = 20     # DIP_BUY is contrarian — lower gate
+
+
 def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 0.0) -> EntrySignal:
     symbol = coin.get("symbol", "UNKNOWN")
     last_price = float(coin.get("price", 0) or 0)
@@ -37,7 +42,7 @@ def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 
     flow_score  = coin.get("flow_score", 0)
     pre_score   = coin.get("pre_score", 0)
 
-    # ── Setup detection (RELAXED for stress test) ─────────────────
+    # ── Setup detection ────────────────────────────────────────────
     setup_type = coin.get("entry_setup", "UNKNOWN")
     if not setup_type or setup_type == "UNKNOWN":
         vwap_dist  = coin.get("vwap_dist", 0)
@@ -45,7 +50,6 @@ def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 
         vol_accel  = coin.get("vol_accel", 0)
         rs_1h      = coin.get("rs_1h", 0)
 
-        # RELAXED: -0.3 instead of -2.0
         if vwap_dist < -0.3 and vol_accel > 0.2 and rs_1h > -0.2:
             setup_type = "DIP_BUY"
         elif -0.5 < vwap_dist < 0.5 and vol_accel > 0.2 and rvol > 0.8:
@@ -119,15 +123,18 @@ def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 
     decision = "NO"
     reason = ""
 
+    # Score gate depends on setup
+    score_gate = MIN_SCORE_DIP_BUY if setup_type == "DIP_BUY" else MIN_SCORE_DEFAULT
+
     if config.BLOCK_VWAP_RECLAIM and setup_type == "VWAP_RECLAIM":
         decision = "WAIT"
         reason = "VWAP_RECLAIM blocked (emergency)"
     elif setup_type == "UNKNOWN":
         decision = "NO"
         reason = "No valid setup"
-    elif final_score < 40:
+    elif final_score < score_gate:
         decision = "NO"
-        reason = f"Final score {final_score:.1f} < 40"
+        reason = f"Final score {final_score:.1f} < {score_gate} (setup={setup_type})"
     elif rr < config.MIN_RR_RATIO:
         decision = "WAIT"
         reason = f"R:R {rr:.2f} < {config.MIN_RR_RATIO}"
@@ -148,7 +155,8 @@ def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 
     log.info(
         f"{symbol}: decision={decision} setup={setup_type} "
         f"entry={entry:.6f} trigger={trig_str} ({trigger_source}) "
-        f"sl={sl:.6f} ({stop_pct:.2f}%) tp1={tp1:.6f} rr={rr:.2f} reason={reason}"
+        f"sl={sl:.6f} ({stop_pct:.2f}%) tp1={tp1:.6f} rr={rr:.2f} "
+        f"score={final_score:.1f}/{score_gate} reason={reason}"
     )
 
     return EntrySignal(
