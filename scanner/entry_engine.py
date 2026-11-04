@@ -1,13 +1,9 @@
 """
-scanner/entry_engine.py
-Entry Engine v8.9
-Changes:
-  - vwap_dist < -0.8 (was -2.0) — matches RANGE market conditions
-  - vol_accel > 0.5 (was 0.3) — stricter
-  - rs_1h > 0.2 (was 0) — stricter
-  - MIN_STOP_PCT 0.8% enforced
-  - R:R floor 1.8
-  - VWAP_RECLAIM blocked
+scanner/entry_engine.py — v8.9 (Stress Test 7-Day)
+Relaxed setup detection:
+  vwap_dist < -0.3  (was -0.8, was -2.0)
+  vol_accel > 0.2   (was 0.5, was 0.3)
+  rs_1h     > -0.2  (was 0.2, was 0)
 """
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
@@ -31,11 +27,7 @@ class EntrySignal:
     trigger_source: str = "missing"
 
 
-def evaluate_entry(
-    coin: Dict[str, Any],
-    df_5m: Any = None,
-    btc_mom_5m: float = 0.0,
-) -> EntrySignal:
+def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 0.0) -> EntrySignal:
     symbol = coin.get("symbol", "UNKNOWN")
     last_price = float(coin.get("price", 0) or 0)
     if last_price <= 0:
@@ -44,9 +36,8 @@ def evaluate_entry(
     final_score = coin.get("final_score", 0)
     flow_score  = coin.get("flow_score", 0)
     pre_score   = coin.get("pre_score", 0)
-    probability = coin.get("probability", 0)
 
-    # ── Setup detection ────────────────────────────────────────────
+    # ── Setup detection (RELAXED for stress test) ─────────────────
     setup_type = coin.get("entry_setup", "UNKNOWN")
     if not setup_type or setup_type == "UNKNOWN":
         vwap_dist  = coin.get("vwap_dist", 0)
@@ -54,8 +45,8 @@ def evaluate_entry(
         vol_accel  = coin.get("vol_accel", 0)
         rs_1h      = coin.get("rs_1h", 0)
 
-        # 🆕 DIP_BUY: relaxed vwap_dist, stricter vol/rs
-        if vwap_dist < -0.8 and vol_accel > 0.5 and rs_1h > 0.2:
+        # RELAXED: -0.3 instead of -2.0
+        if vwap_dist < -0.3 and vol_accel > 0.2 and rs_1h > -0.2:
             setup_type = "DIP_BUY"
         elif -0.5 < vwap_dist < 0.5 and vol_accel > 0.2 and rvol > 0.8:
             setup_type = "VWAP_RECLAIM"
@@ -64,10 +55,9 @@ def evaluate_entry(
         else:
             setup_type = "UNKNOWN"
 
-    # ── ATR (prefer 1h) ──────────────────────────────────────────
+    # ── ATR ────────────────────────────────────────────────────────
     atr_1h = coin.get("atr_1h", 0)
     atr_5m = coin.get("atr_14", 0)
-
     if atr_1h and atr_1h > 0:
         atr = atr_1h * 0.5
     elif atr_5m and atr_5m > 0:
@@ -78,7 +68,7 @@ def evaluate_entry(
     MIN_STOP_PCT = config.MIN_STOP_PCT
     MIN_TP_PCT   = config.MIN_TP_PCT
 
-    # ── Calculate levels ─────────────────────────────────────────
+    # ── Calculate levels ───────────────────────────────────────────
     if setup_type == "DIP_BUY":
         entry = last_price * (1 - 0.001)
         stop_distance = max(1.5 * atr, last_price * MIN_STOP_PCT)
@@ -96,13 +86,8 @@ def evaluate_entry(
         stop_distance = max(2.0 * atr, last_price * MIN_STOP_PCT)
         tp_distance   = max(2.0 * atr, last_price * MIN_TP_PCT)
 
-    # ── HARD ASSERT: min stop enforced ───────────────────────────
-    stop_pct_calc = stop_distance / entry if entry > 0 else 0
-    if stop_pct_calc < MIN_STOP_PCT:
-        log.warning(
-            f"{symbol}: STOP FLOOR triggered after rounding — forced to {MIN_STOP_PCT*100:.1f}%"
-        )
-        stop_distance = entry * MIN_STOP_PCT
+    if stop_distance < last_price * MIN_STOP_PCT:
+        stop_distance = last_price * MIN_STOP_PCT
 
     sl  = round(entry - stop_distance, 8)
     tp1 = round(entry + tp_distance, 8)
@@ -112,7 +97,7 @@ def evaluate_entry(
     reward = tp1 - entry
     rr = round(reward / risk, 2) if risk > 0 else 0.0
 
-    # ── Trigger (do NOT invent) ──────────────────────────────────
+    # ── Trigger ────────────────────────────────────────────────────
     trigger_price = None
     trigger_source = "missing"
 
@@ -130,7 +115,7 @@ def evaluate_entry(
             trigger_price = round(float(vwap), 8)
             trigger_source = "vwap"
 
-    # ── Decision ─────────────────────────────────────────────────
+    # ── Decision ───────────────────────────────────────────────────
     decision = "NO"
     reason = ""
 
@@ -160,12 +145,10 @@ def evaluate_entry(
 
     stop_pct = (entry - sl) / entry * 100 if entry > 0 else 0
     trig_str = f"{trigger_price:.6f}" if trigger_price is not None else "NULL"
-    floor_tag = " [STOP_FLOOR]" if stop_pct_calc < MIN_STOP_PCT else ""
-
     log.info(
         f"{symbol}: decision={decision} setup={setup_type} "
         f"entry={entry:.6f} trigger={trig_str} ({trigger_source}) "
-        f"sl={sl:.6f} ({stop_pct:.2f}%) tp1={tp1:.6f} rr={rr:.2f}{floor_tag} reason={reason}"
+        f"sl={sl:.6f} ({stop_pct:.2f}%) tp1={tp1:.6f} rr={rr:.2f} reason={reason}"
     )
 
     return EntrySignal(
