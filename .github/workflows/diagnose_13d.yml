@@ -1,0 +1,129 @@
+name: 🔍 Diagnose 13-Day Silence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: 1. Last 30 days of shadow_trades
+        run: |
+          python -c "
+          import sqlite3, os
+          from datetime import datetime, timezone, timedelta
+          DB = os.getenv('DB_PATH', 'data/shadow.db')
+          conn = sqlite3.connect(DB)
+          conn.row_factory = sqlite3.Row
+          
+          print('='*70)
+          print('  SHADOW_TRADES: LAST 30 DAYS')
+          print('='*70)
+          
+          cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+          rows = conn.execute('''
+              SELECT DATE(ts) as d, decision, outcome_status, COUNT(*) as n
+              FROM shadow_trades
+              WHERE ts >= ?
+              GROUP BY DATE(ts), decision, outcome_status
+              ORDER BY d DESC, decision
+          ''', (cutoff,)).fetchall()
+          
+          if not rows:
+              print('  ❌ NO ROWS IN LAST 30 DAYS')
+          for r in rows:
+              print(f'  {r[\"d\"]} | {r[\"decision\"]:8s} | {str(r[\"outcome_status\"]):10s} | {r[\"n\"]}')
+          
+          print()
+          print('='*70)
+          print('  LATEST 5 ROWS ANY STATUS')
+          print('='*70)
+          rows = conn.execute('SELECT id, ts, symbol, decision, outcome_status FROM shadow_trades ORDER BY id DESC LIMIT 5').fetchall()
+          for r in rows:
+              print(f'  id={r[\"id\"]} | {r[\"ts\"]} | {r[\"symbol\"]} | {r[\"decision\"]} | {r[\"outcome_status\"]}')
+          
+          conn.close()
+          "
+
+      - name: 2. Last 30 days of scans
+        run: |
+          python -c "
+          import sqlite3, os
+          DB = os.getenv('DB_PATH', 'data/shadow.db')
+          conn = sqlite3.connect(DB)
+          conn.row_factory = sqlite3.Row
+          
+          tables = [r[0] for r in conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\")]
+          print(f'Tables: {tables}')
+          
+          if 'scans' in tables:
+              print('='*70)
+              print('  SCANS: LAST 10')
+              print('='*70)
+              rows = conn.execute('SELECT * FROM scans ORDER BY id DESC LIMIT 10').fetchall()
+              for r in rows:
+                  print(f'  {dict(r)}')
+          
+          if 'candidates' in tables:
+              print()
+              print('='*70)
+              print('  CANDIDATES: LAST 10')
+              print('='*70)
+              rows = conn.execute('SELECT * FROM candidates ORDER BY id DESC LIMIT 10').fetchall()
+              for r in rows:
+                  print(f'  {dict(r)}')
+          
+          conn.close()
+          "
+
+      - name: 3. Check signal filter blockers in last scan
+        run: |
+          echo "Checking main.yml logs for last 5 runs..."
+          echo "You'll need to check manually:"
+          echo "https://github.com/rank1984/crypto-bot/actions/workflows/main.yml"
+          echo ""
+          echo "Look for:"
+          echo "  - How many coins passed signal_filter"
+          echo "  - BUY=X PREPARE=Y ARM=Z WATCH=W IGNORE=I"
+          echo "  - Any errors in entry_engine"
+
+      - name: 4. Count by blocker reason (from logs)
+        run: |
+          python -c "
+          import sqlite3, os
+          DB = os.getenv('DB_PATH', 'data/shadow.db')
+          conn = sqlite3.connect(DB)
+          conn.row_factory = sqlite3.Row
+          
+          print('='*70)
+          print('  ROWS BY DECISION + SETUP + STATUS')
+          print('='*70)
+          rows = conn.execute('''
+              SELECT decision, setup, outcome_status, COUNT(*) as n
+              FROM shadow_trades
+              GROUP BY decision, setup, outcome_status
+              ORDER BY n DESC
+          ''').fetchall()
+          for r in rows:
+              print(f'  {r[\"decision\"]:8s} | {str(r[\"setup\"]):15s} | {str(r[\"outcome_status\"]):10s} | {r[\"n\"]}')
+          
+          conn.close()
+          "
