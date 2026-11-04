@@ -77,6 +77,11 @@ MAX_DAILY_LOSS = 0.05
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# 🔇 SILENT MODE — suppress all Telegram messages, log only.
+# Set to True for 7-day data collection (no messages).
+# Set to False to re-enable messages.
+SILENT_MODE = os.getenv("SILENT_MODE", "true").lower() == "true"
+
 # ============================================================
 # PATHS
 # ============================================================
@@ -88,7 +93,7 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # ============================================================
 # MULTI-DAY
 # ============================================================
-MULTIDAY_ENABLED = os.getenv("MULTIDAY_ENABLED", "true").lower() == "true"
+MULTIDAY_ENABLED = os.getenv("MULTIDAY_ENABLED", "false").lower() == "true"
 MIN_1D_CANDLES = 60
 MIN_4H_CANDLES = 30
 
@@ -118,18 +123,21 @@ REPLAY_START_DATE = "2025-01-01"
 REPLAY_END_DATE = "2025-12-31"
 
 # ============================================================
-# 🔴 EMERGENCY V8.7 — ADDED
+# STRESS TEST 7-DAY (relaxed thresholds)
 # ============================================================
-# Minimum stop distance (0.8% floor — enforced in entry_engine + signal_filter)
-MIN_STOP_PCT = 0.008
-MIN_TP_PCT = 0.015
-MIN_RR_RATIO = 1.8
+# Normal (production) values:
+#   MIN_STOP_PCT = 0.008
+#   MIN_RR_RATIO = 1.8
+# Relaxed for 7-day data collection:
+MIN_STOP_PCT = 0.006           # 0.6% (was 0.8%)
+MIN_TP_PCT = 0.012             # 1.2% (was 1.5%)
+MIN_RR_RATIO = 1.3             # 1.3 (was 1.8)
 
-# Kill switches (emergency)
+# Kill switches (keep on — VWAP_RECLAIM is proven negative)
 BLOCK_VWAP_RECLAIM = os.getenv("BLOCK_VWAP_RECLAIM", "1") == "1"
 BLOCK_REGIME_BAD_RS_LOW = os.getenv("BLOCK_REGIME_BAD_RS_LOW", "1") == "1"
 
-# Shadow tags (for kill switches)
+# Shadow tags
 TAG_REGIME_BAD = "shadow_regime_bad"
 TAG_RS_LOW = "shadow_rs_low"
 
