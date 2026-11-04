@@ -1,12 +1,11 @@
 """
 scanner/entry_engine.py
-Entry Engine v8.7 (Emergency)
+Entry Engine v8.9
 Changes:
-  - MIN_STOP_PCT enforced (0.8%)
-  - R:R floor = 1.8
-  - Override removed (no more BUY without trigger)
-  - BUY requires trigger_price (no invented BUY)
-  - VWAP_RECLAIM blocked (BLOCK_VWAP_RECLAIM)
+  - HARD ASSERT: MIN_STOP_PCT enforced after calculation
+  - MIN_RR_RATIO = 1.8
+  - VWAP_RECLAIM blocked (config.BLOCK_VWAP_RECLAIM)
+  - No BUY without confirmed trigger_price
 """
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
@@ -66,10 +65,10 @@ def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 
     else:
         atr = last_price * 0.005
 
-    MIN_STOP_PCT = config.MIN_STOP_PCT
-    MIN_TP_PCT   = config.MIN_TP_PCT
+    MIN_STOP_PCT = config.MIN_STOP_PCT   # 0.008
+    MIN_TP_PCT   = config.MIN_TP_PCT     # 0.015
 
-    # ── Calculate levels (with floors) ────────────────────────────
+    # ── Calculate levels ─────────────────────────────────────────
     if setup_type == "DIP_BUY":
         entry = last_price * (1 - 0.001)
         stop_distance = max(1.5 * atr, last_price * MIN_STOP_PCT)
@@ -87,19 +86,31 @@ def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 
         stop_distance = max(2.0 * atr, last_price * MIN_STOP_PCT)
         tp_distance   = max(2.0 * atr, last_price * MIN_TP_PCT)
 
-    # Final stop floor (belt-and-suspenders)
+    # ── HARD ASSERT: min stop floor ────────────────────────────
+    forced_floor = False
     if stop_distance < last_price * MIN_STOP_PCT:
         stop_distance = last_price * MIN_STOP_PCT
+        forced_floor = True
 
     sl  = round(entry - stop_distance, 8)
     tp1 = round(entry + tp_distance, 8)
     tp2 = round(entry + tp_distance * 1.5, 8)
 
+    # ── Double-check: post-rounding stop still >= floor ─────────
+    final_stop_pct = (entry - sl) / entry if entry > 0 else 0
+    if final_stop_pct < MIN_STOP_PCT:
+        sl = round(entry * (1 - MIN_STOP_PCT), 8)
+        forced_floor = True
+        log.warning(
+            f"{symbol}: STOP FLOOR triggered after rounding — "
+            f"forced to {MIN_STOP_PCT*100:.1f}%"
+        )
+
     risk = entry - sl
     reward = tp1 - entry
     rr = round(reward / risk, 2) if risk > 0 else 0.0
 
-    # ── Trigger (do NOT invent) ──────────────────────────────────
+    # ── Trigger (do NOT invent) ─────────────────────────────────
     trigger_price = None
     trigger_source = "missing"
 
@@ -147,10 +158,12 @@ def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 
 
     stop_pct = (entry - sl) / entry * 100 if entry > 0 else 0
     trig_str = f"{trigger_price:.6f}" if trigger_price is not None else "NULL"
+    forced_marker = " [STOP_FLOOR]" if forced_floor else ""
     log.info(
         f"{symbol}: decision={decision} setup={setup_type} "
         f"entry={entry:.6f} trigger={trig_str} ({trigger_source}) "
-        f"sl={sl:.6f} ({stop_pct:.2f}%) tp1={tp1:.6f} rr={rr:.2f} reason={reason}"
+        f"sl={sl:.6f} ({stop_pct:.2f}%) tp1={tp1:.6f} "
+        f"rr={rr:.2f}{forced_marker} reason={reason}"
     )
 
     return EntrySignal(
