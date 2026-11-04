@@ -1,9 +1,8 @@
 """
-scanner/signal_filter.py — v8.9 (Stress Test 7-Day)
-MIN_STOP_PCT = 0.006 (from config)
-MIN_RR_RATIO = 1.3 (from config)
-VWAP_RECLAIM blocked
-regime_bad + RS_LOW blocked
+scanner/signal_filter.py — v9.0 (Stress Test 7-Day)
+Changes from v8.9:
+  - RANGE_HEALTH_THRESHOLD: 50 → 45
+    (Previously blocked APTUSDT/SANDUSDT at health=48)
 """
 import json
 from utils.logger import get_logger
@@ -11,7 +10,7 @@ from utils import config
 
 log = get_logger(__name__)
 
-RANGE_HEALTH_THRESHOLD = 50
+RANGE_HEALTH_THRESHOLD = 45       # was 50 — relaxed for stress test
 MIN_STOP_PCT = config.MIN_STOP_PCT
 MIN_RR_RATIO = config.MIN_RR_RATIO
 
