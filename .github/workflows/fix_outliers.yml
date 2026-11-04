@@ -1,0 +1,77 @@
+name: 🔧 Fix Outliers & Shrink DB
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Show DB size before
+        run: ls -lh data/shadow.db
+
+      - name: Prune multiday signals (keep last 500)
+        run: |
+          python -c "
+          import sqlite3, os
+          conn = sqlite3.connect('data/shadow.db')
+          tables = [r[0] for r in conn.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%multiday%'\")]
+          print(f'Tables: {tables}')
+          for tbl in tables:
+              try:
+                  cur = conn.execute(f'SELECT COUNT(*) FROM {tbl}')
+                  n = cur.fetchone()[0]
+                  if n > 500:
+                      print(f'{tbl}: {n} rows → keeping last 500')
+                      conn.execute(f'DELETE FROM {tbl} WHERE id NOT IN (SELECT id FROM {tbl} ORDER BY id DESC LIMIT 500)')
+                      conn.commit()
+                      cur = conn.execute(f'SELECT COUNT(*) FROM {tbl}')
+                      print(f'{tbl}: now {cur.fetchone()[0]} rows')
+              except Exception as e:
+                  print(f'{tbl}: error {e}')
+          conn.close()
+          "
+
+      - name: Fix outliers
+        run: python tools/fix_outliers.py
+
+      - name: VACUUM DB
+        run: |
+          python -c "
+          import sqlite3, os
+          size_before = os.path.getsize('data/shadow.db') / 1024 / 1024
+          conn = sqlite3.connect('data/shadow.db')
+          conn.execute('VACUUM')
+          conn.commit()
+          conn.close()
+          size_after = os.path.getsize('data/shadow.db') / 1024 / 1024
+          print(f'DB: {size_before:.1f} MB → {size_after:.1f} MB')
+          "
+
+      - name: Show DB size after
+        run: ls -lh data/shadow.db
+
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/shadow.db
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "🔧 Fix outliers + VACUUM [skip ci]"
+            git push
+          fi
