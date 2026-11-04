@@ -36,7 +36,14 @@ def main():
     symbols = build_dynamic_universe(btc_1h_move=0.0)
     print(f"  Universe: {len(symbols)} symbols")
 
+    # 🆕 NEW thresholds (match entry_engine v8.9)
+    VWAP_THRESHOLD = -0.8
+    VOL_THRESHOLD = 0.5
+    RS_THRESHOLD = 0.2
+
     print("\n" + "="*70)
+    print(f"  Thresholds: vwap_dist<{VWAP_THRESHOLD}, vol_accel>{VOL_THRESHOLD}, rs_1h>{RS_THRESHOLD}")
+    print("="*70)
     print(f"  {'symbol':15s} {'vwap_dist':>12s} {'vol_accel':>12s} {'rs_1h':>10s} {'DIP?':>6s}")
     print("  " + "-"*60)
 
@@ -61,9 +68,9 @@ def main():
             va = vol.get("vol_accel", 0) or 0
             rs1h = rs.get("rs_1h", 0) or 0
 
-            cond_vwap = vd < -2.0
-            cond_vol = va > 0.3
-            cond_rs = rs1h > 0
+            cond_vwap = vd < VWAP_THRESHOLD
+            cond_vol = va > VOL_THRESHOLD
+            cond_rs = rs1h > RS_THRESHOLD
 
             if cond_vwap:
                 vwap_deep += 1
@@ -78,7 +85,8 @@ def main():
             checked += 1
             is_dip = cond_vwap and cond_vol and cond_rs
 
-            print(f"  {s:15s} {vd:>12.2f} {va:>12.2f} {rs1h:>10.3f} {'YES' if is_dip else 'no':>6s}")
+            marker = "✅" if is_dip else "no"
+            print(f"  {s:15s} {vd:>12.2f} {va:>12.2f} {rs1h:>10.3f} {marker:>6s}")
 
         except Exception as e:
             print(f"  {s:15s} ERROR: {e}")
@@ -87,9 +95,9 @@ def main():
     print("  SUMMARY")
     print("="*70)
     print(f"  Checked:              {checked}")
-    print(f"  vwap_dist < -2.0:     {vwap_deep}  ({vwap_deep*100//checked if checked else 0}%)")
-    print(f"  vol_accel > 0.3:      {vol_high}  ({vol_high*100//checked if checked else 0}%)")
-    print(f"  rs_1h > 0:            {rs_pos}  ({rs_pos*100//checked if checked else 0}%)")
+    print(f"  vwap_dist < {VWAP_THRESHOLD}:     {vwap_deep}  ({vwap_deep*100//checked if checked else 0}%)")
+    print(f"  vol_accel > {VOL_THRESHOLD}:      {vol_high}  ({vol_high*100//checked if checked else 0}%)")
+    print(f"  rs_1h > {RS_THRESHOLD}:            {rs_pos}  ({rs_pos*100//checked if checked else 0}%)")
     print(f"  ALL THREE (DIP_BUY):  {all_three}  ({all_three*100//checked if checked else 0}%)")
     print()
 
@@ -98,14 +106,14 @@ def main():
         print()
         print("  Which condition is the blocker?")
         if vwap_deep == 0:
-            print("    → vwap_dist NEVER < -2.0 — market has no deep dips")
-            print("      Fix: relax to vwap_dist < -1.0")
+            print(f"    → vwap_dist NEVER < {VWAP_THRESHOLD} — market has no dips")
+            print(f"      Fix: relax further to {VWAP_THRESHOLD + 0.3}")
         elif vol_high == 0:
-            print("    → vol_accel NEVER > 0.3 — volume acceleration broken")
-            print("      Fix: check calc_volume, or relax to > 0.1")
+            print(f"    → vol_accel NEVER > {VOL_THRESHOLD} — volume acceleration broken")
+            print(f"      Fix: check calc_volume, or relax to {VOL_THRESHOLD - 0.2}")
         elif rs_pos == 0:
-            print("    → rs_1h NEVER > 0 — market is weak vs BTC")
-            print("      Fix: remove rs_1h condition, or relax to > -0.5")
+            print(f"    → rs_1h NEVER > {RS_THRESHOLD} — market is weak vs BTC")
+            print(f"      Fix: remove rs_1h condition, or relax to {RS_THRESHOLD - 0.2}")
         else:
             print("    → Each condition passes sometimes, but never together")
             print("      Fix: relax one or more thresholds")
