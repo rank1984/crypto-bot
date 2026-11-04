@@ -9,7 +9,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,3 +33,6 @@ jobs:
 
       - name: Run DIP diagnostic
         run: python tools/diagnose_dip.py
+
+      - name: Run VWAP deep diagnostic
+        run: python tools/diagnose_vwap.py
