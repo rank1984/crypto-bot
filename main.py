@@ -1,5 +1,6 @@
 """
-CRYPTO-BOT Elite — Main Loop (v3.3 with Diagnostic Investment Advisor)
+CRYPTO-BOT Elite — Main Loop (v8.9 Stress Test 7-Day)
+SILENT_MODE active — no Telegram messages for 7 days.
 """
 import argparse
 import os
@@ -14,7 +15,9 @@ from scanner.dynamic_universe import build_dynamic_universe
 from scanner.market_data import get_candles
 from scanner.ranking import rank_universe
 from scanner.universe import build_universe
-from utils.config import SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE, DB_PATH
+from utils.config import (
+    SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE, DB_PATH, SILENT_MODE,
+)
 from utils.logger import get_logger
 
 from scanner.event_engine import get_event_warning, trading_disabled
@@ -93,7 +96,6 @@ def _tags(c):
 
 
 def _format_candidate(idx: int, coin: dict) -> list:
-    """Format a single candidate for Telegram."""
     lines = []
     sym = coin.get('symbol', '').replace('USDT', '')
     ai = coin.get('ai_score', 0)
@@ -138,7 +140,6 @@ def _format_candidate(idx: int, coin: dict) -> list:
 
 
 def _advisor_historical_stats():
-    """Recent 90d stats for AI>=60 DIP_BUY FINAL trades."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=RECENCY_DAYS)).isoformat()
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -167,7 +168,6 @@ def _advisor_historical_stats():
 
 
 def _advisor_select_candidates(top: list) -> list:
-    """Strict filters: DIP_BUY, AI>=60, BUY (not WAIT), trigger confirmed, no regime_bad+RS_LOW."""
     filtered = []
     for c in top:
         if c.get("ai_score", 0) < AI_MIN: continue
@@ -183,7 +183,6 @@ def _advisor_select_candidates(top: list) -> list:
 
 
 def _diagnose_coin(c: dict) -> list:
-    """Return list of rejection reasons."""
     reasons = []
     ai = c.get("ai_score", 0)
     setup = c.get("entry_setup", "UNKNOWN")
@@ -264,7 +263,6 @@ def run_scan() -> None:
         send_simple_message("ℹ️ No opportunities found. Market is quiet.")
         return
 
-    # Recompute market health with diagnostics
     if _diag is not None:
         oi_change_total = getattr(_diag, "total_oi_change", 0) if not hasattr(_diag, "get") else _diag.get("total_oi_change", 0)
         regime = getattr(_diag, "regime", "RANGE") if not hasattr(_diag, "get") else _diag.get("regime", "RANGE")
@@ -365,182 +363,113 @@ def run_scan() -> None:
                     trade.quality = quality
 
     # ══════════════════════════════════════════════════════════════
-    # INVESTMENT ADVISOR v8.8 (Diagnostic)
+    # INVESTMENT ADVISOR — SILENT in stress test mode
     # ══════════════════════════════════════════════════════════════
     hist = _advisor_historical_stats()
     top_3 = _advisor_select_candidates(top)
 
-    # ── Build diagnostic categories ────────────────────────────────
-    diag_cats = {
-        "vwap_blocked": [],
-        "unknown_setup": [],
-        "ai_low": [],
-        "ai_high_but_not_buy": [],
-        "regime_bad_rs_low": [],
-    }
-
-    for c in top:
-        ai = c.get("ai_score", 0)
-        setup = c.get("entry_setup", "UNKNOWN")
-        tags = _tags(c)
-
-        if setup == "VWAP_RECLAIM":
-            diag_cats["vwap_blocked"].append(c)
-        elif setup == "UNKNOWN":
-            diag_cats["unknown_setup"].append(c)
-        elif ai < AI_MIN:
-            diag_cats["ai_low"].append(c)
-        elif "shadow_regime_bad" in tags and "shadow_rs_low" in tags:
-            diag_cats["regime_bad_rs_low"].append(c)
-        else:
-            diag_cats["ai_high_but_not_buy"].append(c)
-
-    # ── NO TRADE reason ────────────────────────────────────────────
-    no_trade_reason = None
-    if hist["n"] < MIN_SAMPLE:
-        no_trade_reason = f"מדגם היסטורי קטן מדי (n={hist['n']} < {MIN_SAMPLE})"
-    elif hist["avg_r"] <= MIN_AVG_R:
-        no_trade_reason = f"Avg R היסטורי שלילי ({hist['avg_r']:.2f})"
-    elif hist["tp1_rate"] < MIN_TP1_RATE:
-        no_trade_reason = f"TP1 rate נמוך ({hist['tp1_rate']:.0%} < {MIN_TP1_RATE:.0%})"
-    elif not top_3:
-        no_trade_reason = "אין מועמד DIP_BUY עם AI≥60 וטריגר מאושר"
-
-    # ── Build message ──────────────────────────────────────────────
-    lines = [
-        "🧠 *INVESTMENT ADVISOR*", "",
-        f"📊 שוק: {market_health:.0f}/100",
-        f"🌐 Regime: {regime}",
-        f"🛡 Trading: {circuit_breaker.status()}",
-    ]
-
-    hist_ok = (
-        hist["n"] >= MIN_SAMPLE
-        and hist["avg_r"] > MIN_AVG_R
-        and hist["tp1_rate"] >= MIN_TP1_RATE
-    )
-    hist_emoji = "✅" if hist_ok else "⚠️"
-    lines.append(
-        f"📈 היסטוריה (90 יום, AI≥{AI_MIN}): "
-        f"n={hist['n']} | AvgR={hist['avg_r']:.2f} | TP1={hist['tp1_rate']:.0%} {hist_emoji}"
-    )
-
-    lines += ["", "━━━━━━━━━━━━━━━━━━━━"]
-
-    if no_trade_reason:
-        lines += ["", "🚫 *NO TRADE*", ""]
-
-        if hist["n"] < MIN_SAMPLE:
-            lines.append(f"❌ *ההיסטוריה לא מספיקה:* {no_trade_reason}")
-            lines.append("   (צריך 20+ עסקאות AI≥60 ב-90 יום)")
-        elif hist["avg_r"] <= MIN_AVG_R or hist["tp1_rate"] < MIN_TP1_RATE:
-            lines.append(f"❌ *ההיסטוריה שלילית:* {no_trade_reason}")
-            lines.append("   (המערכת לא מוכיחה Edge לאחרונה)")
-        else:
-            lines.append("✅ ההיסטוריה טובה — אבל אין מועמד מתאים עכשיו")
-            lines.append("")
-
-            lines.append(f"🔍 *למה אין מועמד? סריקה של {len(top)} מטבעות:*")
-            lines.append("")
-            lines.append(f"  • VWAP_RECLAIM חסום: {len(diag_cats['vwap_blocked'])}")
-            lines.append(f"  • Setup UNKNOWN (אין דיפ/פריצה): {len(diag_cats['unknown_setup'])}")
-            lines.append(f"  • AI<60: {len(diag_cats['ai_low'])}")
-            lines.append(f"  • regime_bad+RS_LOW: {len(diag_cats['regime_bad_rs_low'])}")
-            lines.append(f"  • AI≥60 אבל לא BUY: {len(diag_cats['ai_high_but_not_buy'])}")
-
-            # ── Top 5 near-miss ────────────────────────────────
-            near_miss = sorted(
-                [c for c in top if c.get("ai_score", 0) >= 40],
-                key=lambda x: (
-                    (1 if x.get("entry_setup") != "VWAP_RECLAIM" else 0),
-                    x.get("ai_score", 0),
-                ),
-                reverse=True,
-            )[:5]
-
-            if near_miss:
-                lines += ["", "━━━━━━━━━━━━━━━━━━━━", ""]
-                lines.append("🔎 *5 הקרובים ביותר (אבל לא עברו):*")
-                lines.append("")
-
-                for i, c in enumerate(near_miss, 1):
-                    sym = c.get("symbol", "").replace("USDT", "")
-                    ai = c.get("ai_score", 0)
-                    setup = c.get("entry_setup", "UNKNOWN")
-                    dec = c.get("entry_decision", "NO")
-                    reasons = _diagnose_coin(c)
-
-                    emoji = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
-                    lines.append(f"  {emoji} *{sym}*")
-                    lines.append(f"     AI: {ai:.1f} | Setup: {setup}")
-                    lines.append(f"     ❌ {' | '.join(reasons)}")
-
-                    if setup == "VWAP_RECLAIM":
-                        lines.append(f"     💡 צריך DIP_BUY (vwap_dist < -2%)")
-                    elif ai < AI_MIN:
-                        lines.append(f"     💡 צריך AI≥60 (חסר {AI_MIN - ai:.1f})")
-                    elif dec != "BUY":
-                        lines.append(f"     💡 צריך trigger מאושר")
-                    lines.append("")
-
-        # ── What needs to happen ─────────────────────────────
-        lines += ["━━━━━━━━━━━━━━━━━━━━", ""]
-        lines.append("📈 *מה צריך לקרות כדי שיהיה BUY?*")
-        lines.append("")
-        lines.append("  1. מטבע עם vwap_dist < -2% (דיפ אמיתי)")
-        lines.append("  2. AI ≥ 60")
-        lines.append("  3. Trigger מאושר")
-        lines.append("  4. לא VWAP_RECLAIM")
-        lines.append("  5. לא regime_bad+RS_LOW")
-        lines.append("")
-        lines.append(f"  כרגע: *0 מטבעות* עומדים בכל 5 התנאים.")
-
-        # ── What to do ───────────────────────────────────────
-        lines += ["", "━━━━━━━━━━━━━━━━━━━━", ""]
-        lines.append("🎯 *מה לעשות?*")
-        lines.append("")
-        lines.append("  • אל תקנה. אין סיגנל.")
-        lines.append("  • חכה לסריקה הבאה (בעוד שעה).")
-        lines.append("  • אם תראה DIP_BUY עם AI≥60 — זה הסיגנל.")
-        lines.append("  • VWAP_RECLAIM לא יופיע יותר (חסום).")
-
+    if SILENT_MODE:
+        # Don't build the message at all — just log a summary line
+        log.info(
+            f"[SILENT] Advisor summary: hist_n={hist['n']} "
+            f"avg_r={hist['avg_r']:.2f} tp1={hist['tp1_rate']:.0%} "
+            f"top3={len(top_3)}"
+        )
     else:
-        for i, c in enumerate(top_3, 1):
-            lines.append("")
-            lines.extend(_format_candidate(i, c))
-            lines.append("")
-            lines.append("━━━━━━━━━━━━━━━━━━━━")
-
-        if len(top_3) < 3:
-            lines.append("")
-            lines.append(f"ℹ️ נמצאו רק {len(top_3)} מועמדים עם AI≥60.")
-        lines += ["", "💰 *כסף אמיתי:* ❌ עדיין לא — פיילוט אחרי 72h"]
-
-    lines.append("")
-    lines.append("━━━━━━━━━━━━━━━━━━━━")
-
-    # ── Last scan timing (optional info) ────────────────────────────
-    try:
-        conn2 = sqlite3.connect(DB_PATH)
-        last = conn2.execute(
-            "SELECT MAX(ts) FROM shadow_trades WHERE decision='BUY'"
-        ).fetchone()[0]
-        conn2.close()
-        if last:
-            last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-            if last_dt.tzinfo is None:
-                last_dt = last_dt.replace(tzinfo=timezone.utc)
-            ago = datetime.now(timezone.utc) - last_dt
-            hours = ago.total_seconds() / 3600
-            if hours < 1:
-                mins = int(ago.total_seconds() / 60)
-                lines.append(f"⏱️ הסריקה האחרונה עם BUY: לפני {mins} דקות")
+        # Build and send the full diagnostic message (original v8.8 behavior)
+        diag_cats = {
+            "vwap_blocked": [], "unknown_setup": [], "ai_low": [],
+            "ai_high_but_not_buy": [], "regime_bad_rs_low": [],
+        }
+        for c in top:
+            ai = c.get("ai_score", 0)
+            setup = c.get("entry_setup", "UNKNOWN")
+            tags = _tags(c)
+            if setup == "VWAP_RECLAIM":
+                diag_cats["vwap_blocked"].append(c)
+            elif setup == "UNKNOWN":
+                diag_cats["unknown_setup"].append(c)
+            elif ai < AI_MIN:
+                diag_cats["ai_low"].append(c)
+            elif "shadow_regime_bad" in tags and "shadow_rs_low" in tags:
+                diag_cats["regime_bad_rs_low"].append(c)
             else:
-                lines.append(f"⏱️ הסריקה האחרונה עם BUY: לפני {hours:.0f} שעות")
-    except Exception:
-        pass
+                diag_cats["ai_high_but_not_buy"].append(c)
 
-    send_simple_message("\n".join(lines))
+        no_trade_reason = None
+        if hist["n"] < MIN_SAMPLE:
+            no_trade_reason = f"מדגם היסטורי קטן מדי (n={hist['n']} < {MIN_SAMPLE})"
+        elif hist["avg_r"] <= MIN_AVG_R:
+            no_trade_reason = f"Avg R היסטורי שלילי ({hist['avg_r']:.2f})"
+        elif hist["tp1_rate"] < MIN_TP1_RATE:
+            no_trade_reason = f"TP1 rate נמוך ({hist['tp1_rate']:.0%} < {MIN_TP1_RATE:.0%})"
+        elif not top_3:
+            no_trade_reason = "אין מועמד DIP_BUY עם AI≥60 וטריגר מאושר"
+
+        lines = [
+            "🧠 *INVESTMENT ADVISOR*", "",
+            f"📊 שוק: {market_health:.0f}/100",
+            f"🌐 Regime: {regime}",
+            f"🛡 Trading: {circuit_breaker.status()}",
+        ]
+        hist_ok = (
+            hist["n"] >= MIN_SAMPLE and hist["avg_r"] > MIN_AVG_R
+            and hist["tp1_rate"] >= MIN_TP1_RATE
+        )
+        hist_emoji = "✅" if hist_ok else "⚠️"
+        lines.append(
+            f"📈 היסטוריה (90 יום, AI≥{AI_MIN}): "
+            f"n={hist['n']} | AvgR={hist['avg_r']:.2f} | TP1={hist['tp1_rate']:.0%} {hist_emoji}"
+        )
+        lines += ["", "━━━━━━━━━━━━━━━━━━━━"]
+
+        if no_trade_reason:
+            lines += ["", "🚫 *NO TRADE*", ""]
+            if hist["n"] < MIN_SAMPLE:
+                lines.append(f"❌ *ההיסטוריה לא מספיקה:* {no_trade_reason}")
+            elif hist["avg_r"] <= MIN_AVG_R or hist["tp1_rate"] < MIN_TP1_RATE:
+                lines.append(f"❌ *ההיסטוריה שלילית:* {no_trade_reason}")
+            else:
+                lines.append("✅ ההיסטוריה טובה — אבל אין מועמד מתאים עכשיו")
+                lines.append("")
+                lines.append(f"🔍 *למה אין מועמד? סריקה של {len(top)} מטבעות:*")
+                lines.append("")
+                lines.append(f"  • VWAP_RECLAIM חסום: {len(diag_cats['vwap_blocked'])}")
+                lines.append(f"  • Setup UNKNOWN: {len(diag_cats['unknown_setup'])}")
+                lines.append(f"  • AI<60: {len(diag_cats['ai_low'])}")
+                lines.append(f"  • regime_bad+RS_LOW: {len(diag_cats['regime_bad_rs_low'])}")
+                lines.append(f"  • AI≥60 אבל לא BUY: {len(diag_cats['ai_high_but_not_buy'])}")
+
+                near_miss = sorted(
+                    [c for c in top if c.get("ai_score", 0) >= 40],
+                    key=lambda x: ((1 if x.get("entry_setup") != "VWAP_RECLAIM" else 0), x.get("ai_score", 0)),
+                    reverse=True,
+                )[:5]
+
+                if near_miss:
+                    lines += ["", "━━━━━━━━━━━━━━━━━━━━", ""]
+                    lines.append("🔎 *5 הקרובים ביותר:*")
+                    lines.append("")
+                    for i, c in enumerate(near_miss, 1):
+                        sym = c.get("symbol", "").replace("USDT", "")
+                        ai = c.get("ai_score", 0)
+                        setup = c.get("entry_setup", "UNKNOWN")
+                        reasons = _diagnose_coin(c)
+                        emoji = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
+                        lines.append(f"  {emoji} *{sym}*")
+                        lines.append(f"     AI: {ai:.1f} | Setup: {setup}")
+                        lines.append(f"     ❌ {' | '.join(reasons)}")
+                        lines.append("")
+        else:
+            for i, c in enumerate(top_3, 1):
+                lines.append("")
+                lines.extend(_format_candidate(i, c))
+                lines.append("")
+                lines.append("━━━━━━━━━━━━━━━━━━━━")
+
+        lines.append("")
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        send_simple_message("\n".join(lines))
 
     # ── Post-scan tasks ────────────────────────────────────────
     try:
@@ -607,7 +536,6 @@ def run_scan() -> None:
 
 
 def _vacuum_if_needed():
-    """VACUUM the DB if it grows too large (GitHub 100MB limit)."""
     try:
         if not os.path.exists(DB_PATH):
             return
@@ -631,9 +559,12 @@ def main() -> None:
     args = parser.parse_args()
 
     run_once = args.once or IS_GITHUB_ACTIONS
-    log.info(f"CRYPTO-BOT Elite v8.8 | dynamic_universe={USE_DYNAMIC_UNIVERSE} | GH={IS_GITHUB_ACTIONS}")
+    log.info(
+        f"CRYPTO-BOT Elite v8.9 STRESS TEST 7-DAY | "
+        f"dynamic_universe={USE_DYNAMIC_UNIVERSE} | "
+        f"GH={IS_GITHUB_ACTIONS} | SILENT={SILENT_MODE}"
+    )
 
-    # DB maintenance before scan
     _vacuum_if_needed()
 
     if run_once:
