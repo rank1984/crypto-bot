@@ -3,6 +3,10 @@ Diagnose why DIP_BUY setup is never detected.
 Read-only — no modifications.
 """
 import sys
+import os
+
+# ── FIX: add repo root to sys.path ─────────────────────────
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
