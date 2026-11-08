@@ -1,5 +1,5 @@
 """
-CRYPTO-BOT Elite — Configuration
+CRYPTO-BOT Elite — Configuration (v9.3 Stress Test 7-Day)
 """
 import os
 
@@ -77,9 +77,7 @@ MAX_DAILY_LOSS = 0.05
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# 🔇 SILENT MODE — suppress all Telegram messages, log only.
-# Set to True for 7-day data collection (no messages).
-# Set to False to re-enable messages.
+# SILENT MODE — suppress Telegram messages (stress test)
 SILENT_MODE = os.getenv("SILENT_MODE", "true").lower() == "true"
 
 # ============================================================
@@ -91,7 +89,7 @@ DB_PATH = os.getenv("DB_PATH", "data/shadow.db")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # ============================================================
-# MULTI-DAY
+# MULTI-DAY (disabled for stress test)
 # ============================================================
 MULTIDAY_ENABLED = os.getenv("MULTIDAY_ENABLED", "false").lower() == "true"
 MIN_1D_CANDLES = 60
@@ -123,17 +121,18 @@ REPLAY_START_DATE = "2025-01-01"
 REPLAY_END_DATE = "2025-12-31"
 
 # ============================================================
-# STRESS TEST 7-DAY (relaxed thresholds)
+# STRESS TEST 7-DAY — relaxed thresholds
 # ============================================================
-# Normal (production) values:
+# Production values:
 #   MIN_STOP_PCT = 0.008
+#   MIN_TP_PCT = 0.015
 #   MIN_RR_RATIO = 1.8
-# Relaxed for 7-day data collection:
-MIN_STOP_PCT = 0.006           # 0.6% (was 0.8%)
-MIN_TP_PCT = 0.012             # 1.2% (was 1.5%)
-MIN_RR_RATIO = 1.3             # 1.3 (was 1.8)
+# Stress test (7-day):
+MIN_STOP_PCT = 0.006           # 0.6%
+MIN_TP_PCT = 0.012             # 1.2%
+MIN_RR_RATIO = 1.3             # 1.3
 
-# Kill switches (keep on — VWAP_RECLAIM is proven negative)
+# Kill switches (VWAP_RECLAIM is proven negative)
 BLOCK_VWAP_RECLAIM = os.getenv("BLOCK_VWAP_RECLAIM", "1") == "1"
 BLOCK_REGIME_BAD_RS_LOW = os.getenv("BLOCK_REGIME_BAD_RS_LOW", "1") == "1"
 
