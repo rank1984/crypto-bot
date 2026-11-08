@@ -1,8 +1,6 @@
 """
-scanner/signal_filter.py — v9.0 (Stress Test 7-Day)
-Changes from v8.9:
-  - RANGE_HEALTH_THRESHOLD: 50 → 45
-    (Previously blocked APTUSDT/SANDUSDT at health=48)
+scanner/signal_filter.py — v9.0
+RANGE_HEALTH_THRESHOLD: 50 → 45
 """
 import json
 from utils.logger import get_logger
@@ -10,7 +8,7 @@ from utils import config
 
 log = get_logger(__name__)
 
-RANGE_HEALTH_THRESHOLD = 45       # was 50 — relaxed for stress test
+RANGE_HEALTH_THRESHOLD = 45
 MIN_STOP_PCT = config.MIN_STOP_PCT
 MIN_RR_RATIO = config.MIN_RR_RATIO
 
@@ -42,18 +40,18 @@ def classify_signal(c: dict) -> str:
     tags          = _get_tags(c)
     symbol        = c.get("symbol", "?")
 
-    # ── KILL SWITCH 1: VWAP_RECLAIM ─────────────────────────────
+    # KILL SWITCH 1: VWAP_RECLAIM
     if config.BLOCK_VWAP_RECLAIM and setup == "VWAP_RECLAIM":
         log.info(f"{symbol}: IGNORE | VWAP_RECLAIM_BLOCKED | ai={c.get('ai_score',0):.1f}")
         return "IGNORE"
 
-    # ── KILL SWITCH 2: regime_bad + RS_LOW ──────────────────────
+    # KILL SWITCH 2: regime_bad + RS_LOW
     if config.BLOCK_REGIME_BAD_RS_LOW:
         if config.TAG_REGIME_BAD in tags and config.TAG_RS_LOW in tags:
             log.info(f"{symbol}: IGNORE | REGIME_BAD_RS_LOW | ai={c.get('ai_score',0):.1f}")
             return "IGNORE"
 
-    # ── Regime gating ───────────────────────────────────────────
+    # Regime gating
     if dec == "BUY":
         if btc_regime == "RISK_OFF":
             log.info(f"{symbol}: BUY→WATCH (RISK_OFF)")
@@ -62,7 +60,7 @@ def classify_signal(c: dict) -> str:
             log.info(f"{symbol}: BUY→WATCH (RANGE, health={market_health:.0f}<{RANGE_HEALTH_THRESHOLD})")
             return "WATCH"
 
-    # ── BUY gates ──────────────────────────────────────────────
+    # BUY gates
     if dec == "BUY":
         if flow < 35:
             log.info(f"{symbol}: BUY→PREPARE (flow={flow:.1f}<35)")
@@ -74,7 +72,6 @@ def classify_signal(c: dict) -> str:
             log.info(f"{symbol}: BUY→WATCH (health={market_health:.0f}<35)")
             return "WATCH"
 
-        # Stop tightness
         entry = c.get("entry_price", 0) or 0
         stop  = c.get("entry_sl", 0) or 0
         if entry > 0 and stop > 0:
@@ -83,7 +80,6 @@ def classify_signal(c: dict) -> str:
                 log.info(f"{symbol}: BUY→WATCH (stop={stop_pct*100:.2f}%<{MIN_STOP_PCT*100:.1f}%)")
                 return "WATCH"
 
-        # R:R floor
         if rr < MIN_RR_RATIO:
             log.info(f"{symbol}: BUY→PREPARE (rr={rr:.2f}<{MIN_RR_RATIO})")
             return "PREPARE"
@@ -91,7 +87,7 @@ def classify_signal(c: dict) -> str:
         log.info(f"{symbol}: BUY (confirmed) setup={setup} flow={flow:.1f} score={c.get('final_score',0):.1f} rr={rr:.2f}")
         return "BUY"
 
-    # ── ARM ────────────────────────────────────────────────────
+    # ARM
     oi_growing  = oi_change > 2.0
     rs_positive = rs_1h > 0
     oi_strong   = oi_change > 30.0
@@ -107,12 +103,12 @@ def classify_signal(c: dict) -> str:
     if sum(arm_conditions) >= 2 and dist_pct <= 1.0:
         return "ARM"
 
-    # ── PREPARE ────────────────────────────────────────────────
+    # PREPARE
     prepare_factors = [compressed, flow >= 55, oi_growing, rs_positive]
     if flow >= 55 and sum(prepare_factors) >= 3:
         return "PREPARE"
 
-    # ── WATCH ──────────────────────────────────────────────────
+    # WATCH
     if flow >= 45 or pre >= 45 or dist_pct < 2.0:
         return "WATCH"
 
