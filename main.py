@@ -1,9 +1,8 @@
 """
-CRYPTO-BOT Elite — Main Loop (v9.3)
+CRYPTO-BOT Elite — Main Loop (v9.3 Stress Test 7-Day)
 Changes from v9.2:
-  - candles_5m TTL 24h — prune every scan
-  - candles_1h TTL 7d
-  - DB stays small, push never fails
+  - _vacuum_if_needed() now prunes candles_5m > 24h EVERY scan (before scan)
+  - This prevents DB from growing to 100MB and breaking git push
 """
 import argparse
 import os
@@ -499,7 +498,6 @@ def run_scan() -> None:
     except Exception as e:
         log.error(f"Backfill error: {e}", exc_info=True)
 
-    # ── Multi-Day — only if enabled ────────────────────────────
     if MULTIDAY_ENABLED:
         try:
             from scanner.multiday_outcome import update_multiday_outcomes
@@ -542,76 +540,64 @@ def run_scan() -> None:
 
 
 def _vacuum_if_needed():
-    """Prune candles_5m >24h EVERY scan. VACUUM only if DB >80MB."""
+    """
+    Runs BEFORE every scan.
+
+    Critical: candles_5m grows to 60-70MB if not pruned. This runs
+    EVERY scan (not just when DB > 80MB) to keep it manageable.
+    """
     try:
         if not os.path.exists(DB_PATH):
             return
+
         conn = sqlite3.connect(DB_PATH)
 
-        # ── candles_5m TTL 24h — every scan ────────────────────
+        # ── 1. Prune candles_5m > 24h (EVERY scan) ────────────
         try:
             cur = conn.execute("""
                 DELETE FROM candles_5m
                 WHERE time < datetime('now', '-24 hours')
             """)
             if cur.rowcount > 0:
-                log.info(f"Pruned {cur.rowcount} old candles_5m (>24h)")
+                log.info(f"Pruned candles_5m: {cur.rowcount} rows (>24h)")
         except sqlite3.OperationalError:
-            pass
+            pass  # table doesn't exist
 
-        # ── candles_1h TTL 7d ─────────────────────────────────
+        # ── 2. Prune candles_1h > 7 days (EVERY scan) ─────────
         try:
             cur = conn.execute("""
                 DELETE FROM candles_1h
                 WHERE time < datetime('now', '-7 days')
             """)
             if cur.rowcount > 0:
-                log.info(f"Pruned {cur.rowcount} old candles_1h (>7d)")
+                log.info(f"Pruned candles_1h: {cur.rowcount} rows (>7d)")
         except sqlite3.OperationalError:
             pass
 
         conn.commit()
-        conn.close()
 
+        # ── 3. Check size, VACUUM if needed ───────────────────
         size_mb = os.path.getsize(DB_PATH) / 1024 / 1024
-        if size_mb < 80:
-            return
 
-        log.warning(f"DB is {size_mb:.1f} MB — starting maintenance")
-        conn = sqlite3.connect(DB_PATH)
-
-        if size_mb > 90:
-            log.warning("DB > 90MB — pruning old data")
-            cur = conn.execute("""
-                DELETE FROM shadow_trades
-                WHERE ts < datetime('now', '-30 days')
-                  AND outcome_status NOT IN ('PENDING', 'ACTIVE')
-            """)
-            log.info(f"Deleted {cur.rowcount} old trades")
+        if size_mb > 80:
+            log.warning(f"DB is {size_mb:.1f} MB — VACUUM")
             try:
-                cur = conn.execute(
-                    "DELETE FROM multiday_signals WHERE ts < datetime('now', '-7 days')"
-                )
-                log.info(f"Deleted {cur.rowcount} old multiday rows")
-            except sqlite3.OperationalError:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
                 pass
+            conn.execute("VACUUM")
+            conn.execute("PRAGMA optimize")
             conn.commit()
+            size_after = os.path.getsize(DB_PATH) / 1024 / 1024
+            log.info(f"DB after VACUUM: {size_after:.1f} MB")
 
-        try:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except Exception:
-            pass
-        conn.execute("VACUUM")
-        conn.execute("PRAGMA optimize")
-        conn.commit()
+            if size_after > 95:
+                log.error(f"⚠️ DB still {size_after:.1f} MB — next push will FAIL")
+
         conn.close()
 
-        size_after = os.path.getsize(DB_PATH) / 1024 / 1024
-        log.info(f"Maintenance: {size_mb:.1f} MB → {size_after:.1f} MB")
-        if size_after > 95:
-            log.error(f"⚠️ DB still {size_after:.1f} MB — next push will FAIL")
     except Exception as e:
-        log.error(f"Maintenance error: {e}")
+        log.error(f"DB maintenance error: {e}")
 
 
 def main() -> None:
@@ -621,11 +607,13 @@ def main() -> None:
 
     run_once = args.once or IS_GITHUB_ACTIONS
     log.info(
-        f"CRYPTO-BOT Elite v9.3 | dynamic_universe={USE_DYNAMIC_UNIVERSE} | "
+        f"CRYPTO-BOT Elite v9.3 STRESS TEST 7-DAY | "
+        f"dynamic_universe={USE_DYNAMIC_UNIVERSE} | "
         f"GH={IS_GITHUB_ACTIONS} | SILENT={SILENT_MODE} | "
         f"MULTIDAY={MULTIDAY_ENABLED}"
     )
 
+    # CRITICAL: prune candles BEFORE scan (every scan, not just when big)
     _vacuum_if_needed()
 
     if run_once:
@@ -641,6 +629,8 @@ def main() -> None:
         except Exception as e:
             log.error(f"Scan error: {e}", exc_info=True)
         if not _running: break
+        # Prune again before next scan
+        _vacuum_if_needed()
         time.sleep(SCAN_INTERVAL_SECONDS)
 
     if live_monitor: live_monitor.stop()
