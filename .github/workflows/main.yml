@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          
+      - name: Emergency DB cleanup
+        run: python tools/db_emergency_cleanup.py
 
       # ================================================================
       # 🔍 DB STATUS CHECK – לפני הריצה
