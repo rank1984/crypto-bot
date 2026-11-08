@@ -1,9 +1,7 @@
 """
 scanner/entry_engine.py — v9.1 (Stress Test 7-Day)
-Changes from v8.9:
-  - DIP_BUY has its own final_score gate (20 instead of 40)
-    Reason: final_score measures positive momentum, which is
-    the opposite of what DIP_BUY looks for.
+DIP_BUY has its own final_score gate (20 instead of 40).
+Reason: final_score measures positive momentum (opposite of DIP_BUY).
 """
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
@@ -27,9 +25,8 @@ class EntrySignal:
     trigger_source: str = "missing"
 
 
-# final_score thresholds per setup
 MIN_SCORE_DEFAULT = 40
-MIN_SCORE_DIP_BUY = 20     # DIP_BUY is contrarian — lower gate
+MIN_SCORE_DIP_BUY = 20
 
 
 def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 0.0) -> EntrySignal:
@@ -123,7 +120,6 @@ def evaluate_entry(coin: Dict[str, Any], df_5m: Any = None, btc_mom_5m: float = 
     decision = "NO"
     reason = ""
 
-    # Score gate depends on setup
     score_gate = MIN_SCORE_DIP_BUY if setup_type == "DIP_BUY" else MIN_SCORE_DEFAULT
 
     if config.BLOCK_VWAP_RECLAIM and setup_type == "VWAP_RECLAIM":
