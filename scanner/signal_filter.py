@@ -1,6 +1,13 @@
 """
-scanner/signal_filter.py — v9.0
-RANGE_HEALTH_THRESHOLD: 50 → 45
+scanner/signal_filter.py — v10.0 (DIP_BUY-aware gate)
+
+CRITICAL FIX from v9.0:
+    entry_engine v9.1 relaxed DIP_BUY score gate to 20 (from 40).
+    But this filter hardcoded `if final_score < 45: return PREPARE`,
+    which UNDID the relaxation — DIP_BUYs with score 20-44 were downgraded
+    at the filter layer and never actually traded.
+
+    Fix: use setup-aware score gate — 20 for DIP_BUY, 45 otherwise.
 """
 import json
 from utils.logger import get_logger
@@ -12,6 +19,10 @@ RANGE_HEALTH_THRESHOLD = 45
 MIN_STOP_PCT = config.MIN_STOP_PCT
 MIN_RR_RATIO = config.MIN_RR_RATIO
 
+# ── v10.0: setup-aware score gate ─────────────────────────────
+SCORE_GATE_DEFAULT = 45
+SCORE_GATE_DIP_BUY = 20   # matches entry_engine.MIN_SCORE_DIP_BUY
+
 
 def _get_tags(c: dict) -> list:
     raw = c.get("shadow_tags", "[]")
@@ -21,6 +32,10 @@ def _get_tags(c: dict) -> list:
         except Exception:
             return [t.strip() for t in raw.strip("[]").replace('"', "").split(",") if t.strip()]
     return raw or []
+
+
+def _score_gate_for_setup(setup: str) -> int:
+    return SCORE_GATE_DIP_BUY if setup == "DIP_BUY" else SCORE_GATE_DEFAULT
 
 
 def classify_signal(c: dict) -> str:
@@ -37,6 +52,7 @@ def classify_signal(c: dict) -> str:
     btc_regime    = c.get("btc_regime", "RANGE")
     setup         = c.get("entry_setup", "UNKNOWN")
     rr            = c.get("entry_rr", 0)
+    final_score   = c.get("final_score", 0)
     tags          = _get_tags(c)
     symbol        = c.get("symbol", "?")
 
@@ -65,9 +81,15 @@ def classify_signal(c: dict) -> str:
         if flow < 35:
             log.info(f"{symbol}: BUY→PREPARE (flow={flow:.1f}<35)")
             return "PREPARE"
-        if c.get("final_score", 0) < 45:
-            log.info(f"{symbol}: BUY→PREPARE (score={c.get('final_score',0):.1f}<45)")
+
+        # ── v10.0 FIX: setup-aware score gate ─────────────
+        score_gate = _score_gate_for_setup(setup)
+        if final_score < score_gate:
+            log.info(
+                f"{symbol}: BUY→PREPARE (score={final_score:.1f}<{score_gate} setup={setup})"
+            )
             return "PREPARE"
+
         if market_health < 35:
             log.info(f"{symbol}: BUY→WATCH (health={market_health:.0f}<35)")
             return "WATCH"
@@ -84,7 +106,10 @@ def classify_signal(c: dict) -> str:
             log.info(f"{symbol}: BUY→PREPARE (rr={rr:.2f}<{MIN_RR_RATIO})")
             return "PREPARE"
 
-        log.info(f"{symbol}: BUY (confirmed) setup={setup} flow={flow:.1f} score={c.get('final_score',0):.1f} rr={rr:.2f}")
+        log.info(
+            f"{symbol}: BUY (confirmed) setup={setup} flow={flow:.1f} "
+            f"score={final_score:.1f}/{score_gate} rr={rr:.2f}"
+        )
         return "BUY"
 
     # ARM
