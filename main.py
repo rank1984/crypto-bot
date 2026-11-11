@@ -12,6 +12,8 @@ import time
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
+from storage.candle_cache import prune_candles, vacuum_if_big, CANDLE_CACHE_PATH
+from utils.config import ADVISOR_AI_MIN, ADVISOR_AI_MAX
 from notifier.sender import send_simple_message
 from scanner.dynamic_universe import build_dynamic_universe
 from scanner.market_data import get_candles
