@@ -168,7 +168,9 @@ REPLAY_END_DATE = "2025-12-31"
 # v10.0 stress test (1.2% stop) → cost/risk ≈ 0.25R — survivable.
 MIN_STOP_PCT = float(os.getenv("MIN_STOP_PCT", 0.012))   # 1.2%
 MIN_TP_PCT = float(os.getenv("MIN_TP_PCT", 0.024))       # 2.4% (RR ≥ 2.0)
-MIN_RR_RATIO = float(os.getenv("MIN_RR_RATIO", 2.0))
+# v10.0.1 — DIP_BUY default RR = 2.5/1.5 ATR = 1.67. Gate at 1.6.
+# (Was 2.0 → blocked default DIP_BUY)
+MIN_RR_RATIO = float(os.getenv("MIN_RR_RATIO", 1.6))
 
 # Kill switches
 BLOCK_VWAP_RECLAIM = os.getenv("BLOCK_VWAP_RECLAIM", "1") == "1"
