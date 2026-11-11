@@ -85,7 +85,11 @@ def init_cache():
 
 
 def save_candles(symbol: str, df: pd.DataFrame):
-    """Save to candle_cache.db (canonical). df must have: time, o/h/l/c/v."""
+    """
+    Save to candle_cache.db (canonical). Auto-creates table if missing.
+    v2.2: idempotent CREATE TABLE — fixes 'no such table' on first call
+          from debug scripts that don't call init_cache().
+    """
     if df is None or df.empty:
         return
 
@@ -102,6 +106,10 @@ def save_candles(symbol: str, df: pd.DataFrame):
     rows = df[["time", "open", "high", "low", "close", "volume"]].values.tolist()
 
     with _cache_conn() as conn:
+        # v2.2: ensure table exists — safe to call every time
+        conn.execute(_CREATE_TABLE_SQL)
+        conn.execute(_CREATE_INDEX_SQL)
+
         conn.executemany(
             """
             INSERT OR IGNORE INTO candles_5m
