@@ -5,7 +5,6 @@ on:
   schedule:
     - cron: '0 * * * *'
 
-# 🔑 תיקון הרשאות – מאפשר ל-GitHub Actions לדחוף שינויים חזרה ל-repo
 permissions:
   contents: write
 
@@ -15,13 +14,12 @@ jobs:
 
     steps:
       # ================================================================
-      # CHECKOUT – עם תמיכה ב-PAT_TOKEN אם קיים
+      # CHECKOUT
       # ================================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # משתמש ב-PAT_TOKEN אם קיים, אחרת ב-GITHUB_TOKEN
           token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
@@ -32,12 +30,9 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          
-      - name: Emergency DB cleanup
-        run: python tools/db_emergency_cleanup.py
 
       # ================================================================
-      # 🔍 DB STATUS CHECK – לפני הריצה
+      # DB STATUS CHECK – לפני הריצה
       # ================================================================
       - name: 🔍 DB Status Check (Before)
         env:
@@ -76,14 +71,14 @@ jobs:
           "
 
       # ================================================================
-      # 🔍 HEALTH CHECK
+      # HEALTH CHECK
       # ================================================================
       - name: 🔍 Market Data Health Check
         run: |
           python -c "from tools.health_check import health_check; health_check()"
 
       # ================================================================
-      # 🔍 DEBUG CANDLES
+      # DEBUG CANDLES
       # ================================================================
       - name: 🔍 Debug Candles for Open Trades
         env:
@@ -113,7 +108,7 @@ jobs:
           "
 
       # ================================================================
-      # RUN SCAN
+      # RUN SCAN  (main.py handles pruning, tracking, export internally)
       # ================================================================
       - name: Run scan (main pipeline)
         run: python main.py --once
@@ -121,9 +116,16 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+          CANDLE_CACHE_PATH: data/candle_cache.db
+          SILENT_MODE: "true"
+          MIN_STOP_PCT: "0.012"
+          MIN_TP_PCT: "0.024"
+          MIN_RR_RATIO: "1.6"
+          ADVISOR_AI_MIN: "20"
+          ADVISOR_AI_MAX: "40"
 
       # ================================================================
-      # 🔍 DB STATUS CHECK – אחרי הריצה
+      # DB STATUS CHECK – אחרי הריצה
       # ================================================================
       - name: 🔍 DB Status Check (After)
         env:
@@ -159,7 +161,7 @@ jobs:
           "
 
       # ================================================================
-      # 🔬 EDGE AUDIT
+      # EDGE AUDIT
       # ================================================================
       - name: 🔬 Edge Audit (full statistical analysis)
         env:
@@ -168,7 +170,7 @@ jobs:
           python -c "from tools.edge_audit import run_edge_audit; run_edge_audit()"
 
       # ================================================================
-      #  PHASE 1 – DATA PROVENANCE AUDIT
+      # PHASE 1 – DATA PROVENANCE AUDIT (read-only diagnostics)
       # ================================================================
       - name: Audit pnl_pct_method
         env:
@@ -191,7 +193,7 @@ jobs:
           conn.close()
           "
 
-      - name: Audit V8 fields
+      - name: Audit v9.0 fields
         env:
           DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
         run: |
@@ -203,52 +205,52 @@ jobs:
           cur.execute('''
               SELECT COUNT(*) AS total,
                   SUM(CASE WHEN pnl_r IS NOT NULL THEN 1 ELSE 0 END) AS has_pnl_r,
-                  SUM(CASE WHEN mfe_r IS NOT NULL THEN 1 ELSE 0 END) AS has_mfe_r,
-                  SUM(CASE WHEN mae_r IS NOT NULL THEN 1 ELSE 0 END) AS has_mae_r,
-                  SUM(CASE WHEN first_outcome_type IS NOT NULL THEN 1 ELSE 0 END) AS has_outcome_type
+                  SUM(CASE WHEN pnl_r_net IS NOT NULL THEN 1 ELSE 0 END) AS has_pnl_r_net,
+                  SUM(CASE WHEN final_exit_price > 0 THEN 1 ELSE 0 END) AS has_exit_price,
+                  SUM(CASE WHEN realized_pnl_pct IS NOT NULL THEN 1 ELSE 0 END) AS has_realized,
+                  SUM(CASE WHEN sl_type_at_exit IS NOT NULL AND sl_type_at_exit != 'N/A' THEN 1 ELSE 0 END) AS has_sl_type
               FROM shadow_trades
               WHERE decision='BUY' AND outcome_status='FINAL' AND outcome_checked=1
           ''')
           row = cur.fetchone()
-          print('===== Audit: V8-derived fields =====')
+          print('===== Audit: v9.0-derived fields =====')
           print(f'Total FINAL: {row[0]}')
           if row[0] > 0:
-              print(f'  with pnl_r: {row[1]} ({row[1]*100/row[0]:.1f}%)')
-              print(f'  with mfe_r: {row[2]} ({row[2]*100/row[0]:.1f}%)')
-              print(f'  with mae_r: {row[3]} ({row[3]*100/row[0]:.1f}%)')
-              print(f'  with first_outcome_type: {row[4]} ({row[4]*100/row[0]:.1f}%)')
+              print(f'  with pnl_r:          {row[1]} ({row[1]*100/row[0]:.1f}%)')
+              print(f'  with pnl_r_net:      {row[2]} ({row[2]*100/row[0]:.1f}%)')
+              print(f'  with final_exit:     {row[3]} ({row[3]*100/row[0]:.1f}%)')
+              print(f'  with realized_pnl:   {row[4]} ({row[4]*100/row[0]:.1f}%)')
+              print(f'  with sl_type:        {row[5]} ({row[5]*100/row[0]:.1f}%)')
+          conn.close()
+          "
+
+      - name: Bucket summary (AI range)
+        env:
+          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
+        run: |
+          python -c "
+          import sqlite3, os
+          DB_PATH = os.getenv('DB_PATH', 'data/shadow.db')
+          conn = sqlite3.connect(DB_PATH)
+          cur = conn.cursor()
+          cur.execute('''
+              SELECT ai_bucket, COUNT(*),
+                     ROUND(AVG(pnl_r), 3),
+                     ROUND(AVG(pnl_r_net), 3),
+                     ROUND(SUM(CASE WHEN pnl_r_net>0 THEN 1 ELSE 0 END)*100.0/COUNT(*), 1)
+              FROM shadow_trades
+              WHERE outcome_status='FINAL' AND decision='BUY'
+              GROUP BY ai_bucket ORDER BY ai_bucket
+          ''')
+          print('===== AI Bucket Summary =====')
+          print(f'{\"bucket\":12s} {\"n\":>4s} {\"avg_r\":>8s} {\"avg_r_net\":>10s} {\"win%\":>6s}')
+          for row in cur.fetchall():
+              print(f'{row[0]:12s} {row[1]:>4d} {row[2] if row[2] is not None else 0:>8.3f} {row[3] if row[3] is not None else 0:>10.3f} {row[4] if row[4] is not None else 0:>6.1f}')
           conn.close()
           "
 
       # ================================================================
-      #  PHASE 2 – LEGACY REBUILD
-      # ================================================================
-      - name: Reset legacy FINAL trades (if any)
-        env:
-          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
-        run: |
-          python -c "from tools.reset_legacy_finals import reset_legacy_finals; reset_legacy_finals()"
-
-      - name: Re-run outcome tracker
-        env:
-          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
-        run: |
-          python -c "from tools.outcome_tracker import update_outcomes; print(update_outcomes())"
-
-      - name: Re-export ML dataset
-        env:
-          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
-        run: |
-          python -c "from tools.export_learning_dataset import export_ml_dataset; export_ml_dataset()"
-
-      - name: Re-run dashboard
-        env:
-          DB_PATH: ${{ secrets.DB_PATH || 'data/shadow.db' }}
-        run: |
-          python -c "from tools.learning_dashboard import run_dashboard; print(run_dashboard())"
-
-      # ================================================================
-      # 💾 COMMIT + PUSH – שמירת ה‑DB וה‑CSV ל‑git
+      # COMMIT + PUSH – שמירת ה-DB וה-CSV ל-git
       # ================================================================
       - name: 💾 Commit updated DB and results
         if: always()
@@ -256,20 +258,17 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-          # Add data files (עם || true כדי לא להיכשל אם קובץ חסר)
           git add -f data/shadow.db 2>/dev/null || echo "⚠️ DB not found"
           git add shadow_results.csv 2>/dev/null || echo "⚠️ CSV not found"
           git add data/learning_dataset.csv 2>/dev/null || echo "⚠️ Dataset not found"
           git add analysis_report.txt 2>/dev/null || echo "⚠️ Report not found"
 
-          # Check if there's anything to commit
           if git diff --staged --quiet; then
             echo "ℹ️ No changes to commit"
           else
             git commit -m "📈 Auto-update shadow results [skip ci]"
             echo "✅ Committed changes"
             
-            # Push with error handling
             if git push; then
               echo "✅ Pushed to remote successfully"
             else
@@ -279,7 +278,7 @@ jobs:
           fi
 
       # ================================================================
-      #  ARTIFACTS
+      # ARTIFACTS
       # ================================================================
       - name: Upload shadow results
         if: always()
