@@ -1,6 +1,13 @@
 """
-CRYPTO-BOT Elite — Market Data
-Primary: KuCoin (works in GitHub Actions). Fallback: Binance, CoinGecko.
+CRYPTO-BOT Elite — Market Data v10.1
+
+FIX from v10.0:
+  - get_candles() now SAVES TO candle_cache.db on BOTH cache hit and API fetch.
+    Previously: only saved on API fetch → cache hits never reached candle_cache.db
+    → outcome_tracker saw "no candles" for most symbols.
+
+  - _save_to_candle_cache() helper: auto-creates table if missing,
+    handles race conditions gracefully.
 """
 import time
 import pandas as pd
@@ -13,7 +20,7 @@ from utils.logger import get_logger
 
 log = get_logger(__name__)
 _HEADERS = {"User-Agent": "crypto-bot/1.0"}
-_DELAY = 0.15   # 🆕 העלאה מ-0.05 ל-0.15 שניות
+_DELAY = 0.15
 
 INTERVAL_MAP = {
     "1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min",
@@ -31,7 +38,6 @@ BINANCE_INTERVAL_MAP = {
 
 
 def _safe_float(value, default=0.0):
-    """Safe conversion to float – handles None, strings, ints."""
     if value is None:
         return default
     if isinstance(value, (int, float)):
@@ -147,11 +153,33 @@ def _to_df(raw: list) -> pd.DataFrame:
                "close_time", "quote_volume", "trades"]].reset_index(drop=True)
 
 
+def _save_to_candle_cache(symbol: str, df: pd.DataFrame):
+    """
+    v10.1: ALWAYS save to candle_cache.db (both cache hit and API fetch).
+    Auto-creates the table if missing.
+    """
+    try:
+        from storage.candle_cache import save_candles
+
+        df_to_save = df.copy()
+        if "time" not in df_to_save.columns:
+            df_to_save["time"] = pd.to_datetime(df_to_save["open_time"])
+
+        save_candles(symbol, df_to_save)
+    except Exception as e:
+        log.warning(f"Candle save error ({symbol}): {e}")
+
+
 def get_candles(symbol: str, interval: str, limit: int = CANDLES_PER_TF) -> pd.DataFrame | None:
+    # ── Cache path ────────────────────────────────────────────
     cached = cache_load(symbol, interval)
     if cached is not None:
-        return _to_df(cached)
+        df = _to_df(cached)
+        if interval in ("5m", "5min"):
+            _save_to_candle_cache(symbol, df)   # ← v10.1 FIX
+        return df
 
+    # ── API path ──────────────────────────────────────────────
     raw = _fetch_binance_candles(symbol, interval, limit)
 
     if not raw:
@@ -171,14 +199,7 @@ def get_candles(symbol: str, interval: str, limit: int = CANDLES_PER_TF) -> pd.D
     df = _to_df(raw)
 
     if interval in ("5m", "5min"):
-        try:
-            from storage.candle_cache import save_candles
-            df_to_save = df.copy()
-            if "time" not in df_to_save.columns:
-                df_to_save["time"] = pd.to_datetime(df_to_save["open_time"])
-            save_candles(symbol, df_to_save)
-        except Exception as e:
-            log.warning(f"Candle save error: {e}")
+        _save_to_candle_cache(symbol, df)
 
     return df
 
@@ -193,7 +214,6 @@ def get_all_timeframes(symbol: str) -> dict:
 
 
 def get_ticker_24h(symbol: str) -> dict | None:
-    # KuCoin first
     try:
         kucoin_sym = symbol.replace("USDT", "-USDT")
         r = requests.get(
@@ -222,7 +242,6 @@ def get_ticker_24h(symbol: str) -> dict | None:
     except Exception as e:
         log.debug(f"KuCoin ticker error for {symbol}: {e}")
 
-    # Binance fallback
     try:
         r = requests.get(
             "https://api.binance.com/api/v3/ticker/24hr",
@@ -252,15 +271,7 @@ def get_ticker_24h(symbol: str) -> dict | None:
     return None
 
 
-# ============================================================
-# ✅ Bulk ticker – one request for all symbols (KuCoin first)
-# ============================================================
 def get_all_tickers_24h() -> dict:
-    """
-    Fetch 24h ticker stats for ALL symbols in one request.
-    Returns dict: {symbol: {quoteVolume, vol, last, ...}}
-    """
-    # 1. KuCoin (most reliable in GitHub Actions)
     try:
         r = requests.get(
             f"{KUCOIN_BASE}/market/allTickers",
@@ -299,7 +310,6 @@ def get_all_tickers_24h() -> dict:
     except Exception as e:
         log.warning(f"KuCoin bulk ticker exception: {e}")
 
-    # 2. Binance fallback
     try:
         r = requests.get(
             "https://api.binance.com/api/v3/ticker/24hr",
