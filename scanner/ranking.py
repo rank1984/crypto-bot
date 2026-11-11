@@ -1,3 +1,16 @@
+"""
+CRYPTO-BOT Elite — Ranking v10.0
+
+Fixes from v9.x:
+  FIX (bug): btc_regime now set on coin dict BEFORE record_trade is called.
+             Previously regime was applied only in rank_universe AFTER scan_coin,
+             so btc_regime="" for every shadow record → tag "shadow_regime_bad"
+             always true, and regime filters in advisor broken.
+  FIX (bug): btc_mom_5m passed to evaluate_entry (was hardcoded 0.0).
+  FIX (bug): record_trade return value is now checked and logged if None.
+  FIX (bug): scan_coin accepts btc_regime and btc_mom_5m as params.
+  ADD: structured RECORDED / DUPLICATE_SUPPRESSED / RECORD_FAILED log lines.
+"""
 import pandas as pd
 from typing import Optional, Tuple, List, Dict, Any
 
@@ -44,7 +57,20 @@ def _recent_high_stats(df_5m: pd.DataFrame, lookback: int = 20) -> Tuple[float, 
     return high_price, float(high_age), round(pullback, 3)
 
 
-def scan_coin(symbol: str) -> Optional[dict]:
+def _btc_mom_5m(btc_dfs: dict) -> float:
+    """Compute BTC 5m momentum from cached candles."""
+    df = btc_dfs.get("5min") if btc_dfs else None
+    if df is None or len(df) < 2:
+        return 0.0
+    try:
+        last = float(df["close"].iloc[-1])
+        prev = float(df["close"].iloc[-2])
+        return round((last - prev) / prev * 100, 4) if prev > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+def scan_coin(symbol: str, btc_regime: str = "", btc_mom_5m: float = 0.0) -> Optional[dict]:
     dfs = get_all_timeframes(symbol)
     if not all(tf in dfs for tf in ["1min", "5min", "15min", "1hour"]):
         log.debug(f"{symbol}: missing timeframe")
@@ -143,7 +169,8 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "pre_components": pre["components"],
         "is_sympathy": False,
         "leader": "",
-        "regime": "",
+        "btc_regime": btc_regime,   # v10.0: set BEFORE record_trade
+        "regime": btc_regime,       # backward-compat alias
     }
 
     coin = enrich_with_probability([coin])[0]
@@ -151,7 +178,7 @@ def scan_coin(symbol: str) -> Optional[dict]:
     entry_signal = evaluate_entry(
         coin=coin,
         df_5m=df_5m,
-        btc_mom_5m=0.0,
+        btc_mom_5m=btc_mom_5m,   # v10.0: real value, not 0.0
     )
 
     coin.update({
@@ -167,15 +194,26 @@ def scan_coin(symbol: str) -> Optional[dict]:
         "trigger_source": entry_signal.trigger_source,
     })
 
-    # ══════════════════════════════════════════════════════════════════
-    # 🆕 Record to shadow_trades if BUY or PREPARE
-    # ══════════════════════════════════════════════════════════════════
+    # ── Record to shadow if BUY or PREPARE ────────────────
     if entry_signal.decision in ("BUY", "PREPARE"):
         try:
             from tools.shadow_mode import record_trade
-            record_trade(coin, entry_signal)
+            rid = record_trade(coin, entry_signal)
+            if rid is None:
+                # record_trade returns None on duplicate / error
+                log.warning(
+                    f"RECORD_NOT_WRITTEN symbol={symbol} "
+                    f"decision={entry_signal.decision} setup={entry_signal.setup_type} "
+                    f"rr={entry_signal.rr:.2f} score={coin.get('final_score')} "
+                    f"(check DUPLICATE_SUPPRESSED warning above, or record_trade error log)"
+                )
+            else:
+                log.info(
+                    f"RECORDED id={rid} symbol={symbol} "
+                    f"decision={entry_signal.decision} setup={entry_signal.setup_type}"
+                )
         except Exception as e:
-            log.error(f"shadow record_trade failed for {symbol}: {e}")
+            log.error(f"RECORD_FAILED symbol={symbol}: {e}", exc_info=True)
 
     return coin
 
@@ -196,9 +234,14 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
         btc_4h_move = round((float(c.iloc[-1]) - float(c.iloc[-5])) / float(c.iloc[-5]) * 100, 2)
         btc_24h_move = round((float(c.iloc[-1]) - float(c.iloc[-25])) / float(c.iloc[-25]) * 100, 2)
 
-    regime = detect_regime(btc_1h_move, btc_4h_move, btc_24h_move, 0.0)
+    btc_mom_5m = _btc_mom_5m(btc_dfs)   # v10.0: real 5m momentum
+
+    regime = detect_regime(btc_1h_move, btc_4h_move, btc_24h_move, btc_mom_5m)
     min_threshold = get_min_threshold(regime)
-    log.info(f"Regime: {regime} | BTC 1h={btc_1h_move:+.1f}% | Min threshold: {min_threshold}")
+    log.info(
+        f"Regime: {regime} | BTC 1h={btc_1h_move:+.1f}% "
+        f"5m={btc_mom_5m:+.2f}% | Min threshold: {min_threshold}"
+    )
 
     leaders = find_leaders(symbols)
     sympathy_plays = find_sympathy_plays(leaders, symbols)
@@ -210,34 +253,17 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
         _stats.scanned = len(symbols)
         _stats.regime = regime
 
-    rvol_buckets = {
-        f"rvol_<{MIN_RVOL}": 0,
-        f"rvol_{MIN_RVOL:.1f}_to_0.6": 0,
-        "rvol_0.6_to_0.8": 0,
-        "rvol_>=0.8": 0,
-    }
-
     for i, sym in enumerate(symbols, 1):
         if i % 50 == 0:
-            log.info(f"Scanning {i}/{len(symbols)}... ok={cnt['ok']} rvol_fail={cnt['rvol']} hard_fail={cnt['hard']}")
+            log.info(f"Scanning {i}/{len(symbols)}... ok={cnt['ok']} "
+                     f"rvol_fail={cnt['rvol']} hard_fail={cnt['hard']}")
         try:
-            r = scan_coin(sym)
+            r = scan_coin(sym, btc_regime=regime, btc_mom_5m=btc_mom_5m)  # v10.0
             if r is None:
                 continue
-
             cnt["ok"] += 1
             if _stats and "flow_score" in r:
                 _stats.record_flow(r["flow_score"])
-
-            rvol = r.get("rvol", 0)
-            if rvol < MIN_RVOL:
-                rvol_buckets[f"rvol_<{MIN_RVOL}"] += 1
-            elif rvol < 0.6:
-                rvol_buckets[f"rvol_{MIN_RVOL:.1f}_to_0.6"] += 1
-            elif rvol < 0.8:
-                rvol_buckets["rvol_0.6_to_0.8"] += 1
-            else:
-                rvol_buckets["rvol_>=0.8"] += 1
 
             s_bonus = sympathy_bonus(r, sympathy_plays)
             if s_bonus > 0:
@@ -246,19 +272,12 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
                 info = next((p for p in sympathy_plays if p["symbol"] == sym), {})
                 r["leader"] = info.get("leader", "")
 
-            r["regime"] = regime
             results.append(r)
-
         except Exception as e:
             cnt["err"] += 1
             log.warning(f"{sym}: {e}")
 
-    log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters")
-    log.info(
-        f"RVOL diagnostics: "
-        f"{' | '.join([f'{k}={v}' for k, v in rvol_buckets.items()])} "
-        f"passed={cnt['ok']}"
-    )
+    log.info(f"Scan complete: {cnt['ok']}/{len(symbols)} passed filters | errors={cnt['err']}")
 
     def _rank_score(x: dict) -> float:
         score = (
@@ -290,12 +309,8 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
         passes_thresh = r.get("final_score", 0) >= min_threshold
         if is_buy or passes_thresh:
             top.append(r)
-        else:
-            if r.get("flow_score", 0) >= 40 or r.get("pre_score", 0) >= 40:
-                log.info(f"Rejected {r['symbol']}: FLOW={r.get('flow_score',0)} PRE={r.get('pre_score',0)} FINAL={r.get('final_score',0)} Threshold={min_threshold} -> rejected")
 
     if len(top) < 5:
-        log.info(f"Only {len(top)} passed threshold/BUY. Forcing top 5...")
         for r in results:
             if r not in top:
                 top.append(r)
@@ -310,18 +325,12 @@ def rank_universe(symbols: list[str]) -> Tuple[list[dict], Any]:
     for coin in top:
         try:
             save_signal(
-                coin,
-                regime=regime,
+                coin, regime=regime,
                 is_sympathy=coin.get("is_sympathy", False),
-                leader=coin.get("leader", "")
+                leader=coin.get("leader", ""),
             )
         except Exception as e:
             log.warning(f"DB save error for {coin.get('symbol')}: {e}")
-
-    if _stats:
-        _stats.watch = sum(1 for c in top if c.get('signal') == 'WATCH')
-        _stats.prepare = sum(1 for c in top if c.get('signal') == 'PREPARE')
-        _stats.buy = sum(1 for c in top if c.get('signal') == 'BUY')
 
     log.info(f"Done: {len(results)} scored | {len(top)} selected | regime={regime}")
     return top, _stats
