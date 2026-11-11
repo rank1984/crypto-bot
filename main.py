@@ -1,8 +1,14 @@
 """
-CRYPTO-BOT Elite — Main Loop (v9.3 Stress Test 7-Day)
-Changes from v9.2:
-  - _vacuum_if_needed() now prunes candles_5m > 24h EVERY scan (before scan)
-  - This prevents DB from growing to 100MB and breaking git push
+CRYPTO-BOT Elite — Main Loop (v10.0 PnL Trust Edition)
+
+Changes from v9.3:
+  - FIX: candle_cache is now SEPARATE file (data/candle_cache.db)
+         _vacuum_if_needed() no longer touches shadow.db candles
+  - FIX: Advisor AI range [20, 40) — data-driven hot zone
+  - FIX: Advisor uses pnl_r_net (after fees/slippage)
+  - FIX: Removed tools.backfill_buckets call (deprecated)
+  - FIX: learning.recorder gated behind LEGACY_RECORDER=1
+  - ADD: Log line shows both DB paths + AI range
 """
 import argparse
 import os
@@ -12,8 +18,6 @@ import time
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
-from storage.candle_cache import prune_candles, vacuum_if_big, CANDLE_CACHE_PATH
-from utils.config import ADVISOR_AI_MIN, ADVISOR_AI_MAX
 from notifier.sender import send_simple_message
 from scanner.dynamic_universe import build_dynamic_universe
 from scanner.market_data import get_candles
@@ -21,7 +25,13 @@ from scanner.ranking import rank_universe
 from scanner.universe import build_universe
 from utils.config import (
     SCAN_INTERVAL_SECONDS, USE_DYNAMIC_UNIVERSE, DB_PATH, SILENT_MODE,
-    MULTIDAY_ENABLED,
+    MULTIDAY_ENABLED, ADVISOR_AI_MIN, ADVISOR_AI_MAX,
+)
+from storage.candle_cache import (
+    init_cache as init_candle_cache,
+    prune_candles,
+    vacuum_if_big,
+    CANDLE_CACHE_PATH,
 )
 from utils.logger import get_logger
 
@@ -71,8 +81,14 @@ if not IS_GITHUB_ACTIONS:
 
 ws_monitors = {}
 
-# ── Advisor constants ────────────────────────────────────────────────
-AI_MIN = 60
+# ── Advisor constants (v10.0 — data-driven range) ────────────
+# The 51-trade sample showed AI 20-40 is the only positive bucket:
+#   AI_0_20:  n=25, AvgR=-0.13
+#   AI_20_40: n=12, AvgR=+0.67  ← hot zone
+#   AI_40_60: n=13, AvgR=+0.15  ← weak
+#   AI_60_80: n=1,  structural dead zone
+AI_MIN = ADVISOR_AI_MIN       # 20
+AI_MAX = ADVISOR_AI_MAX       # 40 (exclusive)
 RECENCY_DAYS = 90
 MIN_SAMPLE = 20
 MIN_TP1_RATE = 0.25
@@ -145,6 +161,7 @@ def _format_candidate(idx: int, coin: dict) -> list:
 
 
 def _advisor_historical_stats():
+    """v10.0: range filter [AI_MIN, AI_MAX), uses pnl_r_net."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=RECENCY_DAYS)).isoformat()
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -153,11 +170,13 @@ def _advisor_historical_stats():
             SELECT
                 COUNT(*) as n,
                 AVG(pnl_r) as avg_r,
+                AVG(pnl_r_net) as avg_r_net,
                 AVG(CASE WHEN outcome_tp1_hit=1 THEN 1.0 ELSE 0.0 END) as tp1_rate
             FROM shadow_trades
             WHERE decision='BUY'
               AND setup != 'VWAP_RECLAIM'
               AND ai_score >= {AI_MIN}
+              AND ai_score < {AI_MAX}
               AND outcome_status='FINAL'
               AND ts >= '{cutoff}'
         """).fetchone()
@@ -165,17 +184,20 @@ def _advisor_historical_stats():
         return {
             "n": (row["n"] or 0),
             "avg_r": (row["avg_r"] or 0.0),
+            "avg_r_net": (row["avg_r_net"] or 0.0) if row["avg_r_net"] is not None else 0.0,
             "tp1_rate": (row["tp1_rate"] or 0.0),
         }
     except Exception as e:
         log.error(f"Advisor historical stats failed: {e}")
-        return {"n": 0, "avg_r": 0.0, "tp1_rate": 0.0}
+        return {"n": 0, "avg_r": 0.0, "avg_r_net": 0.0, "tp1_rate": 0.0}
 
 
 def _advisor_select_candidates(top: list) -> list:
+    """v10.0: range filter [AI_MIN, AI_MAX)."""
     filtered = []
     for c in top:
-        if c.get("ai_score", 0) < AI_MIN: continue
+        ai = c.get("ai_score", 0)
+        if ai < AI_MIN or ai >= AI_MAX: continue
         if c.get("entry_decision") != "BUY": continue
         if c.get("entry_setup") == "VWAP_RECLAIM": continue
         if c.get("entry_price", 0) <= 0: continue
@@ -197,7 +219,9 @@ def _diagnose_coin(c: dict) -> list:
     tags = _tags(c)
 
     if ai < AI_MIN:
-        reasons.append(f"AI={ai:.1f}<60")
+        reasons.append(f"AI={ai:.1f}<{AI_MIN}")
+    elif ai >= AI_MAX:
+        reasons.append(f"AI={ai:.1f}>={AI_MAX} (מחוץ לטווח החם)")
     if setup == "VWAP_RECLAIM":
         reasons.append("VWAP_RECLAIM חסום")
     elif setup == "UNKNOWN":
@@ -224,8 +248,7 @@ def run_scan() -> None:
         log.warning(f"Shadow DB init error: {e}")
 
     try:
-        from storage.candle_cache import init_cache
-        init_cache()
+        init_candle_cache()
     except Exception as e:
         log.warning(f"Candle Cache init error: {e}")
 
@@ -376,8 +399,9 @@ def run_scan() -> None:
     if SILENT_MODE:
         log.info(
             f"[SILENT] Advisor summary: hist_n={hist['n']} "
-            f"avg_r={hist['avg_r']:.2f} tp1={hist['tp1_rate']:.0%} "
-            f"top3={len(top_3)}"
+            f"avg_r={hist['avg_r']:.2f} avg_r_net={hist['avg_r_net']:.2f} "
+            f"tp1={hist['tp1_rate']:.0%} top3={len(top_3)} "
+            f"AI_range=[{AI_MIN},{AI_MAX})"
         )
     else:
         diag_cats = {
@@ -402,12 +426,12 @@ def run_scan() -> None:
         no_trade_reason = None
         if hist["n"] < MIN_SAMPLE:
             no_trade_reason = f"מדגם היסטורי קטן מדי (n={hist['n']} < {MIN_SAMPLE})"
-        elif hist["avg_r"] <= MIN_AVG_R:
-            no_trade_reason = f"Avg R היסטורי שלילי ({hist['avg_r']:.2f})"
+        elif hist["avg_r_net"] <= MIN_AVG_R:
+            no_trade_reason = f"Avg R נטו היסטורי שלילי ({hist['avg_r_net']:.2f})"
         elif hist["tp1_rate"] < MIN_TP1_RATE:
             no_trade_reason = f"TP1 rate נמוך ({hist['tp1_rate']:.0%} < {MIN_TP1_RATE:.0%})"
         elif not top_3:
-            no_trade_reason = "אין מועמד DIP_BUY עם AI≥60 וטריגר מאושר"
+            no_trade_reason = f"אין מועמד DIP_BUY עם AI ב-[{AI_MIN},{AI_MAX}) וטריגר מאושר"
 
         lines = [
             "🧠 *INVESTMENT ADVISOR*", "",
@@ -416,13 +440,14 @@ def run_scan() -> None:
             f"🛡 Trading: {circuit_breaker.status()}",
         ]
         hist_ok = (
-            hist["n"] >= MIN_SAMPLE and hist["avg_r"] > MIN_AVG_R
+            hist["n"] >= MIN_SAMPLE and hist["avg_r_net"] > MIN_AVG_R
             and hist["tp1_rate"] >= MIN_TP1_RATE
         )
         hist_emoji = "✅" if hist_ok else "⚠️"
         lines.append(
-            f"📈 היסטוריה (90 יום, AI≥{AI_MIN}): "
-            f"n={hist['n']} | AvgR={hist['avg_r']:.2f} | TP1={hist['tp1_rate']:.0%} {hist_emoji}"
+            f"📈 היסטוריה (90 יום, AI {AI_MIN}-{AI_MAX}): "
+            f"n={hist['n']} | AvgR={hist['avg_r']:.2f} | AvgR_net={hist['avg_r_net']:.2f} "
+            f"| TP1={hist['tp1_rate']:.0%} {hist_emoji}"
         )
         lines += ["", "━━━━━━━━━━━━━━━━━━━━"]
 
@@ -430,7 +455,7 @@ def run_scan() -> None:
             lines += ["", "🚫 *NO TRADE*", ""]
             if hist["n"] < MIN_SAMPLE:
                 lines.append(f"❌ *ההיסטוריה לא מספיקה:* {no_trade_reason}")
-            elif hist["avg_r"] <= MIN_AVG_R or hist["tp1_rate"] < MIN_TP1_RATE:
+            elif hist["avg_r_net"] <= MIN_AVG_R or hist["tp1_rate"] < MIN_TP1_RATE:
                 lines.append(f"❌ *ההיסטוריה שלילית:* {no_trade_reason}")
             else:
                 lines.append("✅ ההיסטוריה טובה — אבל אין מועמד מתאים עכשיו")
@@ -439,12 +464,12 @@ def run_scan() -> None:
                 lines.append("")
                 lines.append(f"  • VWAP_RECLAIM חסום: {len(diag_cats['vwap_blocked'])}")
                 lines.append(f"  • Setup UNKNOWN: {len(diag_cats['unknown_setup'])}")
-                lines.append(f"  • AI<60: {len(diag_cats['ai_low'])}")
+                lines.append(f"  • AI<{AI_MIN}: {len(diag_cats['ai_low'])}")
                 lines.append(f"  • regime_bad+RS_LOW: {len(diag_cats['regime_bad_rs_low'])}")
-                lines.append(f"  • AI≥60 אבל לא BUY: {len(diag_cats['ai_high_but_not_buy'])}")
+                lines.append(f"  • AI בטווח אבל לא BUY: {len(diag_cats['ai_high_but_not_buy'])}")
 
                 near_miss = sorted(
-                    [c for c in top if c.get("ai_score", 0) >= 40],
+                    [c for c in top if c.get("ai_score", 0) >= 20],
                     key=lambda x: ((1 if x.get("entry_setup") != "VWAP_RECLAIM" else 0), x.get("ai_score", 0)),
                     reverse=True,
                 )[:5]
@@ -475,11 +500,13 @@ def run_scan() -> None:
         send_simple_message("\n".join(lines))
 
     # ── Post-scan tasks ────────────────────────────────────────
-    try:
-        from learning.recorder import record_scan
-        record_scan(_diag, top)
-    except Exception as e:
-        log.debug(f"Learning recorder skipped: {e}")
+    # Legacy learning.db recorder — OFF by default (v10.0)
+    if os.getenv("LEGACY_RECORDER", "0") == "1":
+        try:
+            from learning.recorder import record_scan
+            record_scan(_diag, top)
+        except Exception as e:
+            log.debug(f"Learning recorder skipped: {e}")
 
     try:
         from tools.ensure_open_trade_candles import ensure_candles_for_open_trades
@@ -494,11 +521,7 @@ def run_scan() -> None:
     except Exception as e:
         log.error(f"Outcome tracker error: {e}", exc_info=True)
 
-    try:
-        from tools.backfill_buckets import backfill
-        backfill()
-    except Exception as e:
-        log.error(f"Backfill error: {e}", exc_info=True)
+    # NOTE: tools.backfill_buckets removed in v10.0 (deprecated)
 
     if MULTIDAY_ENABLED:
         try:
@@ -539,67 +562,44 @@ def run_scan() -> None:
 
     if original_max is not None:
         trade_mgr.max_trades = original_max
-
-
+      
 def _vacuum_if_needed():
     """
-    Runs BEFORE every scan.
-
-    Critical: candles_5m grows to 60-70MB if not pruned. This runs
-    EVERY scan (not just when DB > 80MB) to keep it manageable.
+    v10.0: candles live in a SEPARATE file. This function now:
+      1. Prunes candles_5m from CANDLE_CACHE_PATH (not shadow.db)
+      2. VACUUMs candle_cache.db if it exceeds 50MB
+      3. Never touches shadow_trades — that data is precious
     """
+    # ── 1. Candle cache maintenance ────────────────────────
     try:
-        if not os.path.exists(DB_PATH):
-            return
-
-        conn = sqlite3.connect(DB_PATH)
-
-        # ── 1. Prune candles_5m > 24h (EVERY scan) ────────────
-        try:
-            cur = conn.execute("""
-                DELETE FROM candles_5m
-                WHERE time < datetime('now', '-24 hours')
-            """)
-            if cur.rowcount > 0:
-                log.info(f"Pruned candles_5m: {cur.rowcount} rows (>24h)")
-        except sqlite3.OperationalError:
-            pass  # table doesn't exist
-
-        # ── 2. Prune candles_1h > 7 days (EVERY scan) ─────────
-        try:
-            cur = conn.execute("""
-                DELETE FROM candles_1h
-                WHERE time < datetime('now', '-7 days')
-            """)
-            if cur.rowcount > 0:
-                log.info(f"Pruned candles_1h: {cur.rowcount} rows (>7d)")
-        except sqlite3.OperationalError:
-            pass
-
-        conn.commit()
-
-        # ── 3. Check size, VACUUM if needed ───────────────────
-        size_mb = os.path.getsize(DB_PATH) / 1024 / 1024
-
-        if size_mb > 80:
-            log.warning(f"DB is {size_mb:.1f} MB — VACUUM")
-            try:
-                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            except Exception:
-                pass
-            conn.execute("VACUUM")
-            conn.execute("PRAGMA optimize")
-            conn.commit()
-            size_after = os.path.getsize(DB_PATH) / 1024 / 1024
-            log.info(f"DB after VACUUM: {size_after:.1f} MB")
-
-            if size_after > 95:
-                log.error(f"⚠️ DB still {size_after:.1f} MB — next push will FAIL")
-
-        conn.close()
-
+        deleted = prune_candles(retention_hours=48)
+        if deleted > 0:
+            log.info(f"Pruned candles_5m: {deleted} rows (>48h) from {CANDLE_CACHE_PATH}")
     except Exception as e:
-        log.error(f"DB maintenance error: {e}")
+        log.error(f"Candle prune error: {e}")
+
+    try:
+        vacuum_if_big(threshold_mb=50.0)
+    except Exception as e:
+        log.error(f"Candle vacuum error: {e}")
+
+    # ── 2. shadow.db size check (never VACUUM if small) ───
+    try:
+        if os.path.exists(DB_PATH):
+            size_mb = os.path.getsize(DB_PATH) / 1024 / 1024
+            if size_mb > 50:
+                log.warning(f"shadow.db is {size_mb:.1f} MB — VACUUM")
+                conn = sqlite3.connect(DB_PATH)
+                try:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    conn.execute("VACUUM")
+                    conn.execute("PRAGMA optimize")
+                    conn.commit()
+                finally:
+                    conn.close()
+                log.info(f"shadow.db after VACUUM: {os.path.getsize(DB_PATH) / 1024 / 1024:.1f} MB")
+    except Exception as e:
+        log.error(f"shadow.db maintenance error: {e}")
 
 
 def main() -> None:
@@ -609,10 +609,12 @@ def main() -> None:
 
     run_once = args.once or IS_GITHUB_ACTIONS
     log.info(
-        f"CRYPTO-BOT Elite v9.3 STRESS TEST 7-DAY | "
+        f"CRYPTO-BOT Elite v10.0 PnL TRUST | "
         f"dynamic_universe={USE_DYNAMIC_UNIVERSE} | "
         f"GH={IS_GITHUB_ACTIONS} | SILENT={SILENT_MODE} | "
-        f"MULTIDAY={MULTIDAY_ENABLED}"
+        f"MULTIDAY={MULTIDAY_ENABLED} | "
+        f"shadow_db={DB_PATH} | candle_cache={CANDLE_CACHE_PATH} | "
+        f"AI_range=[{AI_MIN},{AI_MAX})"
     )
 
     # CRITICAL: prune candles BEFORE scan (every scan, not just when big)
