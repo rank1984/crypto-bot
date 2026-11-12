@@ -1,0 +1,103 @@
+name: Reset Legacy Execute + Recompute
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: 🔄 Reset legacy FINAL trades
+        env:
+          DB_PATH: data/shadow.db
+          CONFIRM_RESET: "YES"
+          MAX_AGE_HOURS: "168"
+        run: python -m tools.reset_legacy_finals
+
+      - name: 🔬 Run main pipeline (recompute)
+        env:
+          DB_PATH: data/shadow.db
+          CANDLE_CACHE_PATH: data/candle_cache.db
+          SILENT_MODE: "true"
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --once
+
+      - name: 📊 Bucket summary (the critical numbers)
+        env:
+          DB_PATH: data/shadow.db
+        run: |
+          python -c "
+          import sqlite3, os
+          conn = sqlite3.connect(os.getenv('DB_PATH', 'data/shadow.db'))
+          cur = conn.cursor()
+          print()
+          print('=' * 70)
+          print('BUCKET SUMMARY — FINAL BUY trades with pnl_r_net')
+          print('=' * 70)
+          print(f'{\"bucket\":12s} {\"n\":>4s} {\"avg_r\":>8s} {\"avg_r_net\":>10s} {\"win%\":>7s}')
+          print('-' * 70)
+          cur.execute('''
+              SELECT ai_bucket,
+                     COUNT(*) AS n,
+                     ROUND(AVG(pnl_r), 3) AS avg_r,
+                     ROUND(AVG(pnl_r_net), 3) AS avg_r_net,
+                     ROUND(SUM(CASE WHEN pnl_r_net>0 THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS win_pct
+              FROM shadow_trades
+              WHERE outcome_status='FINAL' AND decision='BUY' AND pnl_r_net IS NOT NULL
+              GROUP BY ai_bucket
+              ORDER BY ai_bucket
+          ''')
+          for r in cur.fetchall():
+              print(f'{r[0]:12s} {r[1]:>4d} {r[2] if r[2] is not None else 0:>8.3f} {r[3] if r[3] is not None else 0:>10.3f} {r[4] if r[4] is not None else 0:>7.1f}')
+          print()
+          print('=' * 70)
+          print('COVERAGE — how many FINAL trades got recomputed')
+          print('=' * 70)
+          cur.execute('''
+              SELECT 
+                COUNT(*) as total_final,
+                SUM(CASE WHEN pnl_pct_method='simulated_v9.0' THEN 1 ELSE 0 END) as v9_recovered,
+                SUM(CASE WHEN pnl_pct_method='simulated_v8.8' THEN 1 ELSE 0 END) as v8_legacy,
+                SUM(CASE WHEN outcome_status='UNRECOVERABLE' THEN 1 ELSE 0 END) as unrecoverable
+              FROM shadow_trades
+              WHERE decision='BUY'
+          ''')
+          r = cur.fetchone()
+          print(f'  Total FINAL:          {r[0]}')
+          print(f'  Recovered (v9.0):     {r[1]}')
+          print(f'  Still legacy (v8.8):  {r[2]}')
+          print(f'  Unrecoverable:        {r[3]}')
+          print('=' * 70)
+          conn.close()
+          "
+
+      - name: 💾 Commit updated DB and results
+        if: always()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add -f data/shadow.db 2>/dev/null || echo "DB not found"
+          git add shadow_results.csv 2>/dev/null || true
+          git add data/learning_dataset.csv 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "reset+recompute [skip ci]"
+            git push
+          fi
